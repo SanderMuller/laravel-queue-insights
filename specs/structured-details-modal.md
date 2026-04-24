@@ -119,7 +119,15 @@ document.addEventListener('livewire:initialized', () => {
 });
 ```
 
-**Invariant — do not reorder.** `highlightJson()` HTML-escapes `& < >` as its *first* step before wrapping token spans. Payload bodies carrying `<script>` text then render as literal escaped characters, never as executable markup. Swapping the order (wrap first, escape later) would re-escape the span tags and break the colorizer; more importantly, escaping after token-wrapping would break the XSS guarantee if the regex ever mis-classifies a `<` inside a string.
+**Invariant — do not reorder.** `highlightJson()` HTML-escapes `& < >` as its *first* step before wrapping token spans. This is the **sole** XSS defense on this render path, not belt-and-suspenders.
+
+Threat model, concrete: PHP's `json_encode()` does NOT escape `<` / `>` unless the caller passes `JSON_HEX_TAG` (the dashboard doesn't). Without escape-first, a job payload string value `"<script>alert(1)</script>"` round-trips through `recentCompleted()` → `json_encode(…)` → server-rendered JSON intact, matches the string regex as one token, and the colorizer emits `<span class="text-green-700">"<script>alert(1)</script>"</span>`. The `insertAdjacentHTML('afterbegin', …)` call then parses that output as markup — `<script>` executes. Full stored-XSS path from any Job whose payload touches untrusted input.
+
+Escape-first flips the input to `"&lt;script&gt;alert(1)&lt;/script&gt;"` before the regex runs. The string regex wraps the already-escaped content; the browser renders the escape entities as literal text inside the span. No markup parsing, no execution.
+
+Swapping the order also breaks the colorizer cosmetically (span tags get re-escaped into `&lt;span&gt;` visible text) — but the cosmetic break is the lesser issue. The security guarantee is what's load-bearing.
+
+**Regression guard** (belongs in Phase 3 tests): feed a stream row with `payload_body = '<script>alert(1)</script>'`, assert the rendered HTML contains `&lt;script&gt;` and does NOT contain a literal `<script>` tag in the JSON pane. Cheap PHPUnit assertion using the already-seeded component test harness — doesn't need JS execution to prove the escape pass happened.
 
 An Alpine.js alternative (`x-data` + `x-init` + `$watch('$wire.selectedPayloadId')`) is viable since Alpine is bundled with Livewire 3 — leaving as a Finding note if the `Livewire.hook` path ever becomes awkward. Default path is the hook because it's dispatch-once and covers all modal re-renders without per-instance Alpine state.
 
@@ -205,8 +213,9 @@ Visual regression (manual for now): open each tier in a browser via the dogfood 
 - [ ] `aria-label`s on copy button + tab toggles; `role="tab"` + `aria-selected` + `aria-controls` / `role="tabpanel"` on the C-section toggle
 - [ ] Keyboard handling: Esc closes modal, Tab cycles within the trap
 - [ ] DOM-contract assertion: rendered JSON pane carries the `[data-json-highlight]` attribute — pins the JS-to-DOM contract so a template refactor can't silently break the colorizer
+- [ ] XSS regression assertion: seed a stream row with `payload_body = '<script>alert(1)</script>'`, render the component, assert the rendered HTML contains `&lt;script&gt;` and does NOT contain a literal `<script>` in the JSON pane. Pairs with the DOM-contract assertion above — DOM-contract proves the defense attribute is present, XSS regression proves the escape path actually runs. See §3's "Invariant — do not reorder" block for the threat model
 - [ ] Visual regression dogfood on hihaho under all three modes
-- [ ] Tests — a11y attributes (aria-modal, aria-selected toggles) + DOM-contract assertion
+- [ ] Tests — a11y attributes (aria-modal, aria-selected toggles) + DOM-contract + XSS regression assertions
 
 ---
 
@@ -252,6 +261,8 @@ Two items flagged for deferred revisit rather than open decisions:
 8. **Colorizer XSS invariant (raised during peer review of §3).** **Decision:** `highlightJson()` must HTML-escape as the first step, then wrap tokens. **Rationale:** payload bodies can carry `<script>` text; escape-before-wrap renders them as literal characters. Wrap-before-escape would re-escape span tags and break the colorizer, and any regex mis-classification would create an XSS hole. Ordering is load-bearing — documented as an invariant in §3.
 
 9. **Copy-to-clipboard fallback (Open Q #3 follow-up — `document.execCommand` elimination).** **Decision:** Declined `document.execCommand('copy')` (deprecated, Chrome/Safari signaled removal). Selection-API fallback with a visible "Press Cmd+C" prompt replaces it. Code in §3's copy section and Resolved #3 above.
+
+10. **XSS regression guard (peer review of §3 XSS invariant).** **Decision:** Add a paired PHPUnit assertion in Phase 3: seed a stream row with `payload_body = '<script>alert(1)</script>'`, render the component, assert rendered HTML contains `&lt;script&gt;` + does NOT contain literal `<script>` in the JSON pane. **Rationale:** the DOM-contract assertion pins that the `[data-json-highlight]` attribute is present (defense wired up); this pairs it with proof that the server-side Blade escape path actually runs on hostile input. Together they cover both halves of the threat model without requiring a JS runtime in tests. The client-side escape-first in `highlightJson()` is the second-layer defense for the case where `textContent` un-escapes back to raw `<` — not directly tested here, caught by visual dogfood and the do-not-reorder invariant in §3.
 
 
 
