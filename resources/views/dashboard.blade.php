@@ -1,6 +1,3 @@
-@extends('queue-insights::layouts.app')
-
-@section('content')
 <div wire:poll.10s class="space-y-8">
 
     {{-- Queue cards --}}
@@ -203,4 +200,4 @@
         </div>
     @endif
 </div>
-@endsection
+

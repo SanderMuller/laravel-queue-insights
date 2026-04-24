@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -27,7 +28,7 @@ it('only overwrites when the candidate is greater', function (): void {
     $key = 'qmtest:duration:FooJob';
     $script = LuaScripts::updateMaxDuration();
 
-    Redis::connection('default')->command('eval', [$script, 1, $key, '150']);
+    RedisEval::exec(Redis::connection('default'), $script, 1, $key, '150');
 
     expect(R::int('eval', $script, 1, $key, '100'))->toBe(0)
         ->and(R::int('hget', $key, 'max_ms'))->toBe(150)

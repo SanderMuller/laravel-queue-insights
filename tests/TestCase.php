@@ -48,7 +48,12 @@ abstract class TestCase extends Orchestra
         $port = getenv('REDIS_PORT');
         $db = getenv('REDIS_DB');
 
-        $config->set('database.redis.client', 'predis');
+        // QI_REDIS_CLIENT=phpredis in CI matrix to exercise ext-redis path (XADD/XREVRANGE
+        // signature divergence vs Predis — see RecordJobProcessed::xaddApprox). We use our
+        // own var instead of REDIS_CLIENT because testbench puts REDIS_CLIENT=phpredis into
+        // the process env during bootstrap, which would otherwise flip the default silently.
+        $client = getenv('QI_REDIS_CLIENT');
+        $config->set('database.redis.client', is_string($client) && $client !== '' ? $client : 'predis');
         $config->set('database.redis.default', [
             'host' => is_string($host) && $host !== '' ? $host : '127.0.0.1',
             'port' => is_string($port) && is_numeric($port) ? (int) $port : 6379,

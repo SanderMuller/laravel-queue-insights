@@ -13,7 +13,7 @@ parameters:
 			path: tests/Feature/Listeners/ListenerCaptureTest.php
 
 		-
-			rawMessage: 'Out of 200 possible param types, only 198 - 99.0 %% actually have it. Add more param types to get over 100 %%'
+			rawMessage: 'Out of 212 possible param types, only 210 - 99.0 %% actually have it. Add more param types to get over 100 %%'
 			identifier: typeCoverage.paramTypeCoverage
 			count: 2
 			path: tests/TestCase.php

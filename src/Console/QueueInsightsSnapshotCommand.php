@@ -14,6 +14,7 @@ use SanderMuller\QueueInsights\Events\QueueDepthExceeded;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use Throwable;
 
 final class QueueInsightsSnapshotCommand extends Command
@@ -150,9 +151,18 @@ final class QueueInsightsSnapshotCommand extends Command
         $cooldownSeconds = Config::int('alerts.cooldown_seconds', 900);
 
         // SET NX EX semantics — first caller wins, everyone else hits the existing key.
-        $acquired = $redis->command('set', [$cooldownKey, (string) Date::now()->getTimestamp(), 'EX', $cooldownSeconds, 'NX']);
+        // Route through eval() because SET key val EX ttl NX has different positional/options
+        // shapes on phpredis vs Predis; eval side-steps the divergence. Returns 1 on acquire.
+        $acquired = RedisEval::exec(
+            $redis,
+            "if redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2], 'NX') then return 1 else return 0 end",
+            1,
+            $cooldownKey,
+            (string) Date::now()->getTimestamp(),
+            (string) $cooldownSeconds,
+        );
 
-        if ($acquired === null || $acquired === false) {
+        if ($acquired !== 1) {
             return;
         }
 

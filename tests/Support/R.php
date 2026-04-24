@@ -6,6 +6,7 @@ namespace SanderMuller\QueueInsights\Tests\Support;
 
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Support\RedisEval;
 
 /**
  * Test-side Redis helper. Replaces `(int) $r->command('get', [$key])` (which
@@ -20,14 +21,14 @@ final class R
 
     public static function int(string $cmd, int|string ...$args): int
     {
-        $value = self::conn()->command($cmd, $args);
+        $value = self::dispatch($cmd, $args);
 
         return is_numeric($value) ? (int) $value : 0;
     }
 
     public static function str(string $cmd, int|string ...$args): ?string
     {
-        $value = self::conn()->command($cmd, $args);
+        $value = self::dispatch($cmd, $args);
 
         if (is_string($value)) {
             return $value;
@@ -38,7 +39,7 @@ final class R
 
     public static function float(string $cmd, int|string ...$args): float
     {
-        $value = self::conn()->command($cmd, $args);
+        $value = self::dispatch($cmd, $args);
 
         return is_numeric($value) ? (float) $value : 0.0;
     }
@@ -48,6 +49,23 @@ final class R
      */
     public static function raw(string $cmd, int|string ...$args): mixed
     {
+        return self::dispatch($cmd, $args);
+    }
+
+    /**
+     * @param  array<int|string, int|string>  $args
+     */
+    private static function dispatch(string $cmd, array $args): mixed
+    {
+        if ($cmd === 'eval') {
+            $script = (string) ($args[0] ?? '');
+            $numKeys = (int) ($args[1] ?? 0);
+            $rest = array_slice($args, 2);
+            $restStrings = array_map(static fn (int|string $v): string => (string) $v, $rest);
+
+            return RedisEval::exec(self::conn(), $script, $numKeys, ...$restStrings);
+        }
+
         return self::conn()->command($cmd, $args);
     }
 }

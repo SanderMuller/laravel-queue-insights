@@ -14,6 +14,7 @@ use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use Throwable;
 
@@ -52,7 +53,7 @@ final readonly class RecordJobProcessed
                 $durationKey = KeyPrefix::make("duration:{$class}");
                 $redis->command('hincrby', [$durationKey, 'count', 1]);
                 $redis->command('hincrbyfloat', [$durationKey, 'sum_ms', (float) $durationMs]);
-                $redis->command('eval', [LuaScripts::updateMaxDuration(), 1, $durationKey, (string) $durationMs]);
+                RedisEval::exec($redis, LuaScripts::updateMaxDuration(), 1, $durationKey, (string) $durationMs);
                 $redis->command('expire', [$durationKey, 2592000]);
 
                 // p95 sample window: last 500 durations per class.
@@ -167,11 +168,30 @@ final readonly class RecordJobProcessed
      */
     private function xaddApprox(RedisConnection $redis, string $key, int $maxLen, array $fields): void
     {
-        $redis->command('xadd', [
+        // phpredis and Predis expose different XADD signatures. Route through eval() so a
+        // single code path works on both drivers without a PhpRedisConnection::xAdd fork.
+        RedisEval::exec(
+            $redis,
+            "return redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1], '*', unpack(ARGV, 2))",
+            1,
             $key,
-            $fields,
-            '*',
-            ['trim' => ['MAXLEN', '~', (string) $maxLen]],
-        ]);
+            (string) $maxLen,
+            ...$this->flattenFields($fields),
+        );
+    }
+
+    /**
+     * @param  array<string, string>  $fields
+     * @return list<string>
+     */
+    private function flattenFields(array $fields): array
+    {
+        $out = [];
+        foreach ($fields as $k => $v) {
+            $out[] = $k;
+            $out[] = $v;
+        }
+
+        return $out;
     }
 }

@@ -10,11 +10,13 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\View as ViewFactory;
 use InvalidArgumentException;
+use Livewire\Attributes\Layout;
 use Livewire\Component;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 
+#[Layout('queue-insights::layouts.app')]
 final class QueueInsightsDashboard extends Component
 {
     public ?string $selectedClass = null;

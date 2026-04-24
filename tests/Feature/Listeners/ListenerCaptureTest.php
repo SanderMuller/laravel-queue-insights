@@ -147,7 +147,9 @@ it('treats a non-numeric start:{uuid} value as a missing sample (no duration wri
     // directly through a fake JobProcessed event. The listener must NOT cast
     // 'not-a-number' to 0.0 and write a 17-trillion-ms duration.
     $uuid = 'corrupt-uuid';
-    R::conn()->command('set', ['qmtest:start:' . $uuid, 'not-a-number', 'EX', 3600]);
+    // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
+    // `SET key val EX ttl` has divergent shapes across drivers.
+    R::conn()->command('setex', ['qmtest:start:' . $uuid, 3600, 'not-a-number']);
 
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('uuid')->andReturn($uuid);

@@ -33,13 +33,14 @@ jobs:
         php: ['8.3', '8.4']
         laravel: ['11.*', '12.*']
         stability: [prefer-lowest, prefer-stable]
+        redis-client: [predis, phpredis]
         include:
           - laravel: '11.*'
             testbench: '9.*'
           - laravel: '12.*'
             testbench: '10.*'
 
-    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }}
+    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.redis-client }}
 
     services:
       redis:
@@ -84,4 +85,8 @@ jobs:
           REDIS_HOST: 127.0.0.1
           REDIS_PORT: 6379
           REDIS_DB: 15
+          # phpredis (ext-redis) and Predis have divergent signatures for SET+EX, MGET,
+          # EVAL, XADD, and XREVRANGE. Matrix exercises both paths. See RedisEval + the
+          # RedisClientParityTest.
+          QI_REDIS_CLIENT: ${{ matrix.redis-client }}
         run: vendor/bin/pest --ci

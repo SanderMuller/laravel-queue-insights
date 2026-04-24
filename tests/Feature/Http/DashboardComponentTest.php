@@ -26,9 +26,11 @@ beforeEach(function (): void {
 });
 
 it('renders empty states when there is no configured queue or classes', function (): void {
+    // Livewire::test() renders the component in isolation (no layout wrapper) — the
+    // "Queue Insights" heading lives in queue-insights::layouts.app and is covered by
+    // the HTTP smoke test in DashboardRouteTest.
     Livewire::test(QueueInsightsDashboard::class)
         ->assertOk()
-        ->assertSee('Queue Insights')
         ->assertSee('No queues configured')
         ->assertSee('No processed jobs in the window')
         ->assertSee('No failed jobs recorded');
@@ -80,7 +82,7 @@ it('hides the Payload column when capture.payloads = off', function (): void {
     config()->set('queue-insights.capture.payloads', 'off');
 
     $r = Redis::connection('default');
-    $r->command('xadd', [KeyPrefix::make('completed'), ['class' => 'App\\Foo', 'queue' => 'default'], '*']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'App\\Foo', 'queue' => 'default']);
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSee('App\\Foo')
@@ -91,7 +93,7 @@ it('shows the Payload column when capture.payloads = metadata', function (): voi
     config()->set('queue-insights.capture.payloads', 'metadata');
 
     $r = Redis::connection('default');
-    $r->command('xadd', [KeyPrefix::make('completed'), ['class' => 'App\\Foo', 'queue' => 'default'], '*']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'App\\Foo', 'queue' => 'default']);
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSeeHtml('<th class="px-3 py-2">Payload</th>');
@@ -100,7 +102,7 @@ it('shows the Payload column when capture.payloads = metadata', function (): voi
 it('selects a class and filters the recent completed table', function (): void {
     $r = Redis::connection('default');
     $r->command('zadd', [KeyPrefix::make('classes'), Date::now()->getTimestamp(), 'App\\Foo']);
-    $r->command('xadd', [KeyPrefix::make('completed:App\\Foo'), ['queue' => 'default'], '*']);
+    seedStream($r, KeyPrefix::make('completed:App\\Foo'), ['queue' => 'default']);
 
     Livewire::test(QueueInsightsDashboard::class)
         ->call('selectClass', 'App\\Foo')

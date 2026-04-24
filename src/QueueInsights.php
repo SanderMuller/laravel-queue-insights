@@ -229,7 +229,8 @@ final class QueueInsights
 
         $effectiveLimit = $class === null ? min($limit, 10000) : min($limit, 1000);
 
-        $entries = $this->redis()->command('xrevrange', [$key, '+', '-', 'COUNT', $effectiveLimit]);
+        // 4-arg form works on both phpredis (native) and Predis (auto-injects COUNT token via XRANGE::setArguments).
+        $entries = $this->redis()->command('xrevrange', [$key, '+', '-', $effectiveLimit]);
 
         if (! is_array($entries)) {
             return [];
@@ -335,7 +336,9 @@ final class QueueInsights
             return 0;
         }
 
-        $values = $redis->command('mget', $keys);
+        // phpredis mGet() takes a single array arg; Predis auto-unwraps a single-array arg
+        // via Command::normalizeArguments. Pass `[$keys]` to satisfy both.
+        $values = $redis->command('mget', [$keys]);
 
         if (! is_array($values)) {
             return 0;

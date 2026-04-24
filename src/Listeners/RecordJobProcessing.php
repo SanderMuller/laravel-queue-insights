@@ -22,11 +22,12 @@ final class RecordJobProcessing
                 return;
             }
 
-            Redis::connection(Config::string('redis_connection', 'default'))->command('set', [
+            // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
+            // `SET key val EX ttl` has divergent arg shapes across drivers.
+            Redis::connection(Config::string('redis_connection', 'default'))->command('setex', [
                 KeyPrefix::make("start:{$uuid}"),
-                (string) microtime(true),
-                'EX',
                 3600,
+                (string) microtime(true),
             ]);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobProcessing failed', [

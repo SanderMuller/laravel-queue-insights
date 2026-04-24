@@ -149,9 +149,9 @@ it('returns null p95 when no samples exist', function (): void {
 
 it('reads recent completed entries from the global stream (newest first)', function (): void {
     $r = Redis::connection('default');
-    $r->command('xadd', [KeyPrefix::make('completed'), ['class' => 'A'], '*']);
-    $r->command('xadd', [KeyPrefix::make('completed'), ['class' => 'B'], '*']);
-    $r->command('xadd', [KeyPrefix::make('completed'), ['class' => 'C'], '*']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'A']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'B']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'C']);
 
     $entries = resolve(QueueInsights::class)->recentCompleted(10);
 
@@ -163,8 +163,8 @@ it('reads recent completed entries from the global stream (newest first)', funct
 it('reads recent completed entries scoped to a class', function (): void {
     $r = Redis::connection('default');
     $class = 'App\\Jobs\\X';
-    $r->command('xadd', [KeyPrefix::make("completed:{$class}"), ['queue' => 'a'], '*']);
-    $r->command('xadd', [KeyPrefix::make("completed:{$class}"), ['queue' => 'b'], '*']);
+    seedStream($r, KeyPrefix::make("completed:{$class}"), ['queue' => 'a']);
+    seedStream($r, KeyPrefix::make("completed:{$class}"), ['queue' => 'b']);
 
     $entries = resolve(QueueInsights::class)->recentCompleted(10, $class);
 
