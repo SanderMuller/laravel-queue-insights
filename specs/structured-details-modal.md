@@ -46,7 +46,20 @@ Renders under `capture.payloads=metadata` and `full`. Source: `MetadataOnlySanit
 
 - `displayName` row — monospace single line
 - Stats row of three labeled cards: `maxTries` / `timeout` / `backoff`. Each card: label on top, value below, fallback `—` if unset
-- If `payload_note === 'payload_not_persisted'`: **replace** the stats row with a yellow info box: "Payload not persisted — closure or encrypted job." No job-config stats possible for these.
+- If `payload_note === 'payload_not_persisted'`: **replace** the stats row with a yellow info box. Body text is driven by the sanitizer's `payload_reason` field rather than hardcoded in the template, so future sanitizer reasons (`oversized`, etc.) self-document without a spec follow-up.
+
+Verified against `src/Support/Sanitizers/MetadataOnlySanitizer.php:19-25` (sanitizer returns `['note' => 'payload_not_persisted', 'reason' => 'closure_or_encrypted']`) and `RecordJobProcessed.php:133` (writer prefixes every sanitizer key with `payload_`, so the stream carries `payload_note` + `payload_reason`).
+
+```blade
+@if (($selectedPayload['payload_note'] ?? null) === 'payload_not_persisted')
+    <div class="rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        Payload not persisted
+        @if ($reason = $selectedPayload['payload_reason'] ?? null)
+            — {{ str_replace('_', ' ', $reason) }}
+        @endif
+    </div>
+@endif
+```
 
 ### Section C: Payload (visible when any `payload_*` key beyond the metadata set exists)
 
@@ -54,6 +67,8 @@ Renders under `capture.payloads=full`. Two-tab toggle inside the section:
 
 - **Sanitized JSON** (default): pretty-printed JSON of the `payload_*` keys (minus the metadata ones which live in Section B). Syntax-highlighted via a small inline JS colorizer (see section 3).
 - **Raw fields**: KV table of the same data, one row per `payload_*` key. For long values, truncate to 200 chars with a "…" affordance (click to expand).
+
+Both tabs scope to the **payload bucket only** — job-config fields (`displayName` / `maxTries` / `timeout` / `backoff`) live in Section B and are intentionally omitted here to avoid duplication. Emit a one-line hint at the top of the Raw pane so the label stays honest: _"Job-config fields shown in Job Config above."_
 
 Tab state is component-local (`$payloadTab = 'json'` or `'raw'`), defaults to `'json'` on `openPayload`. Persist across poll cycles via a public Livewire property.
 
@@ -90,7 +105,23 @@ function highlightJson(src) {
 }
 ```
 
-Wire up on Livewire's `livewire:initialized` event and re-run on `livewire:update` (polls may re-render the modal). Target `[data-json-highlight]` nodes; source is their textContent, output replaces innerHTML.
+Wire up via the Livewire 3 hook API. `livewire:initialized` bootstraps the listener; `Livewire.hook('morph.updated', ...)` re-runs it after every DOM morph (including 10s poll ticks, tab toggles, and modal open/close). Target `[data-json-highlight]` nodes; source is their textContent, output writes the colorized HTML back into the node.
+
+```js
+document.addEventListener('livewire:initialized', () => {
+    Livewire.hook('morph.updated', ({el}) => {
+        el.querySelectorAll('[data-json-highlight]').forEach(node => {
+            const escaped = highlightJson(node.textContent);
+            node.replaceChildren();
+            node.insertAdjacentHTML('afterbegin', escaped);
+        });
+    });
+});
+```
+
+**Invariant — do not reorder.** `highlightJson()` HTML-escapes `& < >` as its *first* step before wrapping token spans. Payload bodies carrying `<script>` text then render as literal escaped characters, never as executable markup. Swapping the order (wrap first, escape later) would re-escape the span tags and break the colorizer; more importantly, escaping after token-wrapping would break the XSS guarantee if the regex ever mis-classifies a `<` inside a string.
+
+An Alpine.js alternative (`x-data` + `x-init` + `$watch('$wire.selectedPayloadId')`) is viable since Alpine is bundled with Livewire 3 — leaving as a Finding note if the `Livewire.hook` path ever becomes awkward. Default path is the hook because it's dispatch-once and covers all modal re-renders without per-instance Alpine state.
 
 ## 4. Component / Livewire API changes
 
@@ -110,10 +141,21 @@ Computed in the Blade helper scope (not on the component — these are pure view
 
 ## 5. Accessibility + interaction
 
-- Modal wrapper already has `wire:click="closePayload"` on backdrop + `wire:click.stop` on content — keep.
-- Copy-to-clipboard on Stream ID: small button with `aria-label="Copy stream id"`, uses `navigator.clipboard.writeText`. Fall back to selecting text if clipboard unavailable.
-- Tab toggle: semantic `<button>` elements, `aria-selected="true|false"`, `role="tab"`.
-- Dates: both raw ISO and humanized present, no information hiding for copy/parse tooling.
+Dialog semantics on the modal wrapper:
+
+- `role="dialog"` + `aria-modal="true"` on the backdrop container.
+- `aria-labelledby` pointing at the "Details" `<h3>` id.
+- Focus trap via Alpine's `x-trap` directive (Alpine is bundled with Livewire 3, zero new dep, one-attribute change). Moves focus into the modal on open, returns it to the trigger `<button>` on close. Without a trap, keyboard users Tab straight out into the background dashboard.
+- `inert` on the main dashboard container while the modal is open — `x-bind:inert="$wire.selectedPayloadId !== null"` on `<main>`. Blocks AT users from hearing the background content mid-modal.
+- Modal wrapper retains `wire:click="closePayload"` on the backdrop + `wire:click.stop` on the content (unchanged from f8384b0).
+
+Per-element:
+
+- Copy-to-clipboard on Stream ID: `<button>` with `aria-label="Copy stream id"`; primary path `navigator.clipboard.writeText`; fallback Selection-API path per §6 (do NOT use `document.execCommand('copy')`).
+- Tab toggle: semantic `<button>` elements with `role="tab"` + `aria-selected="true|false"` + `aria-controls` pointing at the panel id; panels `role="tabpanel"`.
+- Dates: both raw ISO and humanized rendered, no information hiding for copy-paste / machine parsing.
+
+Out of scope for this spec: ARIA live regions for the 10s poll-driven updates. That is a dashboard-wide concern (queue cards, job-classes table, failed-jobs table all change on poll too), not a modal-specific one; handle in a separate a11y pass.
 
 ## 6. Out of scope (explicit)
 
@@ -157,30 +199,61 @@ Visual regression (manual for now): open each tier in a browser via the dogfood 
 
 ### Phase 3: Polish + accessibility (Priority: MEDIUM)
 
-- [ ] `aria-label`s on copy button + tab toggles
-- [ ] Keyboard handling: Esc closes modal (already supported by Livewire? confirm), Tab cycles through interactive elements
+- [ ] Add `role="dialog"` + `aria-modal="true"` + `aria-labelledby` on the modal backdrop
+- [ ] Wrap content in Alpine `x-trap` — focus moves in on open, returns to trigger on close
+- [ ] Toggle `inert` on the main dashboard container while modal is open
+- [ ] `aria-label`s on copy button + tab toggles; `role="tab"` + `aria-selected` + `aria-controls` / `role="tabpanel"` on the C-section toggle
+- [ ] Keyboard handling: Esc closes modal, Tab cycles within the trap
+- [ ] DOM-contract assertion: rendered JSON pane carries the `[data-json-highlight]` attribute — pins the JS-to-DOM contract so a template refactor can't silently break the colorizer
 - [ ] Visual regression dogfood on hihaho under all three modes
-- [ ] Tests — accessibility assertions (aria-selected toggles on tab switch)
+- [ ] Tests — a11y attributes (aria-modal, aria-selected toggles) + DOM-contract assertion
 
 ---
 
 ## Open Questions
 
-1. **Scope of "Raw fields" view under Section C.** Peer's sketch says a KV table of all `payload_*` keys; mine strips the metadata-scope keys (they're in Section B). Peer's version is more complete but duplicates the Section B data. Mine avoids the duplication at the cost of a less faithful "raw" label. Lean: strip the metadata keys; comment in the template explaining why.
+None. All questions resolved (see Resolved Questions below).
 
-2. **Humanized duration vs raw ms for short durations.** `CarbonInterval::milliseconds(42)->cascade()->forHumans()` produces `"42 milliseconds"`. Under 1s the humanization is arguably noise. Option A: show raw `42 ms` only when `< 1000ms`, humanize when `>= 1000ms`. Option B: always humanize with the `short => true` flag producing `"42ms" / "1.24s"`. Lean B.
+Two items flagged for deferred revisit rather than open decisions:
 
-3. **Copy-to-clipboard fallback strategy on non-HTTPS dev environments.** `navigator.clipboard` requires a secure context. Dev via `studio.hihaho.test` (plain `http` on `.test`) may not have access. Options: (a) hide the button entirely outside secure contexts, (b) use the old `document.execCommand('copy')` path with a hidden `<textarea>` — deprecated but still widely supported. Lean (b).
-
-4. **Modal size and overflow behaviour under Section C full-payload.** Current `max-h-[80vh]` + `overflow-auto` handles a long JSON body reasonably. Do we want a "fullscreen" toggle for very long payloads? Defer unless dogfood shows a real problem.
-
-5. **Test strategy for inline JS colorizer.** We can't run JS in feature tests. Options: (a) rely on the raw JSON text being in the DOM + trust the colorizer separately, (b) write a lightweight Dusk/browser test, (c) skip — visual dogfood catches it. Lean (c) for now; revisit if the colorizer becomes load-bearing.
+- **Modal size / fullscreen toggle under long payloads.** `max-h-[80vh]` + `overflow-auto` handles the 16KB byte-cap comfortably. Revisit only if a real consumer hits wrapping or readability issues. Not blocking implementation.
+- **Inline colorizer browser testing.** Strategy is (c) — skip Dusk, rely on visual dogfood. Already covered by the DOM-contract PHPUnit assertion in Phase 3 (pins `[data-json-highlight]` presence). Revisit if the colorizer becomes load-bearing (e.g. if a consumer reports specific JSON shapes rendering incorrectly).
 
 ---
 
-<!-- ## Resolved Questions
-1. **{Original question?}** **Decision:** {What was decided.} **Rationale:** {Why.}
--->
+## Resolved Questions
+
+1. **Scope of "Raw fields" view under Section C (Open Q #1).** **Decision:** Strip metadata-scope keys from the Raw tab; show only the non-metadata `payload_*` keys. **Rationale:** Duplication with Section B confuses more than a less-faithful "raw" label hurts. Mitigate by emitting a one-line hint at the top of the Raw pane: _"Job-config fields shown in Job Config above."_ The "raw" label remains honest scoped to the payload bucket (what the `PayloadSanitizer` returned beyond the always-on metadata set).
+
+2. **Humanized duration vs raw ms (Open Q #2).** **Decision:** Option B — always humanize with `short => true` (`"42ms"`, `"1.24s"`). Keep raw `"(1243 ms)"` in gray alongside. **Rationale:** Consistent formatting across all durations; `"42ms"` is no noisier than `"42 ms"` raw; user scanning for "slow jobs" benefits from a uniform presentation. Short-mode humanization also handles sub-ms / minute / hour ranges gracefully without per-threshold branching.
+
+3. **Copy-to-clipboard fallback on non-HTTPS dev (Open Q #3, also channel Q #2).** **Decision:** Option (b) — try `navigator.clipboard.writeText` first, fall back to selecting the stream-id `<code>` text via `Selection` API so the user can hit Cmd/Ctrl-C themselves. Do NOT use `document.execCommand('copy')` — deprecated, Chrome/Safari have signaled removal. **Rationale:** hihaho's local dogfood is on `studio.hihaho.test` (plain `http` on `.test`), `navigator.clipboard` is blocked outside secure contexts. The select-and-prompt fallback is forward-compatible (no deprecated API), works in every browser, and surfaces a visible affordance ("Press Cmd+C") better than silent failure. Implementation:
+   ```js
+   async function copyOrSelect(text, node) {
+       try { await navigator.clipboard.writeText(text); return 'copied'; }
+       catch { /* fall through */ }
+       const range = document.createRange();
+       range.selectNode(node);
+       getSelection().removeAllRanges();
+       getSelection().addRange(range);
+       return 'selected';
+   }
+   ```
+   Toast / inline message swaps based on the return value: "Copied" vs "Select → Cmd+C".
+
+4. **Section B yellow-box trigger key (channel Q #4).** **Decision:** `payload_note === 'payload_not_persisted'` is correct (verified against `MetadataOnlySanitizer.php:19-25`). Drive the body text from `payload_reason` instead of hardcoded copy so future reasons self-document; see Section B for the Blade shape.
+
+5. **Clickable Class → `selectClass` from modal (channel Q #3).** **Decision:** Out of scope — the row in the table above is already clickable, doubling the interaction doubles a11y semantics for zero new capability. **Rationale:** if real use cases surface (e.g. "filter from inside the modal without closing"), revisit as a follow-up.
+
+6. **Phase 3 a11y scope (channel Q #5).** **Decision:** Esc + Tab is insufficient; upgrade to `role="dialog"` + `aria-modal="true"` + `aria-labelledby` + Alpine `x-trap` focus trap + `inert` on background while modal is open. Skip ARIA live regions for poll-driven updates — dashboard-wide concern, separate spec. Details in §5.
+
+7. **Inline colorizer Livewire 3 wiring (raised during peer review of §3).** **Decision:** Use `Livewire.hook('morph.updated', ...)` inside a `livewire:initialized` listener. **Rationale:** `livewire:update` is not a Livewire 3 event; `morph.updated` is the v3 lifecycle hook that fires after every DOM morph (polls, tab toggles, modal open/close). Alpine-per-instance (`x-data` + `$watch`) is a viable alternative but the hook path is dispatch-once and covers all re-renders without per-instance state. Code in §3.
+
+8. **Colorizer XSS invariant (raised during peer review of §3).** **Decision:** `highlightJson()` must HTML-escape as the first step, then wrap tokens. **Rationale:** payload bodies can carry `<script>` text; escape-before-wrap renders them as literal characters. Wrap-before-escape would re-escape span tags and break the colorizer, and any regex mis-classification would create an XSS hole. Ordering is load-bearing — documented as an invariant in §3.
+
+9. **Copy-to-clipboard fallback (Open Q #3 follow-up — `document.execCommand` elimination).** **Decision:** Declined `document.execCommand('copy')` (deprecated, Chrome/Safari signaled removal). Selection-API fallback with a visible "Press Cmd+C" prompt replaces it. Code in §3's copy section and Resolved #3 above.
+
+
 
 ## Findings
 
