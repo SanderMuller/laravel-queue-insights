@@ -87,7 +87,11 @@
                     </thead>
                     <tbody>
                         @foreach ($classes as $c)
-                            <tr class="cursor-pointer border-t border-gray-100 hover:bg-gray-50" wire:click="selectClass('{{ $c['class'] }}')">
+                            {{-- @js() / Js::from() safely encodes the FQCN for a JS string literal.
+                                Interpolating inside `'{{ ... }}'` silently strips backslashes (JS
+                                treats \J, \V etc as unknown escapes), which corrupts class names
+                                like `App\Jobs\X` and breaks the drill-down. --}}
+                            <tr class="cursor-pointer border-t border-gray-100 hover:bg-gray-50" wire:click="selectClass(@js($c['class']))">
                                 <td class="px-3 py-2 font-mono text-xs">{{ $c['class'] }}</td>
                                 <td class="px-3 py-2">{{ $c['processed_24h'] }}</td>
                                 <td class="px-3 py-2 {{ $c['failed_24h'] > 0 ? 'text-red-600' : '' }}">{{ $c['failed_24h'] }}</td>
@@ -143,7 +147,7 @@
                                 <td class="px-3 py-2 text-gray-500">{{ $row['processed_at'] ?? '—' }}</td>
                                 @if ($captureEnabled)
                                     <td class="px-3 py-2">
-                                        <button wire:click="openPayload('{{ $row['_id'] }}')" class="text-xs text-blue-600 hover:underline">view</button>
+                                        <button wire:click="openPayload(@js($row['_id']))" class="text-xs text-blue-600 hover:underline">view</button>
                                     </td>
                                 @endif
                             </tr>

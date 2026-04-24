@@ -5,6 +5,16 @@ declare(strict_types=1);
 return [
     'enabled' => env('QUEUE_INSIGHTS_ENABLED', true),
 
+    /*
+     | Redis connection NAME from config/database.php → redis.connections.
+     | This is not a database number — the DB lives on the chosen connection's
+     | `database` key.
+     |
+     | To use a dedicated DB: define a new connection in config/database.php
+     | with the desired `database` number, then point QUEUE_INSIGHTS_REDIS at
+     | that connection name. Keeps queue-insights keys isolated from Horizon /
+     | sessions / cache / queue state on shared Redis instances.
+     */
     'redis_connection' => env('QUEUE_INSIGHTS_REDIS', 'default'),
 
     'key_prefix' => env('QUEUE_INSIGHTS_KEY_PREFIX', 'qm:' . env('APP_ENV', 'production') . ':'),
@@ -21,6 +31,20 @@ return [
     'driver_overrides' => [],
 
     'capture' => [
+        /*
+         | Controls what the completed-jobs stream persists alongside metadata.
+         |
+         |   'off'      — no payload fields captured (default, safest).
+         |   'metadata' — displayName / maxTries / timeout / backoff only; no
+         |                user data, no serialized command body.
+         |   'full'     — raw body after the bound PayloadSanitizer pass, then
+         |                `redact_keys` regex pass + byte-cap.
+         |
+         | SECURITY: `full` stores serialized command bodies. Jobs may carry
+         | PII or auth secrets that the default KeyRedactingSanitizer cannot
+         | see inside `data.command`. Apps with sensitive jobs MUST bind a
+         | custom PayloadSanitizer. See SECURITY.md.
+         */
         'payloads' => env('QUEUE_INSIGHTS_CAPTURE_PAYLOADS', 'off'),
         'redact_keys' => ['password', 'token', 'secret', 'api_?key', 'authorization'],
         'max_field_bytes' => 2048,
