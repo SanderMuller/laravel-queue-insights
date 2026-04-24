@@ -112,11 +112,7 @@
         <h2 class="mb-3 text-lg font-semibold">
             Recent completed @if ($selectedClass)<span class="text-sm text-gray-500">({{ $selectedClass }})</span>@endif
         </h2>
-        @if (! $captureEnabled && count($recentCompleted) === 0)
-            <div class="rounded border border-dashed border-gray-300 bg-white p-6 text-sm text-gray-500">
-                Payload capture is off by default — set <code>QUEUE_INSIGHTS_CAPTURE_PAYLOADS=full</code> and configure a sanitizer to see job bodies.
-            </div>
-        @elseif (count($recentCompleted) === 0)
+        @if (count($recentCompleted) === 0)
             <div class="rounded border border-dashed border-gray-300 bg-white p-6 text-sm text-gray-500">
                 No completed jobs recorded yet.
             </div>
@@ -131,9 +127,7 @@
                             <th class="px-3 py-2">Duration</th>
                             <th class="px-3 py-2">Attempts</th>
                             <th class="px-3 py-2">At</th>
-                            @if ($captureEnabled)
-                                <th class="px-3 py-2">Payload</th>
-                            @endif
+                            <th class="px-3 py-2">Details</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -145,11 +139,9 @@
                                 <td class="px-3 py-2">{{ $row['duration_ms'] ?? '—' }} ms</td>
                                 <td class="px-3 py-2">{{ $row['attempts'] ?? '—' }}</td>
                                 <td class="px-3 py-2 text-gray-500">{{ $row['processed_at'] ?? '—' }}</td>
-                                @if ($captureEnabled)
-                                    <td class="px-3 py-2">
-                                        <button wire:click="openPayload(@js($row['_id']))" class="text-xs text-blue-600 hover:underline">view</button>
-                                    </td>
-                                @endif
+                                <td class="px-3 py-2">
+                                    <button wire:click="openPayload(@js($row['_id']))" class="text-xs text-blue-600 hover:underline">view</button>
+                                </td>
                             </tr>
                         @endforeach
                     </tbody>
@@ -191,15 +183,38 @@
         @endif
     </section>
 
-    {{-- Payload modal --}}
+    {{-- Details modal — three progressively richer tiers driven by `capture.payloads`:
+        off (default) → base metadata only, metadata → + sanitizer fields (displayName etc),
+        full → + redacted raw payload. The view button is always visible; the modal itself
+        explains which mode is active so consumers discover the capture.payloads setting
+        without source-diving. --}}
     @if ($selectedPayload !== null)
         <div class="fixed inset-0 flex items-center justify-center bg-black/40 p-4" wire:click="closePayload">
             <div class="max-h-[80vh] w-full max-w-2xl overflow-auto rounded bg-white p-5 shadow-lg" wire:click.stop>
                 <div class="mb-3 flex items-center justify-between">
-                    <h3 class="font-semibold">Payload</h3>
-                    <button wire:click="closePayload" class="text-sm text-gray-500 hover:underline">close</button>
+                    <h3 class="font-semibold">Details</h3>
+                    <div class="flex items-center gap-3">
+                        <span class="rounded bg-gray-100 px-2 py-0.5 text-xs uppercase tracking-wide text-gray-700">
+                            capture: {{ $captureMode }}
+                        </span>
+                        <button wire:click="closePayload" class="text-sm text-gray-500 hover:underline">close</button>
+                    </div>
                 </div>
                 <pre class="whitespace-pre-wrap break-all rounded bg-gray-50 p-3 text-xs">{{ json_encode($selectedPayload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) }}</pre>
+                @if ($captureMode === 'off')
+                    <p class="mt-3 text-xs text-gray-500">
+                        Capture is off — only base metadata is stored. Set
+                        <code>QUEUE_INSIGHTS_CAPTURE_PAYLOADS=metadata</code> for job-level details
+                        (displayName / timeout / backoff) or <code>=full</code> for sanitized
+                        payload bodies. Review <code>SECURITY.md</code> before enabling full.
+                    </p>
+                @elseif ($captureMode === 'metadata')
+                    <p class="mt-3 text-xs text-gray-500">
+                        Metadata-only capture — <code>displayName</code> / <code>maxTries</code>
+                        / <code>timeout</code> / <code>backoff</code>. No serialized command body.
+                        Set <code>=full</code> (with a sanitizer) for payload contents.
+                    </p>
+                @endif
             </div>
         </div>
     @endif

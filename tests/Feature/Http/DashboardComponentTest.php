@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
+use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\QueueInsightsServiceProvider;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -34,11 +35,6 @@ it('renders empty states when there is no configured queue or classes', function
         ->assertSee('No queues configured')
         ->assertSee('No processed jobs in the window')
         ->assertSee('No failed jobs recorded');
-});
-
-it('shows the "payload capture off" hint when no completed entries exist and capture is off', function (): void {
-    Livewire::test(QueueInsightsDashboard::class)
-        ->assertSee('Payload capture is off by default');
 });
 
 it('renders queue cards with driver badge, depth, and stale badge when no snapshot has run', function (): void {
@@ -78,7 +74,7 @@ it('shows the error badge when snapshot:error is set', function (): void {
     Livewire::test(QueueInsightsDashboard::class)->assertSee('error');
 });
 
-it('hides the Payload column when capture.payloads = off', function (): void {
+it('always shows the Details column regardless of capture.payloads', function (): void {
     config()->set('queue-insights.capture.payloads', 'off');
 
     $r = Redis::connection('default');
@@ -86,17 +82,25 @@ it('hides the Payload column when capture.payloads = off', function (): void {
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSee('App\\Foo')
-        ->assertDontSeeHtml('<th class="px-3 py-2">Payload</th>');
+        ->assertSeeHtml('<th class="px-3 py-2">Details</th>');
 });
 
-it('shows the Payload column when capture.payloads = metadata', function (): void {
-    config()->set('queue-insights.capture.payloads', 'metadata');
+it('shows the capture mode badge in the details modal header', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
 
     $r = Redis::connection('default');
     seedStream($r, KeyPrefix::make('completed'), ['class' => 'App\\Foo', 'queue' => 'default']);
 
+    // Resolve the real stream _id via QueueInsights, not via component internals —
+    // recentCompleted is a per-render local in render(), not a public Livewire property.
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'] ?? null;
+    expect($id)->toBeString();
+
     Livewire::test(QueueInsightsDashboard::class)
-        ->assertSeeHtml('<th class="px-3 py-2">Payload</th>');
+        ->call('openPayload', $id)
+        ->assertSee('capture: off')
+        ->assertSee('Capture is off');
 });
 
 it('selects a class and filters the recent completed table', function (): void {
