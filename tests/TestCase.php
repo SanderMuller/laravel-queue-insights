@@ -57,5 +57,7 @@ abstract class TestCase extends Orchestra
 
         $config->set('queue.default', 'sync');
         $config->set('queue.connections.sync', ['driver' => 'sync']);
+
+        $config->set('cache.default', 'array');
     }
 }
