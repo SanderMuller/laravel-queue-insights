@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Http\Livewire;
 
+use Carbon\CarbonInterface;
 use Illuminate\Contracts\View\View;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\View as ViewFactory;
@@ -110,7 +110,7 @@ final class QueueInsightsDashboard extends Component
             }
 
             $lastAt = $svc->lastSnapshotAt($connection, $canonical);
-            $stale = ! $lastAt instanceof Carbon || $lastAt->diffInSeconds(Date::now()) > 120;
+            $stale = ! $lastAt instanceof CarbonInterface || $lastAt->diffInSeconds(Date::now()) > 120;
 
             $driverRaw = config("queue.connections.{$connection}.driver", '—');
 

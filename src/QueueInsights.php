@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights;
 
+use Carbon\CarbonInterface;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
@@ -44,7 +44,7 @@ final class QueueInsights
         return is_string($value) && $value !== '' ? $value : null;
     }
 
-    public function lastSnapshotAt(string $connection, string $queue): ?Carbon
+    public function lastSnapshotAt(string $connection, string $queue): ?CarbonInterface
     {
         $result = $this->redis()->command('zrange', [
             KeyPrefix::make("depth:{$connection}:{$queue}"),

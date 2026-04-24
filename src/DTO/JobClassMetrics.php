@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\DTO;
 
-use Illuminate\Support\Carbon;
+use Carbon\CarbonInterface;
 
 final readonly class JobClassMetrics
 {
@@ -15,6 +15,6 @@ final readonly class JobClassMetrics
         public ?float $avgDurationMs,
         public ?int $maxDurationMs,
         public ?int $p95DurationMs,
-        public ?Carbon $lastRunAt,
+        public ?CarbonInterface $lastRunAt,
     ) {}
 }
