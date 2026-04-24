@@ -1,0 +1,49 @@
+name: phpstan
+
+permissions:
+  contents: read
+
+on:
+  push:
+    paths:
+      - '**.php'
+      - 'phpstan.neon.dist'
+      - 'phpstan-baseline.neon'
+      - '.github/workflows/phpstan.yml'
+  pull_request:
+    paths:
+      - '**.php'
+      - 'phpstan.neon.dist'
+      - 'phpstan-baseline.neon'
+      - '.github/workflows/phpstan.yml'
+
+concurrency:
+  group: phpstan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phpstan:
+    name: phpstan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Install composer dependencies
+        uses: ramsey/composer-install@v3
+
+      - name: Cache PHPStan results
+        uses: actions/cache@v4
+        with:
+          path: .cache/phpstan/
+          key: phpstan-result-cache-${{ hashFiles('composer.lock', 'phpstan.neon.dist') }}
+          restore-keys: phpstan-result-cache-
+
+      - name: Run PHPStan
+        run: ./vendor/bin/phpstan --error-format=github --no-interaction --memory-limit=2G

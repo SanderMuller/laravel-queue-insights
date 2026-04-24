@@ -1,0 +1,37 @@
+parameters:
+	ignoreErrors:
+		-
+			rawMessage: 'Parameter #1 $client of class SanderMuller\QueueInsights\Drivers\SqsSnapshotDriver constructor expects Aws\Sqs\SqsClient, Mockery\MockInterface given.'
+			identifier: argument.type
+			count: 5
+			path: tests/Feature/Drivers/SqsSnapshotDriverTest.php
+
+		-
+			rawMessage: 'Parameter #2 $job of class Illuminate\Queue\Events\JobProcessed constructor expects Illuminate\Contracts\Queue\Job, Mockery\MockInterface given.'
+			identifier: argument.type
+			count: 1
+			path: tests/Feature/Listeners/ListenerCaptureTest.php
+
+		-
+			rawMessage: 'Out of 200 possible param types, only 198 - 99.0 %% actually have it. Add more param types to get over 100 %%'
+			identifier: typeCoverage.paramTypeCoverage
+			count: 2
+			path: tests/TestCase.php
+
+		-
+			rawMessage: 'Function makeResolvableJob() should return Illuminate\Contracts\Queue\Job but returns Mockery\MockInterface.'
+			identifier: return.type
+			count: 1
+			path: tests/Unit/ResolveJobClassTest.php
+
+		-
+			rawMessage: 'Function makeUnresolvableJob() should return Illuminate\Contracts\Queue\Job but returns Mockery\MockInterface.'
+			identifier: return.type
+			count: 1
+			path: tests/Unit/ResolveJobClassTest.php
+
+		-
+			rawMessage: 'Parameter #2 $job of class Illuminate\Queue\Events\JobProcessed constructor expects Illuminate\Contracts\Queue\Job, Mockery\MockInterface given.'
+			identifier: argument.type
+			count: 1
+			path: tests/Unit/SanitizerTest.php

@@ -1,0 +1,94 @@
+{
+    "name": "sandermuller/laravel-queue-insights",
+    "description": "Self-hosted, driver-agnostic queue observability for Laravel. Per-class throughput, durations, failures, and live depth/in-flight/delayed metrics with a Livewire dashboard.",
+    "keywords": ["laravel", "queue", "observability", "sqs", "horizon", "metrics", "dashboard"],
+    "homepage": "https://github.com/SanderMuller/laravel-queue-insights",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Sander Muller",
+            "email": "sander@hihaho.com",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "aws/aws-sdk-php": "^3.0",
+        "illuminate/console": "^11.0||^12.0",
+        "illuminate/contracts": "^11.0||^12.0",
+        "illuminate/queue": "^11.0||^12.0",
+        "illuminate/redis": "^11.0||^12.0",
+        "illuminate/support": "^11.0||^12.0"
+    },
+    "require-dev": {
+        "driftingly/rector-laravel": "^2.3",
+        "larastan/larastan": "^3.9.3",
+        "laravel/boost": "^2.4.2",
+        "laravel/pint": "^1.29",
+        "livewire/livewire": "^3.0",
+        "mockery/mockery": "^1.6",
+        "mrpunyapal/rector-pest": "^0.2.7",
+        "nunomaduro/collision": "^8.0",
+        "orchestra/testbench": "^9.0||^10.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-arch": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "phpstan/extension-installer": "^1.4.3",
+        "phpstan/phpstan-deprecation-rules": "^2.0.4",
+        "phpstan/phpstan-phpunit": "^2.0.16",
+        "phpstan/phpstan-strict-rules": "^2.0.10",
+        "predis/predis": "^2.2",
+        "rector/rector": "^2.4.1",
+        "rector/type-perfect": "^2.1.2",
+        "sandermuller/package-boost": "^0.9.0",
+        "spaze/phpstan-disallowed-calls": "^4.10",
+        "symplify/phpstan-extensions": "^12.0.2",
+        "tomasvotruba/cognitive-complexity": "^1.1",
+        "tomasvotruba/type-coverage": "^2.1"
+    },
+    "suggest": {
+        "livewire/livewire": "Required only to use the bundled dashboard route. Capture + snapshot run without it."
+    },
+    "autoload": {
+        "psr-4": {
+            "SanderMuller\\QueueInsights\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SanderMuller\\QueueInsights\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "phpstan": "vendor/bin/phpstan analyse --memory-limit=2G",
+        "phpstan-simplified": "vendor/bin/phpstan analyse --memory-limit=2G --error-format symplify",
+        "phpstan-clear-cache": "vendor/bin/phpstan clear-result-cache",
+        "format": "vendor/bin/pint",
+        "rector": "vendor/bin/rector process",
+        "test": "vendor/bin/pest",
+        "test-coverage": "vendor/bin/pest --coverage",
+        "sync-ai": "vendor/bin/testbench package-boost:sync",
+        "qa": [
+            "@rector",
+            "@format",
+            "@phpstan-simplified"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "SanderMuller\\QueueInsights\\QueueInsightsServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true,
+            "phpstan/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
