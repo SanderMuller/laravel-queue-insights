@@ -2,6 +2,79 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0 - 2026-04-26
+
+### Highlights
+
+#### Dashboard redesign
+
+- White-on-white card stacks replaced with **compact divider lists** for Queues, Recent completed, and Recent failed. Rows are denser, scan faster, and use a shared `partials/*-row.blade.php` so the three lists keep identical spacing and column geometry.
+- **Body palette** flips to `bg-gray-50` so the white panels read as defined cards instead of floating on white-on-white. No section bars — each section is prefixed by a monochrome Heroicon (`gray-400`) plus a `text-lg` heading. Visual identity stays calm, scan stays fast.
+- **Column headers** anchor each list. Recent completed now has `Job · Queue · Runtime · Completed`; Recent failed has `Job · Queue · Failed`; Queues has `Queue · Depth · In-flight · Delayed · Wait · Status`. Fixes the floaty-numbers feel where a runtime value had no obvious label nearby.
+- **Chevron** on Recent completed rows so the click affordance matches Recent failed (operator no longer wonders whether the row is interactive).
+
+#### Headline stats panel
+
+Six Horizon-inspired stats sit beside the throughput sparkline as a `lg:col-span-2` + `1` grid — same total height as the sparkline alone, no completed/failed pushdown:
+
+| Metric             | Source                                                |
+| ------------------ | ----------------------------------------------------- |
+| Jobs / min         | `latest_hour.processed / 60`                          |
+| Jobs past hour     | `latest_hour.processed`                               |
+| Failed past hour   | `latest_hour.failed` (red when > 0)                   |
+| Max throughput     | `max(throughput[*].processed)` over 24h               |
+| Max wait p95       | `max(queues[*].wait_p95_ms)` (amber when > 5s)        |
+| Max runtime p95    | `max(classes[*].p95_ms)` from the 24h class roster    |
+
+All values derived from data already loaded for the dashboard render — zero new Redis round-trips.
+
+#### Recent completed filter
+
+Recent completed picks up the same filter row pattern Recent failed has. Five fields, URL-persistent state, narrows the 50-row default cap.
+
+| Field      | Query-string key | Match semantics                              |
+| ---------- | ---------------- | -------------------------------------------- |
+| Connection | `cc`             | Case-insensitive substring                   |
+| Queue      | `cqu`            | Case-insensitive substring                   |
+| Class      | `ck`             | Exact FQCN — picks a per-class Redis stream  |
+| From       | `cfrom`          | `processed_at >= <Y-m-d> 00:00:00`           |
+| To         | `cto`            | `processed_at <= <Y-m-d> 23:59:59`           |
+
+Class is pre-filtered at the storage layer (already-existing per-class `completed:{FQCN}` stream key); the other four narrow the fetched rows in PHP via a new `Support\CompletedRowFilter` value object.
+
+The Job classes section is dropped — the same per-class metric data still feeds the Class dropdown, so operators can still scope by class without scrolling to a separate panel.
+
+#### Filter dropdowns instead of free-text
+
+Connection, Queue, and Class are `<select>` dropdowns now in both Recent completed and Recent failed. Options come from the configured snapshots and the 24h class roster — no typo-prone free-text entry. Date inputs stay as native `<input type="date">`. The shared `partials/filter-form.blade.php` is included by both sections so they can never drift again.
+
+#### At-risk queues group
+
+Queues are split into two ringed panels:
+
+- **Needs attention** — queues with `error` or `stale` status. Red-ringed panel above the rest, sub-heading shows the count. A broken queue can't hide on page 2 of a long list.
+- **Healthy** — everything else. Same column header geometry, neutral gray ring.
+
+Rows still tint individually (red for error, amber for stale) so single-row state is visible after a glance, but the panel-level grouping makes the at-a-glance "is anything wrong?" answer one heading away.
+
+#### Workbench preview for contributors
+
+Adds a Testbench `Workbench/` scaffold so the dashboard can be previewed locally without wiring it up in a host application. `vendor/bin/testbench serve` (or pointing Herd at the package directory) boots a Livewire-mounted seeded dashboard at `/` with 6 example queues mixing healthy / backlog / stale / errored, 24h throughput, 5 completed rows, 4 failed rows, and 4 classes.
+
+- `public/index.php` — Herd entry that defines `TESTBENCH_WORKING_PATH` and delegates to `vendor/orchestra/testbench-core/laravel/bootstrap`.
+- `workbench/app/Http/Livewire/PreviewDashboard.php` — fresh Livewire component that renders `queue-insights::dashboard` with hardcoded seeded data; action methods are no-op stubs so modal opens / filter clears don't error during preview.
+- `workbench/app/Providers/WorkbenchServiceProvider.php` — registers the preview component and a `/` route.
+- `testbench.yaml` is now tracked (was previously gitignored), so contributors get the wired provider + array cache/session env out of the box.
+
+### Public API surface
+
+- New `#[Url]`-bound props on `QueueInsightsDashboard`: `completedFilterConnection` (`cc`), `completedFilterQueue` (`cqu`), `completedFilterFrom` (`cfrom`), `completedFilterTo` (`cto`). Existing `selectedClass` picks up `#[Url(as: 'ck')]` so it shares to the query string like its peers.
+- New public method `QueueInsightsDashboard::clearCompletedFilters()`.
+- New `Support\CompletedRowFilter` value object — immutable, mirrors the shape of the existing `Support\FailedJobFilters`. Exposes `apply(array $rows): array` and `isEmpty(): bool`.
+- New view partials under `resources/views/partials/` — `queue-row`, `completed-row`, `failed-list-row`, `filter-form`, `stat-tile`. Publishable by hosts that want to override row markup without forking the whole dashboard view.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.1.0...0.2.0
+
 ## 0.1.0 - 2026-04-26
 
 First public release of `sandermuller/laravel-queue-insights` — self-hosted, driver-agnostic queue observability for Laravel. Horizon-style dashboard without the Redis-queue lock-in.
@@ -90,6 +163,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 ```
 Service provider auto-discovers. See [README](https://github.com/SanderMuller/laravel-queue-insights/blob/main/README.md) for queue snapshot config, gate setup, and the embedding pattern.
