@@ -34,6 +34,10 @@ it('binds MetadataOnlySanitizer by default (capture = off)', function (): void {
     config()->set('queue-insights.capture.payloads', 'off');
     app()->forgetInstance(PayloadSanitizer::class);
 
+    // PHPStan infers the container binding's default match arm and reports the
+    // assertion as redundant/impossible — but `forgetInstance` + config flip is
+    // exactly what re-runs the binding closure with the new branch at runtime.
+    // @phpstan-ignore pest.redundantExpectation
     expect(resolve(PayloadSanitizer::class))->toBeInstanceOf(MetadataOnlySanitizer::class);
 });
 
@@ -41,6 +45,7 @@ it('binds MetadataOnlySanitizer when capture.payloads = metadata', function (): 
     config()->set('queue-insights.capture.payloads', 'metadata');
     app()->forgetInstance(PayloadSanitizer::class);
 
+    // @phpstan-ignore pest.redundantExpectation
     expect(resolve(PayloadSanitizer::class))->toBeInstanceOf(MetadataOnlySanitizer::class);
 });
 
@@ -48,6 +53,7 @@ it('binds KeyRedactingSanitizer when capture.payloads = full', function (): void
     config()->set('queue-insights.capture.payloads', 'full');
     app()->forgetInstance(PayloadSanitizer::class);
 
+    // @phpstan-ignore pest.impossibleExpectation
     expect(resolve(PayloadSanitizer::class))->toBeInstanceOf(KeyRedactingSanitizer::class);
 });
 
