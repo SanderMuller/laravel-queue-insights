@@ -39,13 +39,156 @@ final class PreviewDashboard extends Component
 
     public string $completedFilterTo = '';
 
-    public function openPayload(string $id): void {}
+    public string $expandedQueueKey = '';
 
-    public function openFailed(int $id): void {}
+    public function openPayload(string $id): void
+    {
+        $this->selectedPayloadId = $id;
+    }
+
+    public function openFailed(int $id): void
+    {
+        $this->selectedFailedId = $id;
+    }
+
+    public function closePayload(): void
+    {
+        $this->selectedPayloadId = null;
+    }
+
+    public function closeFailed(): void
+    {
+        $this->selectedFailedId = null;
+    }
+
+    /**
+     * Preview-only stub. Mirrors the real component's behaviour: close the
+     * failed-job modal + flash a success banner. No queue:retry call, no
+     * audit log — this is the workbench dashboard with seeded data, no real
+     * jobs to redispatch.
+     */
+    public function retryFailed(string $uuid): void
+    {
+        $this->selectedFailedId = null;
+        session()->flash('qi.retry.ok', "Retry dispatched (preview — uuid {$uuid}).");
+    }
+
+    public function retryFailedBulk(): void
+    {
+        session()->flash('qi.retry.ok', 'Retried N jobs (preview — no real dispatch).');
+    }
+
+    public function toggleQueueInspector(string $key): void
+    {
+        $this->expandedQueueKey = $this->expandedQueueKey === $key ? '' : $key;
+    }
 
     public function clearFailedFilters(): void
     {
         $this->reset(['filterConnection', 'filterQueue', 'filterClass', 'filterFrom', 'filterTo']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $q
+     * @return array<string, mixed>
+     */
+    private function seedInspectorFields(array $q, Carbon $now): array
+    {
+        $key = "{$q['connection']}:{$q['queue']}";
+        $isOpen = $this->expandedQueueKey === $key;
+        $seed = $q['pending_seed'] ?? 'empty';
+        unset($q['pending_seed']);
+
+        $pending = [];
+        $delayed = [];
+        $tracked = 0;
+        $gap = 0;
+
+        if ($seed === 'small') {
+            $pending = [
+                ['uuid' => 'p1', 'class' => 'App\\Jobs\\SendWelcomeEmail', 'queued_at' => $now->copy()->subSeconds(4)->getTimestamp(), 'available_at' => $now->copy()->subSeconds(4)->getTimestamp()],
+                ['uuid' => 'p2', 'class' => 'App\\Jobs\\SyncStripeCustomer', 'queued_at' => $now->copy()->subSeconds(18)->getTimestamp(), 'available_at' => $now->copy()->subSeconds(18)->getTimestamp()],
+            ];
+            $tracked = count($pending);
+        } elseif ($seed === 'mixed') {
+            $pending = [
+                ['uuid' => 'm1', 'class' => 'App\\Jobs\\ProcessImport', 'queued_at' => $now->copy()->subMinutes(2)->getTimestamp(), 'available_at' => $now->copy()->subMinutes(2)->getTimestamp()],
+            ];
+            $delayed = [
+                ['uuid' => 'm2', 'class' => 'App\\Jobs\\SendReminder', 'queued_at' => $now->copy()->subMinute()->getTimestamp(), 'available_at' => $now->copy()->addMinutes(2)->getTimestamp()],
+                ['uuid' => 'm3', 'class' => 'App\\Jobs\\WeeklyDigest', 'queued_at' => $now->copy()->subHour()->getTimestamp(), 'available_at' => $now->copy()->addHours(1)->getTimestamp()],
+            ];
+            $tracked = count($pending) + count($delayed);
+        } elseif ($seed === 'gap') {
+            // SQS-like: snapshot says depth=2480, our tracking only saw 3 jobs
+            // queued through Laravel's event flow → tracking gap.
+            $pending = [
+                ['uuid' => 'g1', 'class' => 'App\\Jobs\\GenerateReport', 'queued_at' => $now->copy()->subMinutes(8)->getTimestamp(), 'available_at' => $now->copy()->subMinutes(8)->getTimestamp()],
+            ];
+            $tracked = 3;
+            $gap = 2477;
+        }
+
+        return $q + [
+            'inspector_key' => $key,
+            'inspector_open' => $isOpen,
+            'inspector_disabled' => false,
+            'tracked_count' => $tracked,
+            'pending_gap' => $gap,
+            'pending_jobs' => $isOpen ? $pending : [],
+            'delayed_jobs' => $isOpen ? $delayed : [],
+        ];
+    }
+
+    /**
+     * Hydrate the failed-modal payload from the seeded list when a row is
+     * "open" via $selectedFailedId. Mirrors the real component's
+     * resolveSelectedFailed() behaviour but reads from in-memory seeds.
+     *
+     * @param  list<array<string, mixed>>  $failedRows
+     * @return array<string, mixed>|null
+     */
+    private function resolvePreviewSelectedFailed(array $failedRows): ?array
+    {
+        if ($this->selectedFailedId === null) {
+            return null;
+        }
+
+        foreach ($failedRows as $row) {
+            if (($row['id'] ?? null) === $this->selectedFailedId) {
+                return array_merge($row, [
+                    'uuid' => 'preview-uuid-' . $this->selectedFailedId,
+                    'payload' => json_encode([
+                        'displayName' => $row['display_name'] ?? 'App\\Jobs\\Preview',
+                        'maxTries' => $row['max_tries'] ?? 3,
+                        'attempts' => $row['attempts'] ?? 1,
+                    ]),
+                    'exception' => "{$row['exception_class']}: {$row['exception_message']}\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
+                    'wait_ms' => 250,
+                ]);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $completedRows
+     * @return array<string, mixed>|null
+     */
+    private function resolvePreviewSelectedPayload(array $completedRows): ?array
+    {
+        if ($this->selectedPayloadId === null) {
+            return null;
+        }
+
+        foreach ($completedRows as $row) {
+            if (($row['_id'] ?? null) === $this->selectedPayloadId) {
+                return array_merge($row, ['uuid' => 'preview-uuid-' . $row['_id'], 'wait_ms' => '180']);
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -86,8 +229,6 @@ final class PreviewDashboard extends Component
         $this->selectedClass = $class === $this->selectedClass ? null : $class;
     }
 
-    public function retryFailedBulk(): void {}
-
     public function render(): View
     {
         return ViewFactory::make('queue-insights::dashboard', $this->seedData());
@@ -98,14 +239,16 @@ final class PreviewDashboard extends Component
     {
         $now = Carbon::now();
 
-        $queues = [
-            ['connection' => 'redis', 'queue' => 'default', 'driver' => 'redis', 'depth' => 12, 'inflight' => 3, 'delayed' => 0, 'wait_p50_ms' => 42, 'wait_p95_ms' => 180, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subSeconds(8)],
-            ['connection' => 'redis', 'queue' => 'high', 'driver' => 'redis', 'depth' => 0, 'inflight' => 1, 'delayed' => 0, 'wait_p50_ms' => 15, 'wait_p95_ms' => 60, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subSeconds(2)],
-            ['connection' => 'redis', 'queue' => 'mail', 'driver' => 'redis', 'depth' => 450, 'inflight' => 5, 'delayed' => 120, 'wait_p50_ms' => 1200, 'wait_p95_ms' => 3400, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subSeconds(15)],
-            ['connection' => 'sqs', 'queue' => 'reports', 'driver' => 'sqs', 'depth' => 2480, 'inflight' => 8, 'delayed' => 0, 'wait_p50_ms' => 5400, 'wait_p95_ms' => 22000, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subMinute()],
-            ['connection' => 'redis', 'queue' => 'webhooks', 'driver' => 'redis', 'depth' => 3, 'inflight' => 0, 'delayed' => 0, 'wait_p50_ms' => null, 'wait_p95_ms' => null, 'error' => null, 'stale' => true, 'last_at' => $now->copy()->subMinutes(7)],
-            ['connection' => 'sqs', 'queue' => 'imports', 'driver' => 'sqs', 'depth' => '—', 'inflight' => '—', 'delayed' => '—', 'wait_p50_ms' => null, 'wait_p95_ms' => null, 'error' => 'AccessDenied: queue not found', 'stale' => false, 'last_at' => $now->copy()->subMinutes(2)],
+        $queueDefs = [
+            ['connection' => 'redis', 'queue' => 'default', 'driver' => 'redis', 'depth' => 12, 'inflight' => 3, 'delayed' => 0, 'wait_p50_ms' => 42, 'wait_p95_ms' => 180, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subSeconds(8), 'pending_seed' => 'small'],
+            ['connection' => 'redis', 'queue' => 'high', 'driver' => 'redis', 'depth' => 0, 'inflight' => 1, 'delayed' => 0, 'wait_p50_ms' => 15, 'wait_p95_ms' => 60, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subSeconds(2), 'pending_seed' => 'empty'],
+            ['connection' => 'redis', 'queue' => 'mail', 'driver' => 'redis', 'depth' => 450, 'inflight' => 5, 'delayed' => 120, 'wait_p50_ms' => 1200, 'wait_p95_ms' => 3400, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subSeconds(15), 'pending_seed' => 'mixed'],
+            ['connection' => 'sqs', 'queue' => 'reports', 'driver' => 'sqs', 'depth' => 2480, 'inflight' => 8, 'delayed' => 0, 'wait_p50_ms' => 5400, 'wait_p95_ms' => 22000, 'error' => null, 'stale' => false, 'last_at' => $now->copy()->subMinute(), 'pending_seed' => 'gap'],
+            ['connection' => 'redis', 'queue' => 'webhooks', 'driver' => 'redis', 'depth' => 3, 'inflight' => 0, 'delayed' => 0, 'wait_p50_ms' => null, 'wait_p95_ms' => null, 'error' => null, 'stale' => true, 'last_at' => $now->copy()->subMinutes(7), 'pending_seed' => 'empty'],
+            ['connection' => 'sqs', 'queue' => 'imports', 'driver' => 'sqs', 'depth' => '—', 'inflight' => '—', 'delayed' => '—', 'wait_p50_ms' => null, 'wait_p95_ms' => null, 'error' => 'AccessDenied: queue not found', 'stale' => false, 'last_at' => $now->copy()->subMinutes(2), 'pending_seed' => 'empty'],
         ];
+
+        $queues = array_map(fn (array $q): array => $this->seedInspectorFields($q, $now), $queueDefs);
 
         $throughput = [];
         for ($i = 23; $i >= 0; $i--) {
@@ -155,19 +298,35 @@ final class PreviewDashboard extends Component
             'completedRows' => $completedRows,
             'failedRows' => $failedRows,
             'selectedClass' => $this->selectedClass,
-            'selectedPayload' => null,
-            'selectedFailed' => null,
+            'selectedPayload' => $this->resolvePreviewSelectedPayload($completedRows),
+            'selectedFailed' => $this->resolvePreviewSelectedFailed($failedRows),
             'payloadTab' => $this->payloadTab,
             'throughput' => $throughput,
             'stats' => $this->seedStats($throughput, $queues, $classes),
-            'failedFiltersActive' => false,
+            'failedFiltersActive' => $this->filterConnection !== ''
+                || $this->filterQueue !== ''
+                || $this->filterClass !== ''
+                || $this->filterFrom !== ''
+                || $this->filterTo !== '',
+            'pendingGapWarnThreshold' => 5,
             'completedFiltersActive' => $this->selectedClass !== null
                 || $this->completedFilterConnection !== ''
                 || $this->completedFilterQueue !== ''
                 || $this->completedFilterFrom !== ''
                 || $this->completedFilterTo !== '',
-            'canRetry' => false,
-            'bulkRetryCount' => null,
+            // Preview-only: the real component reads $canRetry from
+            // Gate::has('retryFailedJobs') && Gate::allows(...). We define the
+            // gate permissively in WorkbenchServiceProvider so the UI is
+            // demo-able locally; downstream apps still need to opt in.
+            'canRetry' => true,
+            // When filters are active, surface a non-null count so the
+            // bulk-retry button materialises in preview. Real component
+            // computes this from the filtered failed-jobs query.
+            'bulkRetryCount' => ($this->filterConnection !== ''
+                || $this->filterQueue !== ''
+                || $this->filterClass !== ''
+                || $this->filterFrom !== ''
+                || $this->filterTo !== '') ? count($failedRows) : null,
         ];
     }
 }
