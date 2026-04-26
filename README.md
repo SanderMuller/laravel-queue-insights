@@ -12,9 +12,10 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 
 - Live depth, in-flight, and delayed counts per queue. Works on SQS, Redis, and database queues.
 - Wait time per queue (p50 / p95) and per job. Measures enqueue to worker pickup.
-- 24h throughput sparkline (processed + failed) with hover tooltips per hour.
+- 24h throughput sparkline (processed + failed) with hover tooltips per hour, alongside a headline-stats panel: jobs/min, jobs past hour, failed past hour, max throughput hour, max wait p95, max runtime p95.
+- Queues grouped into *Needs attention* (errored or stale) and *Healthy* so a broken queue can't hide in a long list.
 - Per-job-class metrics: 24h processed and failed, average and max duration, last run.
-- Recent completed jobs. Metadata-only by default; opt-in payload capture with a pluggable sanitizer.
+- Recent completed jobs. Metadata-only by default; opt-in payload capture with a pluggable sanitizer. Filter row mirrors the failed-jobs filter (connection, queue, class, from, to).
 - Recent failed jobs from Laravel's `failed_jobs` table, with a filter row over connection, queue, class, and date range. Filters persist in the URL.
 - Retry failed jobs from the dashboard, single or bulk. Gated, rate-limited, and audit-logged.
 - Markdown export of failed-job details for handing off to an AI agent or pasting into a tracker.
@@ -85,29 +86,45 @@ Guards on the retry path:
 
 To triage a failed job:
 
-1. Open the dashboard and find the row in the **Recent failed** table.
-2. Optional: click **Filter ⌄** above the table and narrow by connection, queue, class FQCN, or date range. The URL updates as you type, so the filtered view is shareable.
+1. Open the dashboard and find the row in the **Recent failed** list.
+2. Optional: click **Filter ⌄** above the list and narrow by connection, queue, class, or date range. The URL updates as you change a field, so the filtered view is shareable.
 3. Click any row to open the failed-job modal. You'll see the exception, stack trace, payload, and metadata.
 4. To retry one job, click *Retry* in the modal header. The button flips to a red "Confirm retry?" for two seconds; click again to fire. The modal closes and a green banner confirms dispatch. If `queue:retry` exits non-zero, you get a red banner instead of a misleading success.
-5. To retry several at once, set at least one filter. A *Retry N jobs* button appears next to the table heading, with the same two-click confirm pattern. Anything matching more than 100 rows shows a *N matches · narrow to retry* hint instead of an action button.
+5. To retry several at once, set at least one filter. A *Retry N jobs* button appears next to the section heading, with the same two-click confirm pattern. Anything matching more than 100 rows shows a *N matches · narrow to retry* hint instead of an action button.
 
 A failed retry never leaves the dashboard in a half-broken state. The row is either re-dispatched (and removed from `failed_jobs`) or left alone.
 
-### Failed-jobs filter
+### Filtering
 
-The filter row is collapsed by default. Click **Filter ⌄** above the *Recent failed* table to expand it. Each field binds to a short query-string key, so a narrowed view is shareable and bookmarkable:
+Both *Recent completed* and *Recent failed* have a collapsible filter row above the list. Click **Filter ⌄** to expand. Each field binds to a short query-string key, so a narrowed view is shareable and bookmarkable.
 
-| Field      | Query-string key | Match semantics                                                              |
-|------------|------------------|------------------------------------------------------------------------------|
-| Connection | `fc`             | Exact (`connection` column)                                                  |
-| Queue      | `fq`             | Exact (`queue` column)                                                       |
-| Class      | `fk`             | Anchored prefix substring on `payload.displayName`, case-insensitive         |
-| From       | `ffrom`          | `failed_at >= <Y-m-d> 00:00:00`                                              |
-| To         | `fto`            | `failed_at <= <Y-m-d> 23:59:59`                                              |
+Connection, Queue, and Class are populated as `<select>` dropdowns from the configured snapshots and the 24h class roster — no free-text typos.
 
-The class filter avoids JSON-extract syntax, which diverges across MySQL, Postgres, and SQLite. Instead it runs `LOWER(payload) LIKE '%"displayname":"<input>%'`, which produces the same match set on all three. Searching for `App\Jobs\Send` matches `App\Jobs\SendEmail` and `App\Jobs\SendReceipt` but won't false-match an unrelated argument value that happens to contain the same substring.
+#### Recent failed filter
 
-The filter row also drives the bulk-retry scope. The *Retry N jobs* button retries the same set the table is showing.
+| Field      | Query-string key | Match semantics                                                      |
+|------------|------------------|----------------------------------------------------------------------|
+| Connection | `fc`             | Exact (`connection` column)                                          |
+| Queue      | `fq`             | Exact (`queue` column)                                               |
+| Class      | `fk`             | Anchored prefix substring on `payload.displayName`, case-insensitive |
+| From       | `ffrom`          | `failed_at >= <Y-m-d> 00:00:00`                                      |
+| To         | `fto`            | `failed_at <= <Y-m-d> 23:59:59`                                      |
+
+The class filter avoids JSON-extract syntax, which diverges across MySQL, Postgres, and SQLite. Instead it runs `LOWER(payload) LIKE '%"displayname":"<input>%'`, which produces the same match set on all three. Picking `App\Jobs\SendEmail` matches that exact class, and the underlying `LIKE` semantics still anchor the prefix so e.g. selecting a parent namespace would match its descendants.
+
+The filter row also drives the bulk-retry scope. The *Retry N jobs* button retries the same set the list is showing.
+
+#### Recent completed filter
+
+Same five fields, separate state, separate query-string keys. Class is pre-filtered at the storage layer (per-class Redis stream key); the other four narrow the already-fetched 50-row default cap in PHP.
+
+| Field      | Query-string key | Match semantics                                          |
+|------------|------------------|----------------------------------------------------------|
+| Connection | `cc`             | Case-insensitive substring                               |
+| Queue      | `cqu`            | Case-insensitive substring                               |
+| Class      | `ck`             | Exact FQCN — picks a single per-class stream             |
+| From       | `cfrom`          | `processed_at >= <Y-m-d> 00:00:00`                       |
+| To         | `cto`            | `processed_at <= <Y-m-d> 23:59:59`                       |
 
 ### Wait time
 
@@ -115,7 +132,7 @@ Wait time is the gap between enqueue and worker pickup. Duration is the gap betw
 
 It shows up in two places:
 
-- Queue cards show a `wait p50 / p95` line, computed over the most recent 1000 jobs on that queue and refreshed every poll. Shows `—` until 10 samples have accumulated.
+- Queue rows show a `p50 / p95` Wait column, computed over the most recent 1000 jobs on that queue and refreshed every poll. Shows `—` until 10 samples have accumulated.
 - The completed-job and failed-job modals show `wait <human> (NN ms)` next to the Duration row. Shows `—` for jobs queued before the `JobQueued` listener was wired, and for drivers that don't stamp `payload.uuid`.
 
 Capture is automatic. Installing the package wires an `Illuminate\Queue\Events\JobQueued` listener that records the enqueue timestamp, so no host-app config is needed. The cost per job is one Redis `SETEX` at push, plus a `GET` + `ZADD` + `ZREMRANGEBYRANK` + `EXPIRE` chain at worker pickup. Retention: 1h on the per-uuid `pushed:` key, 7d on the per-uuid `wait:` sample, rolling 1000 most-recent on the per-queue ZSET.
