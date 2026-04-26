@@ -26,7 +26,6 @@ beforeEach(function (): void {
  * _id, returns the Livewire testable.
  *
  * @param  array<string, string>  $fields
- * @return Testable<QueueInsightsDashboard>
  */
 function openDetailsModal(array $fields): Testable
 {

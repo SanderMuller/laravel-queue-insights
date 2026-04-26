@@ -161,15 +161,22 @@ it('retryFailedBulk denies when the gate rejects', function (): void {
 it('logs an audit entry on successful retry', function (): void {
     $row = seedRetryRow();
 
-    Log::shouldReceive('info')
+    // `spy()` instead of `shouldReceive()` — strict mocking of the Log
+    // facade explodes on unrelated calls (Livewire 3.0's deprecation path
+    // hits `Log::channel(...)` on some prefer-lowest matrix cells, and a
+    // strict mock would BadMethodCallException on the unhandled call).
+    // Spy permits all calls; we assert the audit `info` line after the act.
+    $logSpy = Log::spy();
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('retryFailed', $row['uuid']);
+
+    $logSpy->shouldHaveReceived('info')
         ->once()
         ->withArgs(fn (string $message, array $context): bool => $message === 'queue-insights.retry'
             && ($context['kind'] ?? null) === 'single'
             && ($context['count'] ?? null) === 1
             && ($context['uuids'] ?? null) === [$row['uuid']]);
-
-    Livewire::test(QueueInsightsDashboard::class)
-        ->call('retryFailed', $row['uuid']);
 });
 
 it('hides the bulk Retry button when no filter is active', function (): void {
@@ -222,7 +229,13 @@ it('audit log sanitizes user-controlled filter strings (control bytes neutralise
     // bloats audit logs. Both defended by sanitizeAuditField().
     $row = seedRetryRow();
 
-    Log::shouldReceive('info')
+    $logSpy = Log::spy();
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->set('filterClass', "App\\Foo\nBar\rBaz" . str_repeat('x', 200))
+        ->call('retryFailed', $row['uuid']);
+
+    $logSpy->shouldHaveReceived('info')
         ->once()
         ->withArgs(function (string $message, array $context): bool {
             $filters = $context['filters'] ?? [];
@@ -236,10 +249,6 @@ it('audit log sanitizes user-controlled filter strings (control bytes neutralise
                 && ! str_contains($class, "\r")
                 && mb_strlen($class) <= 80;
         });
-
-    Livewire::test(QueueInsightsDashboard::class)
-        ->set('filterClass', "App\\Foo\nBar\rBaz" . str_repeat('x', 200))
-        ->call('retryFailed', $row['uuid']);
 });
 
 it('flash banner renders the success message after a retry', function (): void {
