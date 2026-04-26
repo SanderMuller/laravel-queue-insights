@@ -34,13 +34,32 @@ jobs:
         laravel: ['11.*', '12.*']
         stability: [prefer-lowest, prefer-stable]
         redis-client: [predis, phpredis]
+        # Empty default for `livewire-pin` keeps the cross-product on natural
+        # resolver behaviour (prefer-lowest → Livewire 3.0; prefer-stable →
+        # Livewire 4.x latest). The non-empty value on the explicit include
+        # cell below means it does NOT match any cross-product cell (per
+        # GitHub Actions matrix-include semantics, all matrix keys must
+        # match for an include to merge), so it becomes an additional job.
+        livewire-pin: ['']
         include:
           - laravel: '11.*'
             testbench: '9.*'
           - laravel: '12.*'
             testbench: '10.*'
+          # Explicit "Livewire 3 latest" cell. The cross-product gives us:
+          #   - prefer-lowest → Livewire 3.0    (v3 oldest)
+          #   - prefer-stable → Livewire 4.x    (v4 latest)
+          # The missing leg is v3-latest (operators on Livewire 3.7+ who
+          # haven't upgraded yet). This pin forces composer to install a
+          # ^3.0 release with prefer-stable, covering that path.
+          - php: '8.4'
+            laravel: '12.*'
+            testbench: '10.*'
+            stability: prefer-stable
+            redis-client: predis
+            livewire-pin: '^3.0'
 
-    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.redis-client }}
+    name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.redis-client }}${{ matrix.livewire-pin && format(' - LW{0}', matrix.livewire-pin) || '' }}
 
     services:
       redis:
@@ -60,6 +79,16 @@ jobs:
           extensions: dom, curl, libxml, mbstring, zip, pcntl, redis, sqlite
           coverage: none
 
+      # Node is required for the layer-2 XSS sink-execution test (see spec §3 +
+      # Phase 3 + Resolved Q #17). Pinned to 22 (Maintenance LTS through 2027-04).
+      # ubuntu-latest's default Node version is guaranteed to exist but not pinned
+      # to a specific major — setup-node locks the runtime so a future runner image
+      # bump can't silently change what the test runs against.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Setup problem matchers
         run: |
           echo "::add-matcher::${{ runner.tool_cache }}/php.json"
@@ -68,6 +97,9 @@ jobs:
       - name: Install dependencies
         run: |
           composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          if [ -n "${{ matrix.livewire-pin }}" ]; then
+            composer require "livewire/livewire:${{ matrix.livewire-pin }}" --dev --no-interaction --no-update
+          fi
           composer update --${{ matrix.stability }} --prefer-dist --no-interaction
 
       - name: List Installed Dependencies
