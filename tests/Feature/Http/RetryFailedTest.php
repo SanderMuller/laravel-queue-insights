@@ -163,10 +163,13 @@ it('logs an audit entry on successful retry', function (): void {
 
     // `spy()` instead of `shouldReceive()` — strict mocking of the Log
     // facade explodes on unrelated calls (Livewire 3.0's deprecation path
-    // hits `Log::channel(...)` on some prefer-lowest matrix cells, and a
-    // strict mock would BadMethodCallException on the unhandled call).
-    // Spy permits all calls; we assert the audit `info` line after the act.
+    // chains `Log::channel(...)->warning(...)` on some prefer-lowest matrix
+    // cells, and a strict mock would BadMethodCallException on the unhandled
+    // `channel()` call). Spy permits all calls; the explicit `channel()->
+    // andReturnSelf()` keeps the chain alive (default spy returns null,
+    // which would NPE on the `->warning(...)` step).
     $logSpy = Log::spy();
+    $logSpy->shouldReceive('channel')->andReturnSelf();
 
     Livewire::test(QueueInsightsDashboard::class)
         ->call('retryFailed', $row['uuid']);
@@ -230,6 +233,7 @@ it('audit log sanitizes user-controlled filter strings (control bytes neutralise
     $row = seedRetryRow();
 
     $logSpy = Log::spy();
+    $logSpy->shouldReceive('channel')->andReturnSelf();
 
     Livewire::test(QueueInsightsDashboard::class)
         ->set('filterClass', "App\\Foo\nBar\rBaz" . str_repeat('x', 200))

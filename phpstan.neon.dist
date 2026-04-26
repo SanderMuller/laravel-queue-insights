@@ -43,6 +43,24 @@ parameters:
             identifier: trait.unused
             reportUnmatched: false
 
+        # Livewire's Testable became generic (`Testable<TComponent>`) in v4 but
+        # was non-generic in v3. Our composer constraint is `^3.0 || ^4.0` so
+        # PHPStan sees a different shape depending on which Livewire is locked
+        # in the dev install:
+        #   - PHPStan-on-v4 wants `@return Testable<TComponent>`
+        #   - PHPStan-on-v3 rejects the generic as "Testable is not generic"
+        # No single PHPDoc satisfies both. The helper below is local to one
+        # test file; we ignore both error identifiers for that path so the
+        # matrix stays green across the dual-Livewire support window.
+        -
+            identifier: missingType.generics
+            path: tests/Feature/Http/DetailsModalTest.php
+            reportUnmatched: false
+        -
+            identifier: generics.notGeneric
+            path: tests/Feature/Http/DetailsModalTest.php
+            reportUnmatched: false
+
         # Pest $this->fail() in closures — PHPStan can't resolve $this to TestCase
         -
             identifier: method.notFound
