@@ -9,6 +9,7 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Component as LivewireComponent;
@@ -21,6 +22,7 @@ use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
+use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
@@ -120,6 +122,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
             return;
         }
 
+        $events->listen(JobQueued::class, RecordJobQueued::class);
         $events->listen(JobProcessing::class, RecordJobProcessing::class);
         $events->listen(JobProcessed::class, RecordJobProcessed::class);
         $events->listen(JobFailed::class, RecordJobFailed::class);

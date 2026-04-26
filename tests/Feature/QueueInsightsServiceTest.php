@@ -170,3 +170,36 @@ it('reads recent completed entries scoped to a class', function (): void {
 
     expect($entries)->toHaveCount(2);
 });
+
+it('hourlyThroughput returns a 24-bucket timeline of zeros by default', function (): void {
+    $series = resolve(QueueInsights::class)->hourlyThroughput();
+
+    expect($series)->toHaveCount(24)
+        ->and($series[0])->toMatchArray(['processed' => 0, 'failed' => 0])
+        ->and($series[23])->toMatchArray(['processed' => 0, 'failed' => 0]);
+});
+
+it('hourlyThroughput sums processed + failed counters across classes per hour bucket', function (): void {
+    $r = Redis::connection('default');
+    $now = Date::now('UTC');
+    $thisHour = $now->format('YmdH');
+    $lastHour = $now->copy()->subHour()->format('YmdH');
+
+    // Two classes contributing to the current hour.
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\A']);
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\B']);
+    $r->command('set', [KeyPrefix::make("processed:App\\A:{$thisHour}"), '5']);
+    $r->command('set', [KeyPrefix::make("processed:App\\B:{$thisHour}"), '3']);
+    $r->command('set', [KeyPrefix::make("failed:App\\A:{$thisHour}"), '1']);
+
+    // One class contributing to the previous hour.
+    $r->command('set', [KeyPrefix::make("processed:App\\A:{$lastHour}"), '10']);
+
+    $series = resolve(QueueInsights::class)->hourlyThroughput();
+
+    expect($series)->toHaveCount(24);
+
+    // Oldest first → current hour is last, previous hour second-to-last.
+    expect($series[23])->toMatchArray(['processed' => 8, 'failed' => 1])
+        ->and($series[22])->toMatchArray(['processed' => 10, 'failed' => 0]);
+});

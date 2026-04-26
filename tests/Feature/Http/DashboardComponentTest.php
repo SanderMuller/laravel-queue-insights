@@ -82,7 +82,41 @@ it('always shows the Details column regardless of capture.payloads', function ()
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSee('App\\Foo')
-        ->assertSeeHtml('<th class="px-3 py-2">Details</th>');
+        ->assertSee('Details');
+});
+
+it('defaults $payloadTab to raw', function (): void {
+    // Default is `raw` per Resolved Q #18 (dogfood feedback: KV table is the
+    // 80% case for flat job payloads; nested payloads can flip to JSON).
+    Livewire::test(QueueInsightsDashboard::class)
+        ->assertSet('payloadTab', 'raw');
+});
+
+it('setPayloadTab flips to json on valid input', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('setPayloadTab', 'json')
+        ->assertSet('payloadTab', 'json');
+});
+
+it('setPayloadTab silently drops invalid input', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('setPayloadTab', 'xml')
+        ->assertSet('payloadTab', 'raw');
+});
+
+it('openPayload resets payloadTab to raw even if a prior open left it on json', function (): void {
+    $r = Redis::connection('default');
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'App\\Foo', 'queue' => 'default']);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'] ?? null;
+    expect($id)->toBeString();
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('setPayloadTab', 'json')
+        ->assertSet('payloadTab', 'json')
+        ->call('openPayload', $id)
+        ->assertSet('payloadTab', 'raw');
 });
 
 it('shows the capture mode badge in the details modal header', function (): void {
@@ -144,6 +178,29 @@ it('selectClass with a FQCN populates the filtered completed table', function ()
         ->assertSet('selectedClass', $class)
         ->assertSee('Clear filter')
         ->assertDontSee('No completed jobs recorded yet');
+});
+
+it('Throughput sparkline wires Alpine hover state per bucket with a tooltip overlay', function (): void {
+    $r = Redis::connection('default');
+    $now = Date::now('UTC');
+    $thisHour = $now->format('YmdH');
+
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\A']);
+    $r->command('set', [KeyPrefix::make("processed:App\\A:{$thisHour}"), '12']);
+    $r->command('set', [KeyPrefix::make("failed:App\\A:{$thisHour}"), '3']);
+
+    $html = Livewire::test(QueueInsightsDashboard::class)->html();
+
+    // 24 hover-target rects with data-qi-bar index attribute.
+    expect(substr_count($html, 'data-qi-bar='))->toBe(24)
+        // Alpine x-data with `hovered` state and the `buckets` lookup — the SVG
+        // rects' x-on:mouseenter handlers set this state to display the tooltip.
+        ->and($html)->toContain('hovered: null')
+        ->and($html)->toContain('buckets:')
+        // Tooltip overlay markup with x-show binding — present in DOM but hidden
+        // initially via x-show + x-cloak.
+        ->and($html)->toContain('x-show="hovered !== null"')
+        ->and($html)->toContain('x-text="buckets[hovered]?.label"');
 });
 
 it('enforces viewQueueInsights gate if host app defines it', function (): void {

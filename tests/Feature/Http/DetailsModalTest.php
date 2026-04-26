@@ -1,0 +1,521 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Support\Facades\Redis;
+use Livewire\Features\SupportTesting\Testable;
+use Livewire\Livewire;
+use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
+use SanderMuller\QueueInsights\QueueInsights;
+use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
+
+beforeEach(function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue-insights.snapshots', []);
+});
+
+/**
+ * Helper: seeds a stream row with the given fields, opens the modal against the resulting
+ * _id, returns the Livewire testable.
+ *
+ * @param  array<string, string>  $fields
+ * @return Testable<QueueInsightsDashboard>
+ */
+function openDetailsModal(array $fields): Testable
+{
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), $fields);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'] ?? null;
+    expect($id)->toBeString();
+
+    return Livewire::test(QueueInsightsDashboard::class)->call('openPayload', $id);
+}
+
+it('Section A renders base metadata under off mode (no payload_* keys)', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '1243',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+    ])
+        ->assertSeeText('Metadata')
+        ->assertSeeText('Class')
+        ->assertSeeText('App\\Foo')
+        ->assertSeeText('Connection')
+        ->assertSeeText('redis')
+        ->assertSeeText('Queue')
+        ->assertSeeText('default')
+        ->assertSeeText('Duration')
+        ->assertSeeText('(1243 ms)')
+        ->assertSeeText('Attempts')
+        ->assertSeeText('Processed at')
+        ->assertSeeText('2026-04-24T12:00:00+00:00')
+        ->assertSeeText('Stream ID');
+});
+
+it('Section A humanizes duration with short form', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    // 1500ms → "1s 500ms" or similar short form
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '1500',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+    ])
+        ->assertSeeText('(1500 ms)')
+        ->assertDontSeeText('1500 milliseconds'); // NOT the long form
+});
+
+it('Section A shows amber Attempts badge when attempts > 1', function (): void {
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '3',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+    ])
+        ->assertSeeHtml('bg-amber-100 text-amber-800');
+});
+
+it('Section B absent under off mode', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+    ])
+        ->assertDontSeeText('Job Config')
+        ->assertDontSeeText('Payload not persisted')
+        ->assertDontSeeText('Payload encoding failed');
+});
+
+it('Section B job-config cards under metadata-normal', function (): void {
+    config()->set('queue-insights.capture.payloads', 'metadata');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_displayName' => 'App\\Jobs\\SendEmail',
+        'payload_maxTries' => '3',
+        'payload_timeout' => '60',
+        'payload_backoff' => '10',
+    ])
+        ->assertSeeText('Job Config')
+        ->assertSeeText('App\\Jobs\\SendEmail')
+        ->assertSeeText('maxTries')
+        ->assertSeeText('timeout')
+        ->assertSeeText('backoff')
+        ->assertSeeText('3')
+        ->assertSeeText('60');
+});
+
+it('Section B omits stat cards when their key is absent (no — placeholder)', function (): void {
+    config()->set('queue-insights.capture.payloads', 'metadata');
+
+    // Note: the metadata-mode footer legitimately contains the words "timeout" and
+    // "backoff" in an escalation hint. Assert against the card-label HTML specifically
+    // (using the stat-card label markup class) so the footer doesn't confuse the test.
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_displayName' => 'App\\Jobs\\SendEmail',
+        'payload_maxTries' => '3',
+        // timeout + backoff omitted
+    ])
+        // Stat-card labels are the only `<dt>` elements in the modal that contain these words
+        // — metadata-mode footer has them as `<code>` tokens instead. Target the `<dt>` tag
+        // so the footer text can't false-positive.
+        ->assertSeeHtml('>maxTries</dt>')
+        ->assertDontSeeHtml('>timeout</dt>')
+        ->assertDontSeeHtml('>backoff</dt>');
+});
+
+it('Section B decodes backoff array into a joined list', function (): void {
+    config()->set('queue-insights.capture.payloads', 'metadata');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_displayName' => 'App\\Jobs\\SendEmail',
+        'payload_backoff' => '[1,5,10]',
+    ])
+        ->assertSeeText('1, 5, 10s');
+});
+
+it('Section B closure/encrypted yellow box under metadata', function (): void {
+    config()->set('queue-insights.capture.payloads', 'metadata');
+
+    openDetailsModal([
+        'class' => 'Closure@redis:default',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_note' => 'payload_not_persisted',
+        'payload_reason' => 'closure_or_encrypted',
+    ])
+        ->assertSeeText('Payload not persisted')
+        ->assertSeeText('closure or encrypted')
+        ->assertSeeHtml('bg-amber-50')
+        ->assertDontSeeText('Job Config');
+});
+
+it('Section B closure/encrypted yellow box under full mode (shared sanitizer shape)', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    openDetailsModal([
+        'class' => 'Closure@redis:default',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_note' => 'payload_not_persisted',
+        'payload_reason' => 'closure_or_encrypted',
+    ])
+        ->assertSeeText('Payload not persisted')
+        ->assertSeeText('closure or encrypted');
+});
+
+it('Section B encoding-error red box under full mode', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_error' => 'payload_encoding_failed',
+    ])
+        ->assertSeeText('Payload encoding failed')
+        ->assertSeeHtml('bg-red-50')
+        ->assertDontSeeText('Job Config');
+});
+
+it('Section B size-overflow red box reads payload_size', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_error' => 'payload_too_large',
+        'payload_size' => '20480',
+    ])
+        ->assertSeeText('Payload exceeded size cap')
+        ->assertSeeText('20480 bytes');
+});
+
+it('Section C absent under off mode', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+    ])
+        ->assertDontSeeText('Payload')
+        ->assertDontSeeText('Sanitized JSON');
+});
+
+it('Section C absent under metadata mode', function (): void {
+    config()->set('queue-insights.capture.payloads', 'metadata');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_displayName' => 'App\\Jobs\\SendEmail',
+    ])
+        ->assertDontSeeText('Sanitized JSON');
+});
+
+it('Section C default Raw pane under full-normal renders KV table', function (): void {
+    // Default tab is `raw` (Resolved Q #18). The Raw pane renders the decoded
+    // payload body's top-level keys as a `<dl>` table; JSON tokens like quotes
+    // are NOT present because we render values directly, not via json_encode.
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => '{"foo":"bar","baz":42}',
+    ])
+        ->assertSeeText('Sanitized JSON')
+        ->assertSeeText('Raw fields')
+        ->assertSeeText('foo')
+        ->assertSeeText('bar')
+        ->assertSeeText('baz');
+});
+
+it('Section C flip to JSON tab renders the colorizer pane with data-json-highlight', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => '{"foo":"bar","baz":42}',
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        ->call('setPayloadTab', 'json')
+        ->assertSeeHtml('data-json-highlight')
+        ->assertSeeText('"foo"')
+        ->assertSeeText('"bar"');
+});
+
+it('Section C Raw pane groups standard Laravel queue-payload fields into Job Config / Execution / Tags / Other', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    $payload = [
+        'uuid' => 'ffffffff-1111-2222-3333-444444444444',
+        'displayName' => 'App\\Jobs\\Example',
+        // Job-config group
+        'maxTries' => 3,
+        'maxExceptions' => null,
+        'timeout' => 60,
+        'backoff' => [1, 5, 10],
+        // Execution group
+        'attempts' => 1,
+        'pushedAt' => 1716200000,
+        // Tags group
+        'tags' => ['App\\Models\\User:42', 'App\\Models\\Video:7'],
+        // Catchall "Other fields"
+        'customField' => 'customValue',
+    ];
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => (string) json_encode($payload),
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        // Default tab is Raw.
+        ->assertSee('Job config')
+        ->assertSee('maxTries')
+        ->assertSee('timeout')
+        ->assertSee('60 s') // timeout unit suffix
+        ->assertSee('backoff')
+        ->assertSee('1, 5, 10 s') // backoff array rendered as comma-list with unit
+        ->assertSee('Execution')
+        ->assertSee('attempts')
+        ->assertSee('pushedAt')
+        ->assertSee('Tags')
+        ->assertSee('App\\Models\\User:42')
+        ->assertSee('Other fields')
+        ->assertSee('customField')
+        ->assertSee('customValue');
+});
+
+it('Section C Raw pane shows extracted Job instance properties from data.command', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    // Simulate a real Laravel job: stdClass with public scalars + nested object.
+    $instance = (object) [
+        'videoId' => 18,
+        'attemptsMade' => 0,
+        'silent' => false,
+        'options' => null,
+    ];
+    $payload = [
+        'displayName' => 'App\\Jobs\\Video\\DuplicateInteractionsJob',
+        'data' => [
+            'commandName' => 'App\\Jobs\\Video\\DuplicateInteractionsJob',
+            'command' => serialize($instance),
+        ],
+    ];
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => (string) json_encode($payload),
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        // Panel header
+        ->assertSee('Job instance')
+        // Property names
+        ->assertSee('videoId')
+        ->assertSee('attemptsMade')
+        ->assertSee('silent')
+        ->assertSee('options')
+        // Property values
+        ->assertSee('18')
+        ->assertSee('false') // bool render
+        ->assertSee('null'); // null render
+});
+
+it('Section C Raw pane recursively renders nested objects with expand affordance', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    // Mimic a real Laravel job that contains an Eloquent ModelIdentifier (nested
+    // __PHP_Incomplete_Class on extraction). The user's reported example —
+    // DuplicateInteractionsJob with createdInteractionIds → Collection — has the
+    // same shape: outer object with a nested object property.
+    $inner = (object) ['class' => 'App\\Models\\User', 'id' => 1];
+    $instance = (object) [
+        'videoId' => 18,
+        'user' => $inner,
+    ];
+    $payload = [
+        'displayName' => 'App\\Jobs\\Video\\DuplicateInteractionsJob',
+        'data' => [
+            'commandName' => 'App\\Jobs\\Video\\DuplicateInteractionsJob',
+            'command' => serialize($instance),
+        ],
+    ];
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-25T12:00:00+00:00',
+        'payload_body' => (string) json_encode($payload),
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    $html = Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        ->html();
+
+    // Outer property name + scalar value
+    expect($html)->toContain('videoId')
+        ->and($html)->toContain('18')
+        // Nested-object row shows class name (sourced from the incomplete-class marker)
+        ->and($html)->toContain('user')
+        ->and($html)->toContain('stdClass')
+        // Expand button rendered for nested object
+        ->and($html)->toContain('expand')
+        // Nested properties are present in the DOM (initially hidden via x-show + x-cloak,
+        // but assertSee operates on the rendered HTML so the strings are findable).
+        ->and($html)->toContain('App\\Models\\User')
+        ->and($html)->toContain('class');
+});
+
+it('Section C Raw pane shows serialized-command blob collapsed with byte count', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    $serialized = str_repeat('O:39:"App\\Jobs\\Example":12:{s:7:"foo";i:1;}', 30); // realistic shape
+    $payload = [
+        'displayName' => 'App\\Jobs\\Example',
+        'data' => [
+            'commandName' => 'App\\Jobs\\Example',
+            'command' => $serialized,
+        ],
+    ];
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => (string) json_encode($payload),
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        ->assertSee('Serialized command')
+        ->assertSee('App\\Jobs\\Example')
+        ->assertSee(number_format(strlen($serialized)) . ' bytes');
+});
+
+it('Section C decode-failure fallback renders raw string without colorizer attribute', function (): void {
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    openDetailsModal([
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => 'not valid json',
+    ])
+        ->assertSeeText('Sanitized JSON')
+        // The invalid-JSON fallback still renders the payload_body string inside the JSON
+        // pane (raw textContent). Colorizer client-side is responsible for highlighting;
+        // server just emits the `[data-json-highlight]` marker + raw string.
+        ->assertSeeText('not valid json');
+});

@@ -82,12 +82,12 @@ Under full mode, the stream field `payload_body` is a JSON-encoded **string** (t
 
 Two-tab toggle inside the section:
 
-- **Sanitized JSON** (default): pretty-printed JSON of the decoded payload body. Syntax-highlighted via a small inline JS colorizer (see §3).
-- **Raw fields**: KV table of the **top-level keys of the decoded body**, one row per key. For long string values, truncate to 200 chars with a "…" affordance (click to expand). For nested arrays/objects, render as `json_encode(..., JSON_UNESCAPED_SLASHES)` inline. Both tabs render exactly the same data, different presentations.
+- **Raw fields** (default, per Resolved Q #18): KV table of the **top-level keys of the decoded body**, one row per key. For long string values, truncate to 200 chars with a "…" affordance (click to expand). For nested arrays/objects, render as `json_encode(..., JSON_UNESCAPED_SLASHES)` inline. Better for the flat-job-payload 80% case — rows are individually labeled and selectable.
+- **Sanitized JSON**: pretty-printed JSON of the decoded payload body. Syntax-highlighted via a small inline JS colorizer (see §3). Better for nested payloads (arrays-of-structs, serialized DTOs) where KV loses fidelity.
 
 Emit a one-line hint at the top of the Raw pane so readers understand the scope: _"Sanitized payload body as key-value table. Job-level metadata (displayName / maxTries / timeout / backoff) shown in Job Config above if present."_ Under `full` mode Section B will typically be absent (KeyRedactingSanitizer doesn't emit displayName etc), which the hint acknowledges via the "if present" qualifier.
 
-Tab state is component-local (`$payloadTab = 'json'` or `'raw'`), defaults to `'json'` on `openPayload`. Livewire public properties persist across poll cycles by default; no special handling needed.
+Tab state is component-local (`$payloadTab = 'raw'` or `'json'`), defaults to `'raw'` on `openPayload`. Livewire public properties persist across poll cycles by default; no special handling needed.
 
 ### Footer
 
@@ -272,37 +272,37 @@ Visual regression (manual for now): open each tier in a browser via the dogfood 
 
 ### Phase 1: Component + view restructure (Priority: HIGH)
 
-- [ ] Add `public string $payloadTab = 'json'` to `QueueInsightsDashboard`
-- [ ] Add `setPayloadTab(string $tab): void` with `['json', 'raw']` allowlist (silently drops invalid input, same no-op pattern as `setHistoryMetric`)
-- [ ] Reset `$payloadTab = 'json'` in `openPayload()` on each open
-- [ ] Pass `$payloadTab` to the view in `render()`
-- [ ] Split `dashboard.blade.php` modal body into Section A / B / C per shape above
-- [ ] Add `$baseKeys` / `$sectionBKeys` / `$sectionCBody` derivations at the top of the modal block
-- [ ] Tests — component properties, tab allowlist/reset semantics, `openPayload` reset behavior
+- [x] Add `public string $payloadTab = 'json'` to `QueueInsightsDashboard`
+- [x] Add `setPayloadTab(string $tab): void` with `['json', 'raw']` allowlist (silently drops invalid input, same no-op pattern as `setHistoryMetric`)
+- [x] Reset `$payloadTab = 'json'` in `openPayload()` on each open
+- [x] Pass `$payloadTab` to the view in `render()`
+- [x] Split `dashboard.blade.php` modal body into Section A / B / C per shape above
+- [x] Add `$baseKeys` / `$sectionBKeys` / `$sectionCBody` derivations at the top of the modal block
+- [x] Tests — component properties, tab allowlist/reset semantics, `openPayload` reset behavior
 
 ### Phase 2: Presentation (Priority: HIGH)
 
-- [ ] Section A: two-column `<dl>` with connection/queue pills, humanized duration via `CarbonInterval::milliseconds(...)->cascade()->forHumans(['short' => true])` + raw ms in gray, `Date::parse($v)->diffForHumans()` timestamp, stream-id `<code>` + copy button
-- [ ] Section B job-config branch: conditional rows — `displayName` only when present, stats cards only for the keys that exist (no `—` placeholder cards), `payload_backoff` array-decode rendering
-- [ ] Section B status branches: yellow `payload_not_persisted` box driven by `payload_reason`; red `payload_encoding_failed` box; red `payload_too_large` box with `payload_size` readout
-- [ ] Section C: `payload_body` present guard, `json_decode` with raw-string fallback, tab header (`role="tab"` + `aria-selected` + `aria-controls` / `role="tabpanel"`) + JSON pane (with `[data-json-highlight]` attribute) + raw KV pane (truncation at 200 chars with expand), scope hint line
-- [ ] Inline JS JSON colorizer in `layouts/app.blade.php` `<head>` (~40 LOC, no external dep), placed before `@livewireScripts`, with the full-string idempotency guard via `node._qiColorizedSrc` expando property (NOT a `data-colorized` attribute or fingerprint hash — see Resolved Q #15)
-- [ ] Copy-to-clipboard JS snippet with `navigator.clipboard` + Selection-API fallback
-- [ ] Tests — every render shape in §7 test matrix (off / metadata-normal / metadata-partial / metadata-closure / full-normal / full-closure / full-encoding-error / full-size-overflow / decode-failure)
+- [x] Section A: two-column `<dl>` with connection/queue pills, humanized duration via `CarbonInterval::milliseconds(...)->cascade()->forHumans(['short' => true])` + raw ms in gray, `Date::parse($v)->diffForHumans()` timestamp, stream-id `<code>` + copy button
+- [x] Section B job-config branch: conditional rows — `displayName` only when present, stats cards only for the keys that exist (no `—` placeholder cards), `payload_backoff` array-decode rendering
+- [x] Section B status branches: yellow `payload_not_persisted` box driven by `payload_reason`; red `payload_encoding_failed` box; red `payload_too_large` box with `payload_size` readout
+- [x] Section C: `payload_body` present guard, `json_decode` with raw-string fallback, tab header (`role="tab"` + `aria-selected` + `aria-controls` / `role="tabpanel"`) + JSON pane (with `[data-json-highlight]` attribute) + raw KV pane (truncation at 200 chars with expand), scope hint line
+- [x] Inline JS JSON colorizer in `layouts/app.blade.php` `<head>` (~40 LOC, no external dep), placed before `@livewireScripts`, with the full-string idempotency guard via `node._qiColorizedSrc` expando property (NOT a `data-colorized` attribute or fingerprint hash — see Resolved Q #15)
+- [x] Copy-to-clipboard JS snippet with `navigator.clipboard` + Selection-API fallback
+- [x] Tests — every render shape in §7 test matrix (off / metadata-normal / metadata-partial / metadata-closure / full-normal / full-closure / full-encoding-error / full-size-overflow / decode-failure)
 
 ### Phase 3: Polish + accessibility (Priority: MEDIUM)
 
-- [ ] Add `role="dialog"` + `aria-modal="true"` + `aria-labelledby` on the modal backdrop
-- [ ] Wrap content in Alpine `x-trap` — focus moves in on open, returns to trigger on close
-- [ ] Restructure `dashboard.blade.php` to nest the dashboard content (queue cards, job classes, completed, failed) inside a sibling `<div id="qi-dashboard-content" x-bind:inert="$wire.selectedPayloadId !== null">` under the component root. Modal stays as its own sibling under the root, NOT inside the inerted wrapper. Never apply `inert` to `<main>`, the component root, or any ancestor of the modal — doing so inerts the dialog itself and breaks the focus trap + pointer interaction. See §5 for the template shape
-- [ ] `aria-label`s on copy button + tab toggles; `role="tab"` + `aria-selected` + `aria-controls` / `role="tabpanel"` on the C-section toggle
-- [ ] Keyboard handling: Esc closes modal, Tab cycles within the trap
-- [ ] DOM-contract assertion: rendered JSON pane carries the `[data-json-highlight]` attribute — pins the JS-to-DOM contract so a template refactor can't silently break the colorizer
-- [ ] XSS regression assertion (layer 1 — server-side Blade escape): seed a stream row with `payload_body = '{"foo": "<script>alert(1)</script>"}'` (valid JSON reaching the colorizer, not the decode-failure fallback), render the component, assert the rendered HTML inside the `[data-json-highlight]` node contains `&lt;script&gt;` and does NOT contain a literal `<script>` tag. See §3's "Invariant — do not reorder" block
-- [ ] Colorizer sink-execution assertion (layer 2 — full client-side path, CI-mandatory): PHPUnit extracts BOTH the `highlightJson` function source AND the hook body from `layouts/app.blade.php`; shells out to `node -e` with a ~30 LOC minimal DOM shim (`{_html, _text, get/set textContent, replaceChildren, insertAdjacentHTML('afterbegin', ...), dataset, querySelectorAll}`); seeds `textContent = '{"foo": "<script>alert(1)</script>"}'`, runs the hook body against the shim, asserts the final `_html` buffer contains `&lt;script&gt;` and NOT literal `<script>`. Tests the full sink (`highlightJson` + `insertAdjacentHTML` + idempotency guard), so refactors that bypass `highlightJson` or change the sink are caught. Two-mode probe: `$nodeMissing = (int) shell_exec('node --version > /dev/null 2>&1; echo $?') !== 0; if ($nodeMissing && getenv('CI') === 'true') $this->fail('Node required in CI for layer-2 XSS test'); elseif ($nodeMissing) $this->markTestSkipped('node not available locally')`. Pair with a source-order sanity assertion as a fail-fast when the extraction regex can't locate the hook body
-- [ ] Add `actions/setup-node@v4` step to `.github/workflows/run-tests.yml` (before the `Execute tests` step) with `node-version: '22'` (Maintenance LTS through 2027-04 — avoid 20.x which entered EOL in 2026-04, and avoid the bare `ubuntu-latest` default which can change with runner image updates)
+- [x] Add `role="dialog"` + `aria-modal="true"` + `aria-labelledby` on the modal backdrop
+- [x] Wrap content in Alpine `x-trap` — focus moves in on open, returns to trigger on close
+- [x] Restructure `dashboard.blade.php` to nest the dashboard content (queue cards, job classes, completed, failed) inside a sibling `<div id="qi-dashboard-content" x-bind:inert="$wire.selectedPayloadId !== null">` under the component root. Modal stays as its own sibling under the root, NOT inside the inerted wrapper. Never apply `inert` to `<main>`, the component root, or any ancestor of the modal — doing so inerts the dialog itself and breaks the focus trap + pointer interaction. See §5 for the template shape
+- [x] `aria-label`s on copy button + tab toggles; `role="tab"` + `aria-selected` + `aria-controls` / `role="tabpanel"` on the C-section toggle
+- [x] Keyboard handling: Esc closes modal, Tab cycles within the trap
+- [x] DOM-contract assertion: rendered JSON pane carries the `[data-json-highlight]` attribute — pins the JS-to-DOM contract so a template refactor can't silently break the colorizer
+- [x] XSS regression assertion (layer 1 — server-side Blade escape): seed a stream row with `payload_body = '{"foo": "<script>alert(1)</script>"}'` (valid JSON reaching the colorizer, not the decode-failure fallback), render the component, assert the rendered HTML inside the `[data-json-highlight]` node contains `&lt;script&gt;` and does NOT contain a literal `<script>` tag. See §3's "Invariant — do not reorder" block
+- [x] Colorizer sink-execution assertion (layer 2 — full client-side path, CI-mandatory): PHPUnit extracts BOTH the `highlightJson` function source AND the hook body from `layouts/app.blade.php`; shells out to `node -e` with a ~30 LOC minimal DOM shim (`{_html, _text, get/set textContent, replaceChildren, insertAdjacentHTML('afterbegin', ...), dataset, querySelectorAll}`); seeds `textContent = '{"foo": "<script>alert(1)</script>"}'`, runs the hook body against the shim, asserts the final `_html` buffer contains `&lt;script&gt;` and NOT literal `<script>`. Tests the full sink (`highlightJson` + `insertAdjacentHTML` + idempotency guard), so refactors that bypass `highlightJson` or change the sink are caught. Two-mode probe: `$nodeMissing = (int) shell_exec('node --version > /dev/null 2>&1; echo $?') !== 0; if ($nodeMissing && getenv('CI') === 'true') $this->fail('Node required in CI for layer-2 XSS test'); elseif ($nodeMissing) $this->markTestSkipped('node not available locally')`. Pair with a source-order sanity assertion as a fail-fast when the extraction regex can't locate the hook body
+- [x] Add `actions/setup-node@v4` step to `.github/workflows/run-tests.yml` (before the `Execute tests` step) with `node-version: '22'` (Maintenance LTS through 2027-04 — avoid 20.x which entered EOL in 2026-04, and avoid the bare `ubuntu-latest` default which can change with runner image updates)
 - [ ] Visual regression dogfood on hihaho under all three modes
-- [ ] Tests — a11y attributes (aria-modal, aria-selected toggles) + DOM-contract + XSS regression (both layers) assertions
+- [x] Tests — a11y attributes (aria-modal, aria-selected toggles) + DOM-contract + XSS regression (both layers) assertions
 
 ---
 
@@ -372,7 +372,55 @@ Two items flagged for deferred revisit rather than open decisions:
    - **CI-pinning (pass 5, version corrected on peer sign-off):** `markTestSkipped` when Node is absent would let CI go green without running the test. Unacceptable for an XSS defense. Added a two-mode probe: in CI (`getenv('CI') === 'true'`) a missing Node `$this->fail`s the test; locally, it still skips for dev convenience. Paired with an explicit `actions/setup-node@v4` step in `.github/workflows/run-tests.yml` pinning Node **22.x** (Maintenance LTS through 2027-04) — the initial 20.x pin was EOL in 2026-04 per peer feedback, 22.x gives ~12 months of stable coverage, 24.x would also work but has a tighter security-patch window.
 
 
+18. **Default `payloadTab` — Raw not JSON (Phase 1 dogfood feedback).** **Decision:** `public string $payloadTab = 'raw'` on `QueueInsightsDashboard`; `openPayload()` resets to `'raw'`. **Rationale:** hihaho dogfood on Phase 1 implementation — Sander preferred the Raw KV table over the pretty-printed JSON pane. Hypothesis: KV rows are one-per-field for flat-ish job payloads (job props + bound args), which is the 80% case. Individual values are selectable for copy, labeled rows beat eye-scanning for keys. JSON tab stays for nested payloads (arrays-of-structs, serialized DTOs) where `<dl>` KV loses fidelity — cutting it on a single dogfood sample would be premature. Tests updated: default assertions flipped (`defaults $payloadTab to raw`, `openPayload resets to raw`); DOM-contract + XSS layer 1 tests now explicitly flip to `'json'` before asserting since they exercise the colorizer pane specifically.
+
+
+
+
 
 ## Findings
 
-<!-- Notes added during implementation. Do not remove this section. -->
+### Phase 1 (2026-04-24)
+
+- Section A/B/C in the modal are currently **skeleton** renders — each section dumps the filtered subset of `$selectedPayload` as `json_encode(..., JSON_PRETTY_PRINT)` inside a `<pre>`. Phase 2 replaces these with the structured `<dl>` / stat cards / tab UI. Keeping skeleton JSON blocks keeps Phase 1 focused on the component API + tier gating (which keys live where) and lets Phase 2 cherry-pick presentation tasks without touching the component class again.
+- Section C's tab toggle IS wired up in Phase 1 (tab UI, `wire:click="setPayloadTab(...)"`, `role="tab"` + `aria-selected`, and the JSON vs Raw KV rendering branches) because it's the tab state that the component owns. The JSON pane has `[data-json-highlight]` attribute set so Phase 2's colorizer sees it immediately.
+- Raw tab already handles the array-vs-string fallback (decoded object → KV `<dl>`, string → `<pre>`). Hint copy live.
+- `openPayload()` reset behaviour: confirmed via test `openPayload resets payloadTab to json even if a prior open left it on raw`.
+- Added 4 Phase 1 tests to `DashboardComponentTest`: default `payloadTab`, `setPayloadTab` valid, `setPayloadTab` invalid no-op, `openPayload` reset.
+
+### Phase 2 (2026-04-24)
+
+- Moved `use` statements out of the `@php` block — Blade renders the block in a scope that doesn't support `use` declarations. Replaced with fully-qualified class names inline (`\Carbon\CarbonInterval::milliseconds(...)`, `\Illuminate\Support\Facades\Date::parse(...)`).
+- Section A stat-card labels use `text-[10px] uppercase tracking-wide text-gray-500` markup. Metadata-mode footer independently mentions the words "timeout" / "backoff" in its escalation hint, which collides with the obvious `assertDontSeeText('timeout')` assertion. Fixed the "partial stats" test to assert against the card-label HTML pattern specifically: `assertDontSeeHtml('tracking-wide text-gray-500">timeout')`. Captured this for future test authors via an inline comment.
+- Inline JS colorizer + copy-to-clipboard live in `layouts/app.blade.php` `<head>` per Resolved Q #14. Dual-branch guard (`window.Livewire` → register now; else `livewire:initialized` one-shot) in place; idempotency guard uses `node._qiColorizedSrc` expando (Resolved Q #15). Backend-side testing stops at "JSON pane carries `[data-json-highlight]` + raw string present"; runtime colorization verified in Phase 3 via the `node -e` sink-execution test.
+- Copy button uses event delegation on `document` (one listener for the whole dashboard) to survive Livewire morphs that recreate the modal DOM. `data-qi-copy` + `data-qi-copy-target` attributes keep the wiring declarative; status pill swaps via `[data-qi-copy-status]`.
+- Alpine `x-data`/`x-show`/`x-cloak` used for the Raw tab's 200-char truncation/expand. Added `[x-cloak] { display: none !important; }` style to `layouts/app.blade.php` to prevent flash-of-unexpanded content on first render. Alpine is bundled with Livewire 3; zero new deps.
+- Added 16 Phase 2 tests in new `tests/Feature/Http/DetailsModalTest.php`:
+  - Base metadata labels under off mode
+  - Duration short-form humanization
+  - Attempts amber badge
+  - Section B absent under off
+  - Section B job-config cards under metadata-normal
+  - Section B partial cards (no `—` placeholder)
+  - Section B backoff array decode (`1, 5, 10s`)
+  - Section B closure/encrypted under metadata
+  - Section B closure/encrypted under full (shared shape)
+  - Section B encoding-error red box
+  - Section B size-overflow red box with `payload_size`
+  - Section C absent under off
+  - Section C absent under metadata
+  - Section C present under full-normal with `[data-json-highlight]`
+  - Section C tab flip to Raw renders KV table
+  - Section C decode-failure fallback
+
+### Phase 3 (2026-04-24)
+
+- Sibling-inert wrapper pattern: all dashboard sections (queue cards, job classes, recent completed, recent failed) now nest inside `<div id="qi-dashboard-content" x-data x-bind:inert="$wire.selectedPayloadId !== null">` under the Livewire component root. Modal is a sibling under the root. Confirms codex's finding #13 — inerting `<main>` or any ancestor of the modal would propagate `inert` to the dialog.
+- Modal backdrop gets `role="dialog"` + `aria-modal="true"` + `aria-labelledby="qi-modal-title"`; title `<h3 id="qi-modal-title">Details</h3>`. Alpine `x-trap.noscroll="true"` on the inner content wrapper traps focus AND disables body scroll while open (free with Livewire 3's bundled Alpine Focus plugin).
+- Esc-to-close: `x-on:keydown.escape.window="$wire.closePayload()"` on the backdrop — global listener for key presses anywhere in the document while modal is open. Backdrop-click-to-close already existed from prior work.
+- Copy button + close button got `aria-label`s. Tab buttons already had `role="tab"` + `aria-selected` + `aria-controls`; Phase 3 added matching `id`s + `role="tabpanel"` + `aria-labelledby` on the panels.
+- CI workflow: `actions/setup-node@v4` pinned to `node-version: '22'` before the test step, per Resolved Q #17 + peer's final-review nit.
+- XSS tests: 7 new assertions in `tests/Feature/Http/DetailsModalA11yAndXssTest.php`. Layer 1 (server-side Blade escape) confirmed directly against rendered HTML. Layer 2 (client-side hook body) runs against a minimal DOM shim via `node -e`, with a regex-extraction step that locates `highlightJson` + `registerQueueInsightsHook` in the layout source. Source-order sanity check pins escape-first ordering. Two-mode probe — CI hard-fail if Node missing, local skip for dev convenience.
+- Test file uses `file_put_contents` to a tempfile + `shell_exec('node <path>')` rather than `-e` flag to avoid shell-quoting landmines with the DOM shim's inline JS.
+- Full suite: 165 tests (422 assertions) on both Predis and phpredis. 31 new tests added across Phases 1-3 (4 + 16 + 7 + 4 existing tests updated).
+- Visual regression dogfood on hihaho left as **manual TODO** — unchecked in Phase 3. Spec is otherwise complete; hihaho symlink picks up immediately when we push.

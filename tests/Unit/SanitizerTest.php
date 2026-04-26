@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Queue\Events\JobProcessed;
+use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
 
@@ -16,6 +17,7 @@ function makeJobEvent(array $payload, string $connection = 'sync', string $queue
     $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
     $commandName = is_string($data['commandName'] ?? null) ? $data['commandName'] : 'TestJob';
 
+    /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('payload')->andReturn($payload);
     $job->shouldReceive('uuid')->andReturn('uuid-test');
@@ -116,6 +118,28 @@ describe('KeyRedactingSanitizer', function (): void {
         $note = $decoded['data']['note'] ?? '';
         expect($note)->toEndWith('…[truncated]')
             ->and(mb_strlen(is_string($note) ? $note : ''))->toBeLessThan(5000);
+    });
+
+    it('preserves PHP-serialized blobs intact even when they exceed maxFieldBytes', function () use ($redactKeys): void {
+        // Build a serialized blob bigger than maxFieldBytes — the structured-payload
+        // extractor in the modal needs an intact blob to unserialize, so truncation
+        // would render the Job instance panel useless.
+        $bigSerialized = serialize((object) array_fill_keys(
+            array_map(fn (int $i): string => "field_{$i}", range(1, 100)),
+            'value',
+        ));
+        expect(strlen($bigSerialized))->toBeGreaterThan(2048);
+
+        $event = makeJobEvent([
+            'data' => ['commandName' => 'App\\Jobs\\Big', 'command' => $bigSerialized],
+        ]);
+
+        $out = (new KeyRedactingSanitizer($redactKeys, maxFieldBytes: 2048, maxPayloadBytes: 65536))->sanitize($event);
+        $body = $out['body'] ?? null;
+        $decoded = json_decode(is_string($body) ? $body : '{}', true);
+
+        expect($decoded['data']['command'] ?? '')->toBe($bigSerialized)
+            ->and($decoded['data']['command'] ?? '')->not->toEndWith('…[truncated]');
     });
 
     it('hard-caps payloads that exceed maxPayloadBytes', function () use ($redactKeys): void {

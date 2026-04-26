@@ -5,13 +5,16 @@ declare(strict_types=1);
 namespace SanderMuller\QueueInsights;
 
 use Carbon\CarbonInterface;
+use Illuminate\Database\Query\Builder;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
 final class QueueInsights
@@ -187,6 +190,41 @@ final class QueueInsights
         );
     }
 
+    /**
+     * Per-queue wait-time percentiles (ms). The `wait:{connection}:{queue}`
+     * ZSET stores uuids ordered by insertion timestamp (recency), not by
+     * wait_ms — that lets the trim policy (`ZREMRANGEBYRANK 0 -1001`) drop
+     * the oldest 1000+ rather than the fastest. Percentile read joins each
+     * recent uuid back to its `wait:{uuid}` sample via MGET.
+     *
+     * Returns `null` for both fields when fewer than 10 samples are
+     * recoverable (too few for the metric to be meaningful — render `—`
+     * in the UI).
+     *
+     * @return array{p50: ?int, p95: ?int}
+     */
+    public function queueWaitPercentiles(string $connection, string $queue): array
+    {
+        return WaitTimeMetrics::percentiles($connection, $queue);
+    }
+
+    /**
+     * Per-job wait time in ms — the value `RecordJobProcessing` derived
+     * from `pushed:{uuid}` and stored as `wait:{uuid}`. Returns `null`
+     * when the sample is missing (legacy job, custom driver, or queued
+     * before the `JobQueued` listener was wired).
+     */
+    public function jobWaitMs(string $uuid): ?int
+    {
+        if ($uuid === '') {
+            return null;
+        }
+
+        $value = $this->redis()->command('get', [KeyPrefix::make("wait:{$uuid}")]);
+
+        return is_numeric($value) ? (int) $value : null;
+    }
+
     public function p95DurationMs(string $class): ?int
     {
         $samples = $this->redis()->command('lrange', [
@@ -258,16 +296,107 @@ final class QueueInsights
     }
 
     /**
+     * Per-hour processed + failed throughput across all classes, oldest first.
+     *
+     * @return list<array{timestamp: int, processed: int, failed: int}>
+     */
+    public function hourlyThroughput(int $hours = 24): array
+    {
+        [$timestamps, $bucketIndex] = $this->buildHourlyTimeline($hours);
+        $classes = $this->jobClasses();
+
+        $processedCounts = $this->sumPerBucket($classes, $bucketIndex, 'processed');
+        $failedCounts = $this->sumPerBucket($classes, $bucketIndex, 'failed');
+
+        $timeline = [];
+        for ($i = 0; $i < $hours; ++$i) {
+            $timeline[] = [
+                'timestamp' => $timestamps[$i],
+                'processed' => $processedCounts[$i],
+                'failed' => $failedCounts[$i],
+            ];
+        }
+
+        return $timeline;
+    }
+
+    /**
+     * @return array{0: list<int>, 1: array<int|string, int>} — [timestamps, bucketIndex]
+     */
+    private function buildHourlyTimeline(int $hours): array
+    {
+        $now = Date::now('UTC');
+        $timestamps = [];
+        $bucketIndex = [];
+
+        for ($i = $hours - 1; $i >= 0; --$i) {
+            $hour = $now->copy()->subHours($i)->startOfHour();
+            $bucketStr = $hour->format('YmdH');
+            $timestamps[] = $hour->getTimestamp();
+            $bucketIndex[$bucketStr] = count($timestamps) - 1;
+        }
+
+        return [$timestamps, $bucketIndex];
+    }
+
+    /**
+     * MGET across {prefix}:{class}:{bucket} for all classes × all buckets, then reduce
+     * into one integer per bucket.
+     *
+     * @param  list<string>  $classes
+     * @param  array<int|string, int>  $bucketIndex
+     * @return list<int>
+     */
+    private function sumPerBucket(array $classes, array $bucketIndex, string $prefix): array
+    {
+        $count = count($bucketIndex);
+        $counts = [];
+        for ($i = 0; $i < $count; ++$i) {
+            $counts[] = 0;
+        }
+
+        if ($classes === []) {
+            return $counts;
+        }
+
+        $keys = [];
+        $keyMeta = [];
+        foreach ($classes as $class) {
+            foreach (array_keys($bucketIndex) as $bucketStr) {
+                $keys[] = KeyPrefix::make("{$prefix}:{$class}:{$bucketStr}");
+                $keyMeta[] = $bucketStr;
+            }
+        }
+
+        $values = $this->redis()->command('mget', [$keys]);
+        if (! is_array($values)) {
+            return $counts;
+        }
+
+        foreach ($values as $i => $v) {
+            if (is_numeric($v) && isset($keyMeta[$i], $bucketIndex[$keyMeta[$i]])) {
+                $counts[$bucketIndex[$keyMeta[$i]]] += (int) $v;
+            }
+        }
+
+        // `array_values` reasserts the list-shape PHPStan lost when we mutated by numeric key.
+        return array_values($counts);
+    }
+
+    /**
      * @return list<array<array-key, mixed>>
      */
-    public function recentFailed(int $limit = 100): array
+    public function recentFailed(int $limit = 100, ?FailedJobFilters $filters = null): array
     {
+        $filters ??= new FailedJobFilters();
+
         try {
-            $rows = DB::table('failed_jobs')
-                ->orderByDesc('id')
-                ->limit($limit)
-                ->get()
-                ->toArray();
+            $query = self::applyFailedJobFilters(
+                DB::table('failed_jobs')->orderByDesc('id')->limit($limit),
+                $filters,
+            );
+
+            $rows = $query->get()->toArray();
         } catch (Throwable) {
             return [];
         }
@@ -278,6 +407,41 @@ final class QueueInsights
         }
 
         return $out;
+    }
+
+    /**
+     * Apply the failed-jobs filter set to a query builder. Shared between
+     * `recentFailed` (table read) and the bulk-retry uuid collector — both
+     * must produce the same match set (Resolved Q #5/#7).
+     */
+    public static function applyFailedJobFilters(Builder $query, FailedJobFilters $filters): Builder
+    {
+        if ($filters->connection !== '') {
+            $query->where('connection', $filters->connection);
+        }
+
+        if ($filters->queue !== '') {
+            $query->where('queue', $filters->queue);
+        }
+
+        if ($filters->class !== '') {
+            // Anchored substring LIKE against the raw JSON payload. Cross-DB
+            // LIKE case rules diverge (SQLite ASCII-insensitive, Postgres
+            // sensitive, MySQL collation-dependent) — wrap both sides in
+            // LOWER() to produce the same match set everywhere (codex review).
+            $needle = '%"displayname":"' . strtolower(addslashes($filters->class)) . '%';
+            $query->whereRaw('LOWER(payload) LIKE ?', [$needle]);
+        }
+
+        if ($filters->from !== '') {
+            $query->where('failed_at', '>=', $filters->from . ' 00:00:00');
+        }
+
+        if ($filters->to !== '') {
+            $query->where('failed_at', '<=', $filters->to . ' 23:59:59');
+        }
+
+        return $query;
     }
 
     /**

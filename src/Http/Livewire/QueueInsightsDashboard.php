@@ -6,15 +6,24 @@ namespace SanderMuller\QueueInsights\Http\Livewire;
 
 use Carbon\CarbonInterface;
 use Illuminate\Contracts\View\View;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
 use InvalidArgumentException;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use Throwable;
 
 #[Layout('queue-insights::layouts.app')]
 final class QueueInsightsDashboard extends Component
@@ -23,7 +32,30 @@ final class QueueInsightsDashboard extends Component
 
     public ?string $selectedPayloadId = null;
 
-    public string $historyMetric = 'depth';
+    public ?int $selectedFailedId = null;
+
+    public string $payloadTab = 'raw';
+
+    /*
+     * Failed-jobs filter state. Each #[Url] prop shares to the query string
+     * (short keys to keep URLs scannable). Empty string = "no filter on
+     * that field" — see Support\FailedJobFilters for the semantics.
+     */
+
+    #[Url(as: 'fc', except: '')]
+    public string $filterConnection = '';
+
+    #[Url(as: 'fq', except: '')]
+    public string $filterQueue = '';
+
+    #[Url(as: 'fk', except: '')]
+    public string $filterClass = '';
+
+    #[Url(as: 'ffrom', except: '')]
+    public string $filterFrom = '';
+
+    #[Url(as: 'fto', except: '')]
+    public string $filterTo = '';
 
     /**
      * Defense-in-depth: enforce the `viewQueueInsights` Gate on component mount,
@@ -50,6 +82,9 @@ final class QueueInsightsDashboard extends Component
     public function openPayload(string $id): void
     {
         $this->selectedPayloadId = $id;
+        // Reset tab to the default on every open so users who flipped to JSON on a
+        // prior modal see the default Raw KV view first on the next row.
+        $this->payloadTab = 'raw';
     }
 
     public function closePayload(): void
@@ -57,11 +92,261 @@ final class QueueInsightsDashboard extends Component
         $this->selectedPayloadId = null;
     }
 
-    public function setHistoryMetric(string $metric): void
+    public function openFailed(int $id): void
     {
-        if (in_array($metric, ['depth', 'inflight', 'delayed'], true)) {
-            $this->historyMetric = $metric;
+        $this->selectedFailedId = $id;
+    }
+
+    public function closeFailed(): void
+    {
+        $this->selectedFailedId = null;
+    }
+
+    public function setPayloadTab(string $tab): void
+    {
+        if (in_array($tab, ['json', 'raw'], true)) {
+            $this->payloadTab = $tab;
         }
+    }
+
+    public function clearFailedFilters(): void
+    {
+        $this->filterConnection = '';
+        $this->filterQueue = '';
+        $this->filterClass = '';
+        $this->filterFrom = '';
+        $this->filterTo = '';
+    }
+
+    private function buildFailedFilters(): FailedJobFilters
+    {
+        return new FailedJobFilters(
+            connection: $this->filterConnection,
+            queue: $this->filterQueue,
+            class: $this->filterClass,
+            from: $this->filterFrom,
+            to: $this->filterTo,
+        );
+    }
+
+    /**
+     * Retry a single failed job. The host app must define the
+     * `retryFailedJobs` Gate — this dashboard's `viewQueueInsights` Gate
+     * is read-only and intentionally distinct from the write surface.
+     *
+     * Defence-in-depth ordering:
+     *   1. Gate::authorize → 403 if denied (no Artisan call)
+     *   2. RateLimiter (30 / minute / user) → flash banner if exhausted
+     *   3. Artisan::call('queue:retry') wrapped in try/catch
+     *
+     * `queue:retry` is idempotent against an already-retried row, so a
+     * concurrent operator retrying the same uuid is a safe no-op.
+     */
+    public function retryFailed(string $uuid): void
+    {
+        Gate::authorize('retryFailedJobs');
+
+        if ($uuid === '') {
+            return;
+        }
+
+        if (! $this->hitRetryRateLimit()) {
+            Session::flash('qi.retry.error', 'Retry rate limit reached (30/min). Try again shortly.');
+
+            return;
+        }
+
+        try {
+            $exit = Artisan::call('queue:retry', ['id' => [$uuid]]);
+
+            // Codex review: a non-zero exit code means queue:retry rejected
+            // (row already retried, missing, driver-level failure). The
+            // command does not throw — it returns the exit code. Treating
+            // every non-throwing call as success would tell operators a
+            // dead-letter row was requeued when it wasn't.
+            if ($exit !== 0) {
+                Log::warning('queue-insights.retry.exit_nonzero', [
+                    'kind' => 'single',
+                    'uuid' => $uuid,
+                    'exit' => $exit,
+                ]);
+                Session::flash('qi.retry.error', 'Retry could not be dispatched (queue:retry returned non-zero — already retried, missing, or driver rejected).');
+
+                return;
+            }
+
+            $this->logRetry('single', [$uuid]);
+            $this->selectedFailedId = null;
+            Session::flash('qi.retry.ok', 'Retry dispatched.');
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: retryFailed threw', [
+                'uuid' => $uuid,
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+            Session::flash('qi.retry.error', 'Retry failed — check logs.');
+        }
+    }
+
+    /**
+     * Bulk-retry every failed job that matches the current filter set.
+     *
+     * Server-side safety contract (spec §3.2 / Resolved Q #5 + #7):
+     *   - reject when *all* filters are empty (footgun guard)
+     *   - reject when match count > 100 (no silent truncation)
+     *   - dispatch the whole snapshot inside one Artisan call
+     */
+    public function retryFailedBulk(): void
+    {
+        Gate::authorize('retryFailedJobs');
+
+        $filters = $this->buildFailedFilters();
+
+        if ($filters->isEmpty()) {
+            Session::flash('qi.retry.error', 'Bulk retry requires at least one filter.');
+
+            return;
+        }
+
+        if (! $this->hitRetryRateLimit()) {
+            Session::flash('qi.retry.error', 'Retry rate limit reached (30/min). Try again shortly.');
+
+            return;
+        }
+
+        try {
+            $uuids = $this->collectFilteredFailedUuids($filters);
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: retryFailedBulk query threw', [
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+            Session::flash('qi.retry.error', 'Bulk retry could not read failed_jobs.');
+
+            return;
+        }
+
+        $count = count($uuids);
+
+        if ($count === 0) {
+            Session::flash('qi.retry.error', 'No failed jobs match the current filter.');
+
+            return;
+        }
+
+        if ($count > 100) {
+            Session::flash('qi.retry.error', sprintf(
+                'Bulk retry rejected — %d matches exceed the 100 cap. Narrow the filter first.',
+                $count,
+            ));
+
+            return;
+        }
+
+        try {
+            $exit = Artisan::call('queue:retry', ['id' => $uuids]);
+
+            if ($exit !== 0) {
+                Log::warning('queue-insights.retry.exit_nonzero', [
+                    'kind' => 'bulk',
+                    'count' => $count,
+                    'exit' => $exit,
+                ]);
+                Session::flash('qi.retry.error', sprintf(
+                    'Bulk retry returned non-zero exit %d — some rows may have been already retried, missing, or rejected by the driver. Check logs.',
+                    $exit,
+                ));
+
+                return;
+            }
+
+            $this->logRetry('bulk', $uuids);
+            Session::flash('qi.retry.ok', sprintf('Retried %d job%s.', $count, $count === 1 ? '' : 's'));
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: retryFailedBulk threw', [
+                'count' => $count,
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+            Session::flash('qi.retry.error', 'Bulk retry failed — check logs.');
+        }
+    }
+
+    /**
+     * Pluck uuids matching the current filters, capped at 101 rows so
+     * the count check can distinguish "exactly 100" from "more than 100".
+     *
+     * @return list<string>
+     */
+    private function collectFilteredFailedUuids(FailedJobFilters $filters): array
+    {
+        $query = QueueInsights::applyFailedJobFilters(
+            DB::table('failed_jobs')->orderByDesc('id')->limit(101),
+            $filters,
+        );
+
+        $rows = $query->pluck('uuid')->all();
+
+        $out = [];
+        foreach ($rows as $value) {
+            if (is_string($value) && $value !== '') {
+                $out[] = $value;
+            }
+        }
+
+        return $out;
+    }
+
+    private function hitRetryRateLimit(): bool
+    {
+        $userId = Auth::id();
+        $key = 'qi.retry:' . ($userId !== null ? (string) $userId : 'guest:' . request()->ip());
+
+        if (RateLimiter::tooManyAttempts($key, 30)) {
+            return false;
+        }
+
+        RateLimiter::hit($key, 60);
+
+        return true;
+    }
+
+    /**
+     * @param  list<string>  $uuids
+     */
+    private function logRetry(string $kind, array $uuids): void
+    {
+        Log::info('queue-insights.retry', [
+            'kind' => $kind,
+            'uuids' => $uuids,
+            'count' => count($uuids),
+            'user_id' => Auth::id(),
+            // Audit logs persist for a long time; the filter set is fully
+            // user-controlled URL state, so unbounded logging is an info
+            // leak (codex review). Sanitize each field: ASCII printable,
+            // no control chars, max 80 chars.
+            'filters' => [
+                'connection' => $this->sanitizeAuditField($this->filterConnection),
+                'queue' => $this->sanitizeAuditField($this->filterQueue),
+                'class' => $this->sanitizeAuditField($this->filterClass),
+                'from' => $this->sanitizeAuditField($this->filterFrom),
+                'to' => $this->sanitizeAuditField($this->filterTo),
+            ],
+        ]);
+    }
+
+    private function sanitizeAuditField(string $value): string
+    {
+        if ($value === '') {
+            return '';
+        }
+
+        // Replace anything outside the printable ASCII range with `?` so
+        // attempts to smuggle log-injection control bytes (CR/LF/etc) get
+        // neutralised before reaching the log driver.
+        $clean = (string) preg_replace('/[^\x20-\x7E]/', '?', $value);
+
+        return mb_substr($clean, 0, 80);
     }
 
     public function render(QueueInsights $svc): View
@@ -71,21 +356,61 @@ final class QueueInsightsDashboard extends Component
         $queues = $this->buildQueueRows($svc);
         $classes = $this->buildClassRows($svc);
 
+        $failedFilters = $this->buildFailedFilters();
+
         $recentCompleted = $svc->recentCompleted(50, $this->selectedClass);
-        $recentFailed = $svc->recentFailed(50);
+        $recentFailed = $svc->recentFailed(50, $failedFilters);
+        $throughput = $svc->hourlyThroughput();
 
         $selectedPayload = $this->resolveSelectedPayload($recentCompleted);
+        $selectedFailed = $this->resolveSelectedFailed($recentFailed);
+
+        // Decorate the selected rows with the per-job wait sample. Modals
+        // render `Wait: —` when this is null (legacy job pre-dating the
+        // JobQueued listener, or a driver that omits payload.uuid).
+        if ($selectedPayload !== null) {
+            $payloadUuid = $selectedPayload['uuid'] ?? null;
+            $selectedPayload['wait_ms'] = is_string($payloadUuid)
+                ? (string) ($svc->jobWaitMs($payloadUuid) ?? '')
+                : '';
+        }
+
+        if ($selectedFailed !== null) {
+            $failedUuid = $selectedFailed['uuid'] ?? null;
+            $selectedFailed['wait_ms'] = is_string($failedUuid)
+                ? $svc->jobWaitMs($failedUuid)
+                : null;
+        }
+
+        // Bulk-retry UI eligibility (server-side enforcement still applies in
+        // retryFailedBulk()). Only check when:
+        //   - filters are non-empty (spec §3.4 footgun guard)
+        //   - the host has defined the retryFailedJobs gate at all (otherwise
+        //     the button has nowhere to land)
+        $canRetry = Gate::has('retryFailedJobs') && Gate::allows('retryFailedJobs');
+        $bulkRetryCount = null;
+        if ($canRetry && ! $failedFilters->isEmpty()) {
+            try {
+                $bulkRetryCount = count($this->collectFilteredFailedUuids($failedFilters));
+            } catch (Throwable) {
+                $bulkRetryCount = null;
+            }
+        }
 
         return ViewFactory::make('queue-insights::dashboard', [
             'queues' => $queues,
             'classes' => $classes,
-            'captureEnabled' => $captureMode !== 'off',
             'captureMode' => $captureMode,
-            'recentCompleted' => $recentCompleted,
-            'recentFailed' => $recentFailed,
+            'completedRows' => $this->enrichCompletedRows($recentCompleted),
+            'failedRows' => $this->enrichFailedRows($recentFailed),
             'selectedClass' => $this->selectedClass,
             'selectedPayload' => $selectedPayload,
-            'historyMetric' => $this->historyMetric,
+            'selectedFailed' => $selectedFailed,
+            'payloadTab' => $this->payloadTab,
+            'throughput' => $throughput,
+            'failedFiltersActive' => ! $failedFilters->isEmpty(),
+            'canRetry' => $canRetry,
+            'bulkRetryCount' => $bulkRetryCount,
         ]);
     }
 
@@ -114,6 +439,8 @@ final class QueueInsightsDashboard extends Component
 
             $driverRaw = config("queue.connections.{$connection}.driver", '—');
 
+            $waitPercentiles = $svc->queueWaitPercentiles($connection, $canonical);
+
             $rows[] = [
                 'connection' => $connection,
                 'queue' => $queue,
@@ -125,6 +452,8 @@ final class QueueInsightsDashboard extends Component
                 'last_at' => $lastAt,
                 'stale' => $stale,
                 'error' => $svc->snapshotError($connection, $canonical),
+                'wait_p50_ms' => $waitPercentiles['p50'],
+                'wait_p95_ms' => $waitPercentiles['p95'],
             ];
         }
 
@@ -155,6 +484,88 @@ final class QueueInsightsDashboard extends Component
     }
 
     /**
+     * Enrich recentCompleted stream entries with a short id suffix for display.
+     *
+     * @param  list<array<string, string>>  $recentCompleted
+     * @return list<array<string, mixed>>
+     */
+    private function enrichCompletedRows(array $recentCompleted): array
+    {
+        $rows = [];
+        foreach ($recentCompleted as $row) {
+            $id = $row['_id'] ?? '';
+            $rows[] = $row + [
+                'short_id' => is_string($id) && $id !== '' ? mb_substr(explode('-', $id)[0], -9) : '',
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Enrich failed_jobs rows with decoded-payload fields for a Horizon-style 2-line row:
+     *   - display_name (class name from payload)
+     *   - attempts + max_tries
+     *   - exception_class + exception_message (first line parse)
+     *   - short_uuid (last 8 chars — enough to scan)
+     *
+     * @param  list<array<array-key, mixed>>  $recentFailed
+     * @return list<array<string, mixed>>
+     */
+    private function enrichFailedRows(array $recentFailed): array
+    {
+        $rows = [];
+        foreach ($recentFailed as $row) {
+            $payload = is_string($row['payload'] ?? null) ? json_decode($row['payload'], true) : null;
+            $exception = is_string($row['exception'] ?? null) ? $row['exception'] : '';
+            $exceptionFirst = explode("\n", $exception, 2)[0] ?? '';
+            [$excClass, $excMessage] = $this->splitExceptionHeader($exceptionFirst);
+
+            $uuid = is_string($row['uuid'] ?? null) ? $row['uuid'] : '';
+
+            $rows[] = [
+                'id' => is_numeric($row['id'] ?? null) ? (int) $row['id'] : null,
+                'uuid' => $uuid,
+                'short_uuid' => $uuid !== '' ? mb_substr($uuid, -8) : '',
+                'connection' => $row['connection'] ?? null,
+                'queue' => $row['queue'] ?? null,
+                'failed_at' => $row['failed_at'] ?? null,
+                'display_name' => is_array($payload) && isset($payload['displayName']) && is_string($payload['displayName'])
+                    ? $payload['displayName']
+                    : null,
+                'attempts' => is_array($payload) && isset($payload['attempts']) && is_numeric($payload['attempts'])
+                    ? (int) $payload['attempts']
+                    : null,
+                'max_tries' => is_array($payload) && isset($payload['maxTries']) && is_numeric($payload['maxTries'])
+                    ? (int) $payload['maxTries']
+                    : null,
+                'exception_class' => $excClass,
+                'exception_message' => $excMessage,
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * "RuntimeException: Something broke" → ["RuntimeException", "Something broke"].
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function splitExceptionHeader(string $firstLine): array
+    {
+        $colon = strpos($firstLine, ':');
+        if ($colon === false) {
+            return [$firstLine, ''];
+        }
+
+        return [
+            trim(substr($firstLine, 0, $colon)),
+            trim(substr($firstLine, $colon + 1)),
+        ];
+    }
+
+    /**
      * @param  list<array<string, string>>  $recentCompleted
      * @return array<string, string>|null
      */
@@ -167,6 +578,25 @@ final class QueueInsightsDashboard extends Component
         foreach ($recentCompleted as $entry) {
             if (($entry['_id'] ?? null) === $this->selectedPayloadId) {
                 return $entry;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  list<array<array-key, mixed>>  $recentFailed
+     * @return array<array-key, mixed>|null
+     */
+    private function resolveSelectedFailed(array $recentFailed): ?array
+    {
+        if ($this->selectedFailedId === null) {
+            return null;
+        }
+
+        foreach ($recentFailed as $row) {
+            if (is_numeric($row['id'] ?? null) && (int) $row['id'] === $this->selectedFailedId) {
+                return $row;
             }
         }
 

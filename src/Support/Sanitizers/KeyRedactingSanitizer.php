@@ -85,10 +85,23 @@ final readonly class KeyRedactingSanitizer implements PayloadSanitizer
         }
 
         if (is_string($value) && strlen($value) > $this->maxFieldBytes) {
+            // Keep PHP-serialized object/array blobs intact — truncating them would
+            // produce invalid serialized data that downstream tooling (the modal's
+            // structured-payload extractor) can't unserialize. The outer
+            // max_payload_bytes cap on the whole encoded body still bounds growth.
+            if ($this->looksSerialized($value)) {
+                return $value;
+            }
+
             return substr($value, 0, $this->maxFieldBytes) . '…[truncated]';
         }
 
         return $value;
+    }
+
+    private function looksSerialized(string $value): bool
+    {
+        return str_starts_with($value, 'O:') || str_starts_with($value, 'C:') || str_starts_with($value, 'a:');
     }
 
     private function keyShouldRedact(string $key): bool
