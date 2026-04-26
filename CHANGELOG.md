@@ -2,6 +2,68 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0 - 2026-04-26
+
+### Highlights
+
+#### Pending & delayed jobs
+
+Each queue row in the dashboard gets a collapsible inspector. The toggle next to the queue's badges shows a tracked-count chip; click it to open. Inside: two compact-list mini-tables, **Pending** (`available_at <= now`) and **Delayed** (`available_at > now`), each row showing the job's class FQCN and a humanized timestamp (`queued 4s ago` / `runs in 2m 14s`).
+
+The expand state is URL-shareable (`?qopen=connection:queue`) — paste a dashboard URL to a peer and they land on your expanded inspector view.
+
+#### Driver-agnostic — including SQS
+
+The data is **event-captured into Redis**, not peeked from the underlying queue driver. The `JobQueued` listener stamps a per-uuid hash + per-queue sorted set on every queued job. `JobProcessing` clears on the pending → in-flight transition; `JobProcessed` and `JobFailed` do belt-and-suspenders cleanup for the rare case the processing listener was missed.
+
+Native driver-peek would have worked for Redis (`LRANGE`) and database (`SELECT FROM jobs`), but SQS doesn't expose individual queued messages without consuming them. Capturing into our Redis namespace gives the same view across all three.
+
+All four listeners route the queue value through `CanonicalQueueKey` so an SQS producer (which sees a queue URL) and the matching worker (which reports just the queue name) write to and clean from the same zset key.
+
+#### Bounded storage
+
+- **Per-queue cap** (`pending.max_per_queue`, default 10000) — `ZREMRANGEBYRANK` evicts by score (lowest `available_at` first) when capped. Per-queue zset stays at exactly the cap.
+- **TTL safety net** (`pending.ttl_seconds`, default 24h) — clears orphans whose cleanup listener never fired (worker crash, raw `Queue::push()` outside Laravel's standard event flow).
+- **Storage cost** — ~500 bytes per pending job (uuid + class FQCN + connection + queue + queued_at + available_at). 10K cap = ~5MB Redis per queue worst case. Bounded.
+
+#### Tracking-gap drift signal
+
+Our zset is event-derived; `Driver::depth() + Driver::delayed()` is the queue-of-truth. When they diverge by more than `pending.gap_warn_threshold` (default 5), a `+N gap` badge appears on the toggle and a banner inside the inspector body reads:
+
+> **Tracking gap.** N jobs on the queue are not in our pending tracking — the lists below are a sample, not a complete enumeration. Trust the queue counters (above) for totals.
+
+Operators always have a truth signal — the snapshot count up top is authoritative; the lists below are a *sample* when the gap is non-zero. Common gap causes:
+
+- Worker crash mid-pickup, `JobProcessing` listener didn't fire (TTL eventually cleans).
+- Jobs pushed via raw `Queue::push()` outside Laravel's dispatch path (no `JobQueued` event raised).
+- High-volume queue exceeding `max_per_queue` (more in the queue than the tracked sample).
+
+#### Opt-out
+
+Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-ops, the inspector toggle disappears, residual data ages out via TTL.
+
+### Public API surface (additive)
+
+- `QueueInsights::pendingJobs(string $connection, string $queue, int $limit = 50): array`
+- `QueueInsights::delayedJobs(string $connection, string $queue, int $limit = 50): array`
+- `QueueInsights::pendingTrackedCount(string $connection, string $queue): int`
+- `Support\PendingJobsReader` — new helper class (mirrors the existing `Support\WaitTimeMetrics` pattern)
+- `Support\ConfigValidator::validatePending(array $pending): void`
+- `QueueInsightsDashboard::$expandedQueueKey` — new `#[Url(as: 'qopen')]` prop
+- `QueueInsightsDashboard::toggleQueueInspector(string $key): void` — Livewire action
+- New config block:
+
+```php
+'pending' => [
+    'enabled' => env('QUEUE_INSIGHTS_PENDING_ENABLED', true),
+    'max_per_queue' => 10000,
+    'ttl_seconds' => 86400,
+    'gap_warn_threshold' => 5,
+],
+
+```
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.2.1...0.3.0
+
 ## 0.2.1 - 2026-04-26
 
 ### Highlights
@@ -183,6 +245,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
