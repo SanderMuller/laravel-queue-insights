@@ -9,3 +9,8 @@ providers:
 env:
   - CACHE_STORE=array
   - SESSION_DRIVER=array
+  # APP_KEY is committed because this whole file is dev-only scaffolding.
+  # Laravel 13's encrypter resolves during cookie middleware terminate, so
+  # the workbench preview at /preview can't render without it. Throwaway
+  # value — never reused outside this Testbench-bootstrapped preview app.
+  - APP_KEY=base64:jbW57vt1JZaeclbYNTZBLbn5RTjGQnmLgJIytF9BvlQ=
