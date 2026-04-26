@@ -15,11 +15,11 @@
     "require": {
         "php": "^8.3",
         "aws/aws-sdk-php": "^3.0",
-        "illuminate/console": "^11.0||^12.0",
-        "illuminate/contracts": "^11.0||^12.0",
-        "illuminate/queue": "^11.0||^12.0",
-        "illuminate/redis": "^11.0||^12.0",
-        "illuminate/support": "^11.0||^12.0"
+        "illuminate/console": "^11.0||^12.0||^13.0",
+        "illuminate/contracts": "^11.0||^12.0||^13.0",
+        "illuminate/queue": "^11.0||^12.0||^13.0",
+        "illuminate/redis": "^11.0||^12.0||^13.0",
+        "illuminate/support": "^11.0||^12.0||^13.0"
     },
     "require-dev": {
         "driftingly/rector-laravel": "^2.3",
@@ -30,10 +30,10 @@
         "mockery/mockery": "^1.6",
         "mrpunyapal/rector-pest": "^0.2.7",
         "nunomaduro/collision": "^8.0",
-        "orchestra/testbench": "^9.0||^10.0",
-        "pestphp/pest": "^3.0",
-        "pestphp/pest-plugin-arch": "^3.0",
-        "pestphp/pest-plugin-laravel": "^3.0",
+        "orchestra/testbench": "^9.0||^10.0||^11.0",
+        "pestphp/pest": "^3.0||^4.0",
+        "pestphp/pest-plugin-arch": "^3.0||^4.0",
+        "pestphp/pest-plugin-laravel": "^3.0||^4.0",
         "phpstan/extension-installer": "^1.4.3",
         "phpstan/phpstan-deprecation-rules": "^2.0.4",
         "phpstan/phpstan-phpunit": "^2.0.16",

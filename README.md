@@ -5,6 +5,7 @@
 [![GitHub PHPStan Action Status](https://img.shields.io/github/actions/workflow/status/sandermuller/laravel-queue-insights/phpstan.yml?branch=main&label=phpstan&style=flat-square)](https://github.com/sandermuller/laravel-queue-insights/actions?query=workflow%3Aphpstan+branch%3Amain)
 [![Total Downloads](https://img.shields.io/packagist/dt/sandermuller/laravel-queue-insights.svg?style=flat-square)](https://packagist.org/packages/sandermuller/laravel-queue-insights)
 [![License](https://img.shields.io/github/license/sandermuller/laravel-queue-insights.svg?style=flat-square)](LICENSE)
+[![Laravel Compatibility](https://badge.laravel.cloud/badge/sandermuller/laravel-queue-insights?style=flat)](https://packagist.org/packages/sandermuller/laravel-queue-insights)
 
 Self-hosted queue observability for Laravel. A Horizon-style dashboard that doesn't lock you into the Redis queue driver.
 
@@ -25,7 +26,7 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 ## Requirements
 
 - PHP 8.3+
-- Laravel 11 or 12
+- Laravel 11, 12, or 13
 - Redis (for insights storage)
 - `livewire/livewire` 3 or 4 (only if you use the bundled dashboard route).
 
@@ -138,6 +139,24 @@ It shows up in two places:
 Capture is automatic. Installing the package wires an `Illuminate\Queue\Events\JobQueued` listener that records the enqueue timestamp, so no host-app config is needed. The cost per job is one Redis `SETEX` at push, plus a `GET` + `ZADD` + `ZREMRANGEBYRANK` + `EXPIRE` chain at worker pickup. Retention: 1h on the per-uuid `pushed:` key, 7d on the per-uuid `wait:` sample, rolling 1000 most-recent on the per-queue ZSET.
 
 A 7-day clock-skew guard rejects any wait sample over that, so a producer host with bad NTP can't poison the percentile pool indefinitely.
+
+### Customising row markup
+
+The dashboard's queue, completed, and failed lists are each rendered through a Blade partial, plus a shared filter-form partial. They're publishable — a host that wants to swap a row's columns or restyle the filter chrome can publish the partials and edit them in place without forking the whole `dashboard.blade.php` view:
+
+```bash
+php artisan vendor:publish --tag=queue-insights-views
+```
+
+| Partial                                 | What it renders                                                |
+|-----------------------------------------|----------------------------------------------------------------|
+| `partials/queue-row.blade.php`          | One row in the Queues list (Needs attention + Healthy groups)  |
+| `partials/completed-row.blade.php`      | One row in Recent completed                                    |
+| `partials/failed-list-row.blade.php`    | One row in Recent failed                                       |
+| `partials/filter-form.blade.php`        | The collapsible 5-field filter form (used by both completed + failed) |
+| `partials/stat-tile.blade.php`          | One tile in the headline-stats panel beside the throughput sparkline  |
+
+If you only want to override one row layout, leave the others unpublished — Blade will fall back to the package's bundled version for those.
 
 ### Embedding the dashboard inside an admin layout
 
