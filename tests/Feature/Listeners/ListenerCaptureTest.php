@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Queue\Events\JobProcessed;
+use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Tests\Support\R;
@@ -151,6 +152,7 @@ it('treats a non-numeric start:{uuid} value as a missing sample (no duration wri
     // `SET key val EX ttl` has divergent shapes across drivers.
     R::conn()->command('setex', ['qmtest:start:' . $uuid, 3600, 'not-a-number']);
 
+    /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('uuid')->andReturn($uuid);
     $job->shouldReceive('getQueue')->andReturn('default');

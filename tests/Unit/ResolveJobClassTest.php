@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Queue\CallQueuedClosure;
+use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 
 /**
@@ -11,6 +12,7 @@ use SanderMuller\QueueInsights\Support\ResolveJobClass;
  */
 function makeResolvableJob(string $name, array $payload = []): Job
 {
+    /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('resolveName')->andReturn($name);
     $job->shouldReceive('payload')->andReturn($payload);
@@ -23,6 +25,7 @@ function makeResolvableJob(string $name, array $payload = []): Job
  */
 function makeUnresolvableJob(array $payload = []): Job
 {
+    /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('resolveName')->andThrow(new RuntimeException('cannot resolve'));
     $job->shouldReceive('payload')->andReturn($payload);

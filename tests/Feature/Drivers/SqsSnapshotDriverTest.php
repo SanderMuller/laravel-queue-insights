@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Aws\Result;
 use Aws\Sqs\SqsClient;
 use Illuminate\Support\Facades\Redis;
+use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Drivers\SqsSnapshotDriver;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -19,6 +20,7 @@ beforeEach(function (): void {
 });
 
 it('skips GetQueueUrl when the input is already a URL', function (): void {
+    /** @var SqsClient&MockInterface $client */
     $client = Mockery::mock(SqsClient::class);
     $client->shouldNotReceive('getQueueUrl');
     $client->shouldReceive('getQueueAttributes')
@@ -38,6 +40,7 @@ it('skips GetQueueUrl when the input is already a URL', function (): void {
 });
 
 it('calls GetQueueUrl once for a name, caches the URL for 1h, and then calls GetQueueAttributes', function (): void {
+    /** @var SqsClient&MockInterface $client */
     $client = Mockery::mock(SqsClient::class);
     $client->shouldReceive('getQueueUrl')
         ->once()
@@ -70,6 +73,7 @@ it('reuses a cached URL on subsequent driver instances without re-calling GetQue
         'https://sqs.eu-west-1.amazonaws.com/123/my-q',
     ]);
 
+    /** @var SqsClient&MockInterface $client */
     $client = Mockery::mock(SqsClient::class);
     $client->shouldNotReceive('getQueueUrl');
     $client->shouldReceive('getQueueAttributes')
@@ -86,6 +90,7 @@ it('reuses a cached URL on subsequent driver instances without re-calling GetQue
 });
 
 it('produces identical canonical keys for a URL and its bare name', function (): void {
+    /** @var SqsClient&MockInterface $client */
     $client = Mockery::mock(SqsClient::class);
     $driver = new SqsSnapshotDriver($client, 'sqs');
 
@@ -95,6 +100,7 @@ it('produces identical canonical keys for a URL and its bare name', function ():
 });
 
 it('only calls GetQueueAttributes once per queue per driver instance (per-request cache)', function (): void {
+    /** @var SqsClient&MockInterface $client */
     $client = Mockery::mock(SqsClient::class);
     $client->shouldReceive('getQueueAttributes')
         ->once()

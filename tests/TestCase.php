@@ -16,7 +16,7 @@ abstract class TestCase extends Orchestra
      * @param  Application  $app
      * @return list<class-string>
      */
-    protected function getPackageProviders($app): array
+    protected function getPackageProviders(mixed $app): array
     {
         return [
             LivewireServiceProvider::class,
@@ -27,7 +27,7 @@ abstract class TestCase extends Orchestra
     /**
      * @param  Application  $app
      */
-    protected function defineEnvironment($app): void
+    protected function defineEnvironment(mixed $app): void
     {
         /** @var Repository $config */
         $config = $app->make(Repository::class);
