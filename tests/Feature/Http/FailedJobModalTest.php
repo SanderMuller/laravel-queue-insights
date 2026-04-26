@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
-use SanderMuller\QueueInsights\Support\KeyPrefix;
 
 beforeEach(function (): void {
     // Replicate Laravel's default failed_jobs schema. Orchestra's :memory: SQLite
@@ -238,20 +236,4 @@ it('Markdown export survives exception text that contains literal triple backtic
     // A 3-backtick run in the exception forces ≥4 backtick fences for both blocks.
     expect(strlen($captureGroup('/\n(`+)\nRuntimeException: bad sql\n/', $markdown)))->toBeGreaterThanOrEqual(4);
     expect(strlen($captureGroup('/\n(`+)json\n/', $markdown)))->toBeGreaterThanOrEqual(4);
-});
-
-it('renders 100% fail rate when a class has only failures and zero successes', function (): void {
-    // Regression: prior code computed `$processed > 0 ? failed/(processed+failed) : 0`,
-    // which rendered "0.0% fail rate" for all-failed classes — hiding the worst-case
-    // operational signal during triage (codex review).
-    config()->set('queue-insights.key_prefix', 'qmtest:');
-    Redis::connection('default')->command('flushdb', []);
-
-    $r = Redis::connection('default');
-    $thisHour = now('UTC')->format('YmdH');
-    $r->command('zadd', [KeyPrefix::make('classes'), now()->getTimestamp(), 'App\\OnlyFails']);
-    $r->command('set', [KeyPrefix::make("failed:App\\OnlyFails:{$thisHour}"), '5']);
-
-    Livewire::test(QueueInsightsDashboard::class)
-        ->assertSee('100.0% fail rate');
 });

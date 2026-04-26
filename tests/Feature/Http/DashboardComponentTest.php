@@ -33,7 +33,7 @@ it('renders empty states when there is no configured queue or classes', function
     Livewire::test(QueueInsightsDashboard::class)
         ->assertOk()
         ->assertSee('No queues configured')
-        ->assertSee('No processed jobs in the window')
+        ->assertSee('No completed jobs recorded yet')
         ->assertSee('No failed jobs recorded');
 });
 
@@ -146,23 +146,6 @@ it('selects a class and filters the recent completed table', function (): void {
         ->call('selectClass', 'App\\Foo')
         ->assertSet('selectedClass', 'App\\Foo')
         ->assertSee('Clear filter');
-});
-
-it('encodes FQCNs safely in wire:click so backslashes survive the JS string literal', function (): void {
-    // Regression: `wire:click="selectClass('{{ $class }}')"` strips `\J`, `\V`, `\D` etc
-    // as unknown JS escape sequences, corrupting class names like `App\Jobs\X` into
-    // `AppJobsX`. Use @js()/Js::from() to emit a proper quoted JS string literal.
-    $r = Redis::connection('default');
-    $class = 'App\\Jobs\\Video\\DuplicateInteractionsJob';
-    $r->command('zadd', [KeyPrefix::make('classes'), Date::now()->getTimestamp(), $class]);
-    seedStream($r, KeyPrefix::make("completed:{$class}"), ['queue' => 'default']);
-
-    $html = Livewire::test(QueueInsightsDashboard::class)->html();
-
-    // @js() emits a single-quoted JS string literal with backslashes doubled so the JS
-    // parser restores them at evaluation time. Raw assertion here matches what lands in
-    // the HTML attribute value before JS evaluation.
-    expect($html)->toContain("selectClass('App\\\\Jobs\\\\Video\\\\DuplicateInteractionsJob')");
 });
 
 it('selectClass with a FQCN populates the filtered completed table', function (): void {

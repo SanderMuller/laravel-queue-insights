@@ -21,6 +21,7 @@ use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
+use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use Throwable;
@@ -28,6 +29,7 @@ use Throwable;
 #[Layout('queue-insights::layouts.app')]
 final class QueueInsightsDashboard extends Component
 {
+    #[Url(as: 'ck')]
     public ?string $selectedClass = null;
 
     public ?string $selectedPayloadId = null;
@@ -56,6 +58,24 @@ final class QueueInsightsDashboard extends Component
 
     #[Url(as: 'fto', except: '')]
     public string $filterTo = '';
+
+    /*
+     * Recent-completed filter state. Class filter routes through `selectedClass`
+     * (existing pre-fetch namespacing in QueueInsights::recentCompleted); the
+     * other four are post-fetch PHP filters over the 50-row default cap.
+     */
+
+    #[Url(as: 'cc', except: '')]
+    public string $completedFilterConnection = '';
+
+    #[Url(as: 'cqu', except: '')]
+    public string $completedFilterQueue = '';
+
+    #[Url(as: 'cfrom', except: '')]
+    public string $completedFilterFrom = '';
+
+    #[Url(as: 'cto', except: '')]
+    public string $completedFilterTo = '';
 
     /**
      * Defense-in-depth: enforce the `viewQueueInsights` Gate on component mount,
@@ -116,6 +136,110 @@ final class QueueInsightsDashboard extends Component
         $this->filterClass = '';
         $this->filterFrom = '';
         $this->filterTo = '';
+    }
+
+    public function clearCompletedFilters(): void
+    {
+        $this->selectedClass = null;
+        $this->completedFilterConnection = '';
+        $this->completedFilterQueue = '';
+        $this->completedFilterFrom = '';
+        $this->completedFilterTo = '';
+    }
+
+    private function buildCompletedFilter(): CompletedRowFilter
+    {
+        return new CompletedRowFilter(
+            connection: $this->completedFilterConnection,
+            queue: $this->completedFilterQueue,
+            from: $this->completedFilterFrom,
+            to: $this->completedFilterTo,
+        );
+    }
+
+    /**
+     * Build the option lists shown in the filter dropdowns. Connection and
+     * queue come from the configured snapshots (the package's source of
+     * truth for what's tracked); class comes from the 24h class roster.
+     *
+     * @param  list<array<string, mixed>>  $classes
+     * @return array{connections: list<string>, queues: list<string>, classes: list<string>}
+     */
+    private function buildFilterOptions(array $classes): array
+    {
+        $snapshots = array_values(array_filter(Config::array('snapshots'), is_array(...)));
+
+        return [
+            'connections' => $this->distinctStrings(array_column($snapshots, 'connection')),
+            'queues' => $this->distinctStrings(array_column($snapshots, 'queue')),
+            'classes' => $this->distinctStrings(array_column($classes, 'class')),
+        ];
+    }
+
+    /**
+     * @param  array<int, mixed>  $values
+     * @return list<string>
+     */
+    private function distinctStrings(array $values): array
+    {
+        $out = array_values(array_unique(array_filter(
+            $values,
+            static fn (mixed $v): bool => is_string($v) && $v !== '',
+        )));
+        sort($out);
+
+        return $out;
+    }
+
+    /**
+     * Headline stats inspired by Horizon. All values are derived from data
+     * already loaded for the dashboard — no extra round-trips to Redis.
+     *
+     * @param  list<array{timestamp: int, processed: int, failed: int}>  $throughput
+     * @param  list<array<string, mixed>>  $queues
+     * @param  list<array<string, mixed>>  $classes
+     * @return array{jobs_per_minute: int, jobs_past_hour: int, failed_past_hour: int, max_throughput_hour: int, max_wait_ms: ?int, max_runtime_ms: ?int}
+     */
+    private function buildHeadlineStats(array $throughput, array $queues, array $classes): array
+    {
+        $latest = $throughput === [] ? ['processed' => 0, 'failed' => 0] : $throughput[count($throughput) - 1];
+        $pastHour = $latest['processed'];
+
+        $processedSeries = array_column($throughput, 'processed');
+
+        return [
+            'jobs_per_minute' => (int) round($pastHour / 60),
+            'jobs_past_hour' => $pastHour,
+            'failed_past_hour' => $latest['failed'],
+            'max_throughput_hour' => $processedSeries === [] ? 0 : max($processedSeries),
+            'max_wait_ms' => $this->maxIntCol($queues, 'wait_p95_ms'),
+            'max_runtime_ms' => $this->maxIntCol($classes, 'p95_ms'),
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     */
+    private function maxIntCol(array $rows, string $key): ?int
+    {
+        $values = [];
+        foreach ($rows as $row) {
+            $v = $row[$key] ?? null;
+            if (is_numeric($v)) {
+                $values[] = (int) $v;
+            }
+        }
+
+        return $values === [] ? null : max($values);
+    }
+
+    private function completedFiltersActive(): bool
+    {
+        return $this->selectedClass !== null
+            || $this->completedFilterConnection !== ''
+            || $this->completedFilterQueue !== ''
+            || $this->completedFilterFrom !== ''
+            || $this->completedFilterTo !== '';
     }
 
     private function buildFailedFilters(): FailedJobFilters
@@ -397,17 +521,24 @@ final class QueueInsightsDashboard extends Component
             }
         }
 
+        $filterOptions = $this->buildFilterOptions($classes);
+
         return ViewFactory::make('queue-insights::dashboard', [
             'queues' => $queues,
             'classes' => $classes,
+            'filterConnectionOptions' => $filterOptions['connections'],
+            'filterQueueOptions' => $filterOptions['queues'],
+            'filterClassOptions' => $filterOptions['classes'],
             'captureMode' => $captureMode,
-            'completedRows' => $this->enrichCompletedRows($recentCompleted),
+            'completedRows' => $this->buildCompletedFilter()->apply($this->enrichCompletedRows($recentCompleted)),
+            'completedFiltersActive' => $this->completedFiltersActive(),
             'failedRows' => $this->enrichFailedRows($recentFailed),
             'selectedClass' => $this->selectedClass,
             'selectedPayload' => $selectedPayload,
             'selectedFailed' => $selectedFailed,
             'payloadTab' => $this->payloadTab,
             'throughput' => $throughput,
+            'stats' => $this->buildHeadlineStats($throughput, $queues, $classes),
             'failedFiltersActive' => ! $failedFilters->isEmpty(),
             'canRetry' => $canRetry,
             'bulkRetryCount' => $bulkRetryCount,

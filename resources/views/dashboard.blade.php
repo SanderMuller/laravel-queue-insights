@@ -9,214 +9,171 @@
 
         <x-queue-insights::flash-banner/>
 
-        {{-- Top stat strip — Horizon-style "current workload" row. Only live-state sums
-            live here (Queues / Depth / In-flight). 24h Processed/Failed totals are in
-            the throughput card header above, no duplicate read. --}}
         @php
             $totalDepth = array_sum(array_map(fn ($q): int => is_numeric($q['depth']) ? (int) $q['depth'] : 0, $queues));
             $totalInFlight = array_sum(array_map(fn ($q): int => is_numeric($q['inflight'] ?? null) ? (int) $q['inflight'] : 0, $queues));
+            $atRisk = array_values(array_filter($queues, fn ($q) => $q['error'] || $q['stale']));
+            $healthy = array_values(array_filter($queues, fn ($q) => ! $q['error'] && ! $q['stale']));
+            $sortedQueues = array_merge($atRisk, $healthy);
+
+            $fmtMs = static function (?int $ms): string {
+                if ($ms === null) return '—';
+                if ($ms < 1000) return number_format($ms).'ms';
+                if ($ms < 60_000) return number_format($ms / 1000, 1).'s';
+                return number_format($ms / 60_000, 1).'m';
+            };
+            $statTiles = [
+                ['label' => 'Jobs / min', 'value' => number_format($stats['jobs_per_minute']), 'sub' => null, 'tone' => 'neutral'],
+                ['label' => 'Jobs past hour', 'value' => number_format($stats['jobs_past_hour']), 'sub' => null, 'tone' => 'neutral'],
+                ['label' => 'Failed past hour', 'value' => number_format($stats['failed_past_hour']), 'sub' => null, 'tone' => $stats['failed_past_hour'] > 0 ? 'danger' : 'neutral'],
+                ['label' => 'Max throughput', 'value' => number_format($stats['max_throughput_hour']), 'sub' => '/hr', 'tone' => 'neutral'],
+                ['label' => 'Max wait', 'value' => $fmtMs($stats['max_wait_ms']), 'sub' => 'p95', 'tone' => $stats['max_wait_ms'] !== null && $stats['max_wait_ms'] > 5_000 ? 'warn' : 'neutral'],
+                ['label' => 'Max runtime', 'value' => $fmtMs($stats['max_runtime_ms']), 'sub' => 'p95', 'tone' => 'neutral'],
+            ];
         @endphp
 
-        <x-queue-insights::throughput-sparkline :throughput="$throughput"/>
+        <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div class="lg:col-span-2">
+                <x-queue-insights::throughput-sparkline :throughput="$throughput"/>
+            </div>
+            <dl aria-label="Headline stats" class="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl bg-white p-5 ring-1 ring-gray-950/5">
+                @foreach($statTiles as $tile)
+                    @include('queue-insights::partials.stat-tile', $tile)
+                @endforeach
+            </dl>
+        </div>
 
-        {{-- Current-workload stat strip. Processed/Failed 24h totals intentionally live
-            in the throughput card above — avoid the duplicate read. --}}
-        <dl aria-label="Current workload"
-            class="grid grid-cols-1 gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5 sm:grid-cols-3">
-            <div class="bg-white p-5">
-                <dt class="truncate text-xs font-medium text-gray-500">Queues</dt>
-                <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 tabular-nums">{{ count($queues) }}</dd>
-            </div>
-            <div class="bg-white p-5">
-                <dt class="truncate text-xs font-medium text-gray-500">Depth</dt>
-                <dd class="mt-1 text-2xl font-semibold tracking-tight tabular-nums {{ $totalDepth > 0 ? 'text-emerald-700' : 'text-gray-900' }}">{{ number_format($totalDepth) }}</dd>
-            </div>
-            <div class="bg-white p-5">
-                <dt class="truncate text-xs font-medium text-gray-500">In-flight</dt>
-                <dd class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 tabular-nums">{{ number_format($totalInFlight) }}</dd>
-            </div>
-        </dl>
-
-        {{-- Queue cards --}}
         <section>
-            <div class="mb-5 flex items-center gap-2.5">
-                <span class="h-5 w-1 rounded bg-emerald-500" aria-hidden="true"></span>
-                <h2 class="text-base font-semibold tracking-tight text-gray-900">Queues</h2>
+            <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div class="flex items-center gap-2">
+                    <svg class="size-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75ZM2 10a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 15.25Z"/>
+                    </svg>
+                    <h2 class="text-lg font-semibold tracking-tight text-gray-900">Queues</h2>
+                </div>
+                <p class="text-sm text-gray-500 tabular-nums">
+                    {{ count($queues) }} configured · {{ number_format($totalDepth) }} backlog · {{ number_format($totalInFlight) }} in-flight
+                </p>
             </div>
+
             @if(count($queues) === 0)
                 <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
-                    No queues configured. Add entries to <code
-                        class="rounded bg-gray-950/5 px-1 py-0.5 font-mono text-xs">config/queue-insights.php</code>
-                    under <code class="rounded bg-gray-950/5 px-1 py-0.5 font-mono text-xs">snapshots</code>.
+                    No queues configured. Add entries to <code class="rounded bg-gray-950/5 px-1 py-0.5 font-mono text-xs">config/queue-insights.php</code> under <code class="rounded bg-gray-950/5 px-1 py-0.5 font-mono text-xs">snapshots</code>.
                 </div>
             @else
-                <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                    @foreach($queues as $q)
-                        <div class="rounded-lg bg-white p-5 ring-1 ring-gray-950/5">
-                            <div class="flex items-start justify-between gap-3">
-                                <div class="min-w-0">
-                                    <p class="truncate text-xs font-medium text-gray-500">{{ $q['connection'] }}</p>
-                                    <p class="truncate font-mono text-sm text-gray-900">{{ $q['queue'] }}</p>
-                                </div>
-                                <span
-                                    class="shrink-0 rounded bg-gray-950/5 px-2 py-0.5 font-mono text-xs text-gray-700">
-                                {{ $q['driver'] }}
-                            </span>
+                @if(count($atRisk) > 0)
+                    <h3 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-wide text-red-700">
+                        <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" clip-rule="evenodd"/>
+                        </svg>
+                        Needs attention <span class="font-normal text-red-500">({{ count($atRisk) }})</span>
+                    </h3>
+                    <div class="mb-5 rounded-lg bg-white ring-1 ring-red-600/20">
+                        <div class="grid grid-cols-12 items-center gap-4 border-b border-red-200/60 px-4 py-2 text-xs font-medium text-red-700/80">
+                            <div class="col-span-4">Queue</div>
+                            <div class="col-span-4 grid grid-cols-3 text-center">
+                                <div>Depth</div>
+                                <div>In-flight</div>
+                                <div>Delayed</div>
                             </div>
-
-                            <dl class="mt-5 grid grid-cols-3 text-center">
-                                <div
-                                    class="pr-2 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 [&:not(:first-child)]:pl-2">
-                                    <dt class="text-xs font-medium text-gray-500">Depth</dt>
-                                    <dd class="mt-1 text-2xl font-semibold tabular-nums {{ is_numeric($q['depth']) && (int) $q['depth'] > 0 ? 'text-emerald-700' : 'text-gray-900' }}">{{ $q['depth'] }}</dd>
-                                </div>
-                                <div
-                                    class="px-2 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5">
-                                    <dt class="text-xs font-medium text-gray-500">In-flight</dt>
-                                    <dd class="mt-1 text-2xl font-semibold text-gray-900 tabular-nums">{{ $q['inflight'] ?? '—' }}</dd>
-                                </div>
-                                <div
-                                    class="pl-2 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5">
-                                    <dt class="text-xs font-medium text-gray-500">Delayed</dt>
-                                    <dd class="mt-1 text-2xl font-semibold text-gray-900 tabular-nums">{{ $q['delayed'] ?? '—' }}</dd>
-                                </div>
-                            </dl>
-
-                            {{-- Wait-time micro-stats — p50 / p95 over the last 1000 jobs.
-                                Renders `—` when fewer than 10 samples have accumulated yet. --}}
-                            <dl class="mt-3 flex items-center gap-3 text-[11px] tabular-nums text-gray-500"
-                                title="Wait time = enqueue → worker pickup. Computed over the most recent 1000 jobs on this queue.">
-                                <div class="flex items-center gap-1">
-                                    <dt class="text-gray-400">wait p50</dt>
-                                    <dd class="font-medium text-gray-700">{{ $q['wait_p50_ms'] !== null ? number_format($q['wait_p50_ms']).' ms' : '—' }}</dd>
-                                </div>
-                                <span class="text-gray-300" aria-hidden="true">·</span>
-                                <div class="flex items-center gap-1">
-                                    <dt class="text-gray-400">p95</dt>
-                                    <dd class="font-medium text-gray-700">{{ $q['wait_p95_ms'] !== null ? number_format($q['wait_p95_ms']).' ms' : '—' }}</dd>
-                                </div>
-                            </dl>
-
-                            <div class="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                                @if($q['error'])
-                                    <span
-                                        class="rounded bg-red-50 px-2 py-0.5 font-medium text-red-700 ring-1 ring-inset ring-red-600/20"
-                                        title="{{ $q['error'] }}">
-                                    error
-                                </span>
-                                @endif
-                                @if($q['stale'])
-                                    <span
-                                        class="rounded bg-amber-50 px-2 py-0.5 font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">stale</span>
-                                @endif
-                                @if($q['last_at'])
-                                    <span class="text-gray-500" title="{{ $q['last_at']->toIso8601String() }}">last {{ $q['last_at']->diffForHumans() }}</span>
-                                @else
-                                    <span class="text-gray-500">no snapshot yet</span>
-                                @endif
-                            </div>
+                            <div class="col-span-2 text-right">Wait</div>
+                            <div class="col-span-2 text-right">Status</div>
                         </div>
-                    @endforeach
-                </div>
+                        <ul role="list" class="divide-y divide-red-200/60">
+                            @foreach($atRisk as $q)
+                                @include('queue-insights::partials.queue-row', ['q' => $q])
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+                @if(count($healthy) > 0)
+                    @if(count($atRisk) > 0)
+                        <h3 class="mb-2 text-xs font-semibold tracking-wide text-gray-500">Healthy <span class="font-normal text-gray-400">({{ count($healthy) }})</span></h3>
+                    @endif
+                    <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
+                        <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+                            <div class="col-span-4">Queue</div>
+                            <div class="col-span-4 grid grid-cols-3 text-center">
+                                <div>Depth</div>
+                                <div>In-flight</div>
+                                <div>Delayed</div>
+                            </div>
+                            <div class="col-span-2 text-right">Wait</div>
+                            <div class="col-span-2 text-right">Status</div>
+                        </div>
+                        <ul role="list" class="divide-y divide-gray-950/5">
+                            @foreach($healthy as $q)
+                                @include('queue-insights::partials.queue-row', ['q' => $q])
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
             @endif
         </section>
 
         {{-- Recent completed --}}
         <section>
-            <div class="mb-5 flex items-center gap-2.5">
-                <span class="h-5 w-1 rounded bg-emerald-500" aria-hidden="true"></span>
-                <h2 class="text-base font-semibold tracking-tight text-gray-900">Recent completed</h2>
-                @if($selectedClass)
-                    <span class="font-mono text-xs text-gray-500">({{ $selectedClass }})</span>
+            <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div class="flex items-center gap-2">
+                    <svg class="size-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd"/>
+                    </svg>
+                    <h2 class="text-lg font-semibold tracking-tight text-gray-900">Recent completed</h2>
+                </div>
+                @if($completedFiltersActive)
+                    <span class="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">filtered</span>
                 @endif
+                <p class="text-sm text-gray-500 tabular-nums">{{ count($completedRows) }} jobs</p>
             </div>
+
+            @include('queue-insights::partials.filter-form', [
+                'active' => $completedFiltersActive,
+                'models' => [
+                    'connection' => 'completedFilterConnection',
+                    'queue' => 'completedFilterQueue',
+                    'class' => 'selectedClass',
+                    'from' => 'completedFilterFrom',
+                    'to' => 'completedFilterTo',
+                ],
+                'clearMethod' => 'clearCompletedFilters',
+                'connectionOptions' => $filterConnectionOptions,
+                'queueOptions' => $filterQueueOptions,
+                'classOptions' => $filterClassOptions,
+            ])
+
             @if(count($completedRows) === 0)
                 <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
-                    No completed jobs recorded yet.
+                    @if($completedFiltersActive)
+                        No completed jobs match the current filters.
+                    @else
+                        No completed jobs recorded yet.
+                    @endif
                 </div>
             @else
-                <div class="-mx-6 -my-2 overflow-x-auto sm:-mx-8 lg:-mx-10">
-                    <div class="inline-block min-w-full px-6 py-2 align-middle sm:px-8 lg:px-10">
-                        <table class="w-full text-sm">
-                            <thead>
-                            <tr class="text-left text-xs font-medium text-gray-500">
-                                <th class="whitespace-nowrap py-2 pr-3 font-medium">Job</th>
-                                <th class="whitespace-nowrap px-3 py-2 font-medium">On</th>
-                                <th class="whitespace-nowrap px-3 py-2 text-right font-medium">Runtime</th>
-                                <th class="whitespace-nowrap px-3 py-2 font-medium">Completed</th>
-                                <th class="whitespace-nowrap py-2 pl-3 font-medium"><span class="sr-only">Details</span></th>
-                            </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-950/5">
-                            @foreach($completedRows as $row)
-                                @php
-                                    $runtime = $row['duration_ms'] ?? '';
-                                    $runtimeShort = is_numeric($runtime) && (int) $runtime > 0
-                                        ? \Carbon\CarbonInterval::milliseconds((int) $runtime)->cascade()->forHumans(['short' => true])
-                                        : '—';
-                                    $attempts = is_numeric($row['attempts'] ?? null) ? (int) $row['attempts'] : null;
-                                    $processedAt = $row['processed_at'] ?? null;
-                                    try {
-                                        $atHuman = is_string($processedAt) && $processedAt !== ''
-                                            ? \Illuminate\Support\Facades\Date::parse($processedAt)->diffForHumans()
-                                            : null;
-                                    } catch (\Throwable) {
-                                        $atHuman = null;
-                                    }
-                                @endphp
-                                <tr class="cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500"
-                                    role="button"
-                                    tabindex="0"
-                                    aria-label="Open job details"
-                                    wire:click="openPayload(@js($row['_id']))"
-                                    x-on:keydown.enter.prevent="$wire.openPayload(@js($row['_id']))"
-                                    x-on:keydown.space.prevent="$wire.openPayload(@js($row['_id']))">
-                                    {{-- Job: two-line display — full class name on top, short stream id below. --}}
-                                    <td class="max-w-md py-3 pr-3 align-top">
-                                        <p class="truncate font-mono text-xs font-medium text-gray-900">{{ $row['class'] ?? $selectedClass ?? '—' }}</p>
-                                        @if (! empty($row['short_id']))
-                                            <p class="mt-0.5 font-mono text-[10px] text-gray-400">#{{ $row['short_id'] }}</p>
-                                        @endif
-                                    </td>
-                                    {{-- On: connection · queue pill pair, vertical stack. --}}
-                                    <td class="px-3 py-3 align-top">
-                                        <p class="text-xs text-gray-500">{{ $row['connection'] ?? '—' }}</p>
-                                        <p class="mt-0.5 font-mono text-xs text-gray-800">{{ $row['queue'] ?? '—' }}</p>
-                                    </td>
-                                    {{-- Runtime + attempts --}}
-                                    <td class="px-3 py-3 text-right align-top">
-                                        <p class="text-sm font-medium tabular-nums text-gray-900">{{ $runtimeShort }}</p>
-                                        @if ($attempts !== null && $attempts > 1)
-                                            <p class="mt-0.5 text-[10px] font-medium tabular-nums text-amber-700">{{ $attempts }} attempts</p>
-                                        @endif
-                                    </td>
-                                    {{-- Completed at — humanized + absolute tooltip --}}
-                                    <td class="px-3 py-3 align-top">
-                                        <p class="whitespace-nowrap text-xs text-gray-700" @if ($processedAt) title="{{ $processedAt }}" @endif>{{ $atHuman ?? '—' }}</p>
-                                        @if ($processedAt)
-                                            <p class="mt-0.5 truncate font-mono text-[10px] text-gray-400">{{ $processedAt }}</p>
-                                        @endif
-                                    </td>
-                                    <td class="py-3 pl-3 align-top text-right text-[10px] uppercase tracking-wider text-gray-400">
-                                        Open
-                                        <svg class="ml-0.5 inline-block size-3 -translate-y-px" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                            <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                                        </svg>
-                                    </td>
-                                </tr>
-                            @endforeach
-                            </tbody>
-                        </table>
+                <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
+                    <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+                        <div class="col-span-4">Job</div>
+                        <div class="col-span-3">Queue</div>
+                        <div class="col-span-2 text-right">Runtime</div>
+                        <div class="col-span-2 text-right">Completed</div>
+                        <div class="col-span-1"></div>
                     </div>
+                    <ul role="list" class="divide-y divide-gray-950/5">
+                        @foreach($completedRows as $row)
+                            @include('queue-insights::partials.completed-row', ['row' => $row])
+                        @endforeach
+                    </ul>
                 </div>
             @endif
         </section>
 
         {{-- Recent failed --}}
         <section>
-            <div class="mb-3 flex flex-wrap items-center gap-2.5">
-                <span class="h-5 w-1 rounded bg-emerald-500" aria-hidden="true"></span>
-                <h2 class="text-base font-semibold tracking-tight text-gray-900">Recent failed</h2>
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+                <svg class="size-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" clip-rule="evenodd"/>
+                </svg>
+                <h2 class="text-lg font-semibold tracking-tight text-gray-900">Recent failed</h2>
                 @if($failedFiltersActive)
                     <span class="rounded bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">filtered</span>
                 @endif
@@ -258,54 +215,20 @@
                 @endif
             </div>
 
-            <details class="mb-4 group" @if($failedFiltersActive) open @endif>
-                <summary class="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-500 ring-1 ring-inset ring-gray-950/10 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                    <span>Filter</span>
-                    <svg class="size-3 transition-transform group-open:rotate-90" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                    </svg>
-                </summary>
-
-                <div class="mt-3 grid grid-cols-1 gap-3 rounded-lg bg-gray-50 p-3 ring-1 ring-inset ring-gray-950/5 sm:grid-cols-5">
-                    <label class="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                        Connection
-                        <input type="text" wire:model.live.debounce.300ms="filterConnection"
-                               placeholder="any"
-                               class="rounded-md border-0 bg-white px-2 py-1.5 text-xs text-gray-900 ring-1 ring-inset ring-gray-950/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-emerald-500"/>
-                    </label>
-                    <label class="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                        Queue
-                        <input type="text" wire:model.live.debounce.300ms="filterQueue"
-                               placeholder="any"
-                               class="rounded-md border-0 bg-white px-2 py-1.5 text-xs text-gray-900 ring-1 ring-inset ring-gray-950/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-emerald-500"/>
-                    </label>
-                    <label class="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wider text-gray-500 sm:col-span-1">
-                        Class (prefix)
-                        <input type="text" wire:model.live.debounce.300ms="filterClass"
-                               placeholder="App\\Jobs\\…"
-                               class="rounded-md border-0 bg-white px-2 py-1.5 font-mono text-xs text-gray-900 ring-1 ring-inset ring-gray-950/10 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-emerald-500"/>
-                    </label>
-                    <label class="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                        From
-                        <input type="date" wire:model.live="filterFrom"
-                               class="rounded-md border-0 bg-white px-2 py-1.5 text-xs text-gray-900 ring-1 ring-inset ring-gray-950/10 focus:ring-2 focus:ring-inset focus:ring-emerald-500"/>
-                    </label>
-                    <label class="flex flex-col gap-1 text-[10px] font-medium uppercase tracking-wider text-gray-500">
-                        To
-                        <input type="date" wire:model.live="filterTo"
-                               class="rounded-md border-0 bg-white px-2 py-1.5 text-xs text-gray-900 ring-1 ring-inset ring-gray-950/10 focus:ring-2 focus:ring-inset focus:ring-emerald-500"/>
-                    </label>
-
-                    @if($failedFiltersActive)
-                        <div class="sm:col-span-5 -mt-1 flex justify-end">
-                            <button type="button" wire:click="clearFailedFilters"
-                                    class="rounded text-xs font-medium text-emerald-700 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                                Clear all filters
-                            </button>
-                        </div>
-                    @endif
-                </div>
-            </details>
+            @include('queue-insights::partials.filter-form', [
+                'active' => $failedFiltersActive,
+                'models' => [
+                    'connection' => 'filterConnection',
+                    'queue' => 'filterQueue',
+                    'class' => 'filterClass',
+                    'from' => 'filterFrom',
+                    'to' => 'filterTo',
+                ],
+                'clearMethod' => 'clearFailedFilters',
+                'connectionOptions' => $filterConnectionOptions,
+                'queueOptions' => $filterQueueOptions,
+                'classOptions' => $filterClassOptions,
+            ])
 
             @if(count($failedRows) === 0)
                 <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
@@ -316,96 +239,22 @@
                     @endif
                 </div>
             @else
-                <div class="-mx-6 px-6 -my-2 overflow-x-auto sm:-mx-8 lg:-mx-10">
-                    <div class="inline-block min-w-full px-6 py-2 align-middle sm:px-8 lg:px-10">
-                        <table class="w-full text-sm">
-                            <thead>
-                            <tr class="text-left text-xs font-medium text-gray-500">
-                                <th class="whitespace-nowrap py-2 pr-3 font-medium" colspan="2">Job</th>
-                                <th class="whitespace-nowrap px-3 py-2 font-medium">On</th>
-                                <th class="whitespace-nowrap px-3 py-2 font-medium">Failed</th>
-                                <th class="whitespace-nowrap py-2 pl-3 font-medium"><span class="sr-only">Details</span></th>
-                            </tr>
-                            </thead>
-                            <tbody class="divide-y divide-gray-950/5">
-                            @foreach ($failedRows as $f)
-                                @php
-                                    try {
-                                        $failedAtHuman = is_string($f['failed_at'] ?? null) && $f['failed_at'] !== ''
-                                            ? \Illuminate\Support\Facades\Date::parse($f['failed_at'])->diffForHumans()
-                                            : null;
-                                    } catch (\Throwable) {
-                                        $failedAtHuman = null;
-                                    }
-                                @endphp
-                                <tr @class([
-                                        'transition',
-                                        'cursor-pointer hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500' => $f['id'] !== null,
-                                    ])
-                                    @if ($f['id'] !== null)
-                                        role="button"
-                                        tabindex="0"
-                                        aria-label="Open failed job details"
-                                        wire:click="openFailed({{ $f['id'] }})"
-                                        x-on:keydown.enter.prevent="$wire.openFailed({{ $f['id'] }})"
-                                        x-on:keydown.space.prevent="$wire.openFailed({{ $f['id'] }})"
-                                    @endif>
-                                    {{-- Icon column: red circle-exclamation for scannability --}}
-                                    <td class="py-3 pr-3 align-top">
-                                        <span class="inline-flex size-7 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-inset ring-red-600/20" aria-hidden="true">
-                                            <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                                <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" clip-rule="evenodd"/>
-                                            </svg>
-                                        </span>
-                                    </td>
-                                    {{-- Job: two-line — displayName (primary) + exception class + short uuid (secondary) --}}
-                                    <td class="max-w-md py-3 pr-3 align-top">
-                                        <p class="truncate font-mono text-xs font-medium text-gray-900">{{ $f['display_name'] ?? '—' }}</p>
-                                        <p class="mt-0.5 flex items-center gap-1.5 text-[11px]">
-                                            @if ($f['exception_class'])
-                                                <span class="truncate font-mono font-medium text-red-600" title="{{ $f['exception_message'] }}">{{ $f['exception_class'] }}</span>
-                                            @endif
-                                            @if ($f['short_uuid'])
-                                                <span class="text-gray-300" aria-hidden="true">·</span>
-                                                <span class="font-mono text-[10px] text-gray-400">#{{ $f['short_uuid'] }}</span>
-                                            @endif
-                                        </p>
-                                    </td>
-                                    {{-- On: connection + queue stacked --}}
-                                    <td class="px-3 py-3 align-top">
-                                        <p class="text-xs text-gray-500">{{ $f['connection'] ?? '—' }}</p>
-                                        <p class="mt-0.5 font-mono text-xs text-gray-800">{{ $f['queue'] ?? '—' }}</p>
-                                    </td>
-                                    {{-- Failed at — humanized + absolute --}}
-                                    <td class="px-3 py-3 align-top">
-                                        <p class="whitespace-nowrap text-xs text-gray-700" @if ($f['failed_at']) title="{{ $f['failed_at'] }}" @endif>{{ $failedAtHuman ?? '—' }}</p>
-                                        @if ($f['failed_at'])
-                                            <p class="mt-0.5 truncate font-mono text-[10px] text-gray-400">{{ $f['failed_at'] }}</p>
-                                        @endif
-                                        @if ($f['attempts'] !== null && $f['max_tries'] !== null)
-                                            <p class="mt-0.5 text-[10px] font-medium tabular-nums text-gray-500">{{ $f['attempts'] }}/{{ $f['max_tries'] }} attempts</p>
-                                        @endif
-                                    </td>
-                                    <td class="py-3 pl-3 align-top text-right text-[10px] uppercase tracking-wider text-gray-400">
-                                        @if ($f['id'] !== null)
-                                            Open
-                                            <svg class="ml-0.5 inline-block size-3 -translate-y-px" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                                <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                                            </svg>
-                                        @else
-                                            <span>—</span>
-                                        @endif
-                                    </td>
-                                </tr>
-                            @endforeach
-                            </tbody>
-                        </table>
+                <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
+                    <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+                        <div class="col-span-1"></div>
+                        <div class="col-span-5">Job</div>
+                        <div class="col-span-3">Queue</div>
+                        <div class="col-span-2 text-right">Failed</div>
+                        <div class="col-span-1"></div>
                     </div>
+                    <ul role="list" class="divide-y divide-gray-950/5">
+                        @foreach ($failedRows as $f)
+                            @include('queue-insights::partials.failed-list-row', ['f' => $f])
+                        @endforeach
+                    </ul>
                 </div>
             @endif
         </section>
-
-        <x-queue-insights::job-classes-section :classes="$classes" :selected-class="$selectedClass"/>
 
     </div>{{-- /#qi-dashboard-content --}}
 

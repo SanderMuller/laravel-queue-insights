@@ -127,7 +127,7 @@
         }, true);
     </script>
 </head>
-<body class="bg-white text-gray-900 antialiased">
+<body class="bg-gray-50 text-gray-900 antialiased">
     <div class="isolate min-h-dvh">
         {{-- Horizon-style dark top bar — signature "infra tool" chrome. --}}
         <header class="bg-gray-900">
