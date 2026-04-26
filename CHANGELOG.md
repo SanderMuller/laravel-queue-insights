@@ -2,6 +2,26 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1 - 2026-04-26
+
+### Highlights
+
+#### Laravel 13 support
+
+Composer constraints widened so the package installs cleanly into Laravel 13 host applications:
+
+- `illuminate/console`, `illuminate/contracts`, `illuminate/queue`, `illuminate/redis`, `illuminate/support` now accept `^13.0` alongside the existing `^11.0` and `^12.0`.
+- `orchestra/testbench` (dev) accepts `^11.0`.
+- `pestphp/pest`, `pestphp/pest-plugin-arch`, `pestphp/pest-plugin-laravel` (dev) accept `^4.0` — Pest plugin Laravel v4.1.0 is the first version with `laravel/framework: ^13.0` in its constraints, and v4.x in turn requires Pest v4.x.
+
+CI matrix gains a `13.*` row paired with `testbench: '11.*'`, exercised under both `prefer-lowest` and `prefer-stable` × PHP 8.3 + 8.4 × predis + phpredis. Laravel 11 and 12 legs continue to run.
+
+#### Documents publishable view partials (carry-over from 0.2.0)
+
+The README now documents the row partials added in 0.2.0 — `partials/queue-row`, `partials/completed-row`, `partials/failed-list-row`, `partials/filter-form`, `partials/stat-tile` — and shows that hosts can publish them individually to override row markup without forking the whole `dashboard.blade.php` view.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.2.0...0.2.1
+
 ## 0.2.0 - 2026-04-26
 
 ### Highlights
@@ -163,6 +183,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 ```
