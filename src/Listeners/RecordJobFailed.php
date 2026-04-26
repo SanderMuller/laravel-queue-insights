@@ -48,6 +48,14 @@ final readonly class RecordJobFailed
             $uuid = $event->job->uuid();
             if ($uuid !== null && $uuid !== '') {
                 $redis->command('del', [KeyPrefix::make("start:{$uuid}")]);
+
+                // Belt-and-suspenders pending-tracking cleanup. RecordJobProcessing
+                // already cleared on the pending → in-flight transition; this is
+                // here for the rare case where that listener was missed.
+                if (Config::bool('pending.enabled', true)) {
+                    $redis->command('del', [KeyPrefix::make("pending:{$uuid}")]);
+                    $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                }
             }
 
             $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);

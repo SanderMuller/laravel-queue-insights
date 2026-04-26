@@ -77,6 +77,16 @@ final class QueueInsightsDashboard extends Component
     #[Url(as: 'cto', except: '')]
     public string $completedFilterTo = '';
 
+    /*
+     * Pending-jobs inspector — single-queue expand state. Format:
+     * "{connection}:{canonical-queue}". Empty string = nothing expanded.
+     * URL-shareable so an operator can paste the dashboard URL and land
+     * on a peer's expanded inspector view.
+     */
+
+    #[Url(as: 'qopen', except: '')]
+    public string $expandedQueueKey = '';
+
     /**
      * Defense-in-depth: enforce the `viewQueueInsights` Gate on component mount,
      * not just on the bundled route. A host app that embeds the component in a
@@ -136,6 +146,14 @@ final class QueueInsightsDashboard extends Component
         $this->filterClass = '';
         $this->filterFrom = '';
         $this->filterTo = '';
+    }
+
+    public function toggleQueueInspector(string $key): void
+    {
+        // Single-queue expand keeps render() costs bounded — only one set of
+        // pendingJobs / delayedJobs round-trips per poll. Multi-open is an
+        // operator request away if it ever lands on the roadmap.
+        $this->expandedQueueKey = $this->expandedQueueKey === $key ? '' : $key;
     }
 
     public function clearCompletedFilters(): void
@@ -539,6 +557,7 @@ final class QueueInsightsDashboard extends Component
             'payloadTab' => $this->payloadTab,
             'throughput' => $throughput,
             'stats' => $this->buildHeadlineStats($throughput, $queues, $classes),
+            'pendingGapWarnThreshold' => Config::int('pending.gap_warn_threshold', 5),
             'failedFiltersActive' => ! $failedFilters->isEmpty(),
             'canRetry' => $canRetry,
             'bulkRetryCount' => $bulkRetryCount,
@@ -572,23 +591,75 @@ final class QueueInsightsDashboard extends Component
 
             $waitPercentiles = $svc->queueWaitPercentiles($connection, $canonical);
 
-            $rows[] = [
-                'connection' => $connection,
-                'queue' => $queue,
-                'canonical' => $canonical,
-                'driver' => is_string($driverRaw) ? $driverRaw : '—',
-                'depth' => $svc->liveDepth($connection, $canonical),
-                'inflight' => $svc->liveInFlight($connection, $canonical),
-                'delayed' => $svc->liveDelayed($connection, $canonical),
-                'last_at' => $lastAt,
-                'stale' => $stale,
-                'error' => $svc->snapshotError($connection, $canonical),
-                'wait_p50_ms' => $waitPercentiles['p50'],
-                'wait_p95_ms' => $waitPercentiles['p95'],
-            ];
+            $depth = $svc->liveDepth($connection, $canonical);
+            $delayed = $svc->liveDelayed($connection, $canonical);
+
+            $rows[] = $this->attachInspectorFields(
+                [
+                    'connection' => $connection,
+                    'queue' => $queue,
+                    'canonical' => $canonical,
+                    'driver' => is_string($driverRaw) ? $driverRaw : '—',
+                    'depth' => $depth,
+                    'inflight' => $svc->liveInFlight($connection, $canonical),
+                    'delayed' => $delayed,
+                    'last_at' => $lastAt,
+                    'stale' => $stale,
+                    'error' => $svc->snapshotError($connection, $canonical),
+                    'wait_p50_ms' => $waitPercentiles['p50'],
+                    'wait_p95_ms' => $waitPercentiles['p95'],
+                ],
+                $svc,
+                $connection,
+                $canonical,
+                $depth,
+                $delayed,
+            );
         }
 
         return $rows;
+    }
+
+    /**
+     * Attach pending-inspector fields to a queue row. Always includes counts
+     * + drift gap (cheap — one ZCARD per queue). Includes the actual pending
+     * and delayed job lists ONLY when this row's inspector is expanded —
+     * otherwise we'd run 2 ZRANGEBYSCOREs + 50× HGETALLs per visible queue
+     * on every 10s poll.
+     *
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    private function attachInspectorFields(array $row, QueueInsights $svc, string $connection, string $canonical, int $depth, ?int $delayed): array
+    {
+        if (! Config::bool('pending.enabled', true)) {
+            return $row + [
+                'inspector_key' => "{$connection}:{$canonical}",
+                'inspector_open' => false,
+                'inspector_disabled' => true,
+                'tracked_count' => 0,
+                'pending_gap' => 0,
+                'pending_jobs' => [],
+                'delayed_jobs' => [],
+            ];
+        }
+
+        $key = "{$connection}:{$canonical}";
+        $isOpen = $this->expandedQueueKey === $key;
+
+        $tracked = $svc->pendingTrackedCount($connection, $canonical);
+        $actual = $depth + ($delayed ?? 0);
+        $gap = abs($tracked - $actual);
+
+        return $row + [
+            'inspector_key' => $key,
+            'inspector_open' => $isOpen,
+            'inspector_disabled' => false,
+            'tracked_count' => $tracked,
+            'pending_gap' => $gap,
+            'pending_jobs' => $isOpen ? $svc->pendingJobs($connection, $canonical) : [],
+            'delayed_jobs' => $isOpen ? $svc->delayedJobs($connection, $canonical) : [],
+        ];
     }
 
     /**

@@ -71,6 +71,16 @@ final readonly class RecordJobProcessed
 
             // Streams
             $this->writeStreams($redis, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow);
+
+            // Belt-and-suspenders pending-tracking cleanup. RecordJobProcessing
+            // already cleared on the pending → in-flight transition; this is
+            // here for the rare case where that listener was missed (worker
+            // crash between event dispatch and listener execution).
+            $uuidForCleanup = $event->job->uuid();
+            if ($uuidForCleanup !== null && $uuidForCleanup !== '' && Config::bool('pending.enabled', true)) {
+                $redis->command('del', [KeyPrefix::make("pending:{$uuidForCleanup}")]);
+                $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuidForCleanup]);
+            }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobProcessed failed', [
                 'exception' => $throwable::class,

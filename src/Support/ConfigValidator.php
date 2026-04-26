@@ -62,4 +62,32 @@ final class ConfigValidator
             $seen[$slot] = $queue;
         }
     }
+
+    /**
+     * Validate the pending-tracking block. Type-checks the four user-tunable
+     * keys; missing keys take their defaults from config/queue-insights.php.
+     *
+     * @param  array<array-key, mixed>  $pending
+     */
+    public static function validatePending(array $pending): void
+    {
+        if (isset($pending['enabled']) && ! is_bool($pending['enabled'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.pending.enabled must be a boolean.'
+            );
+        }
+
+        foreach (['max_per_queue', 'ttl_seconds', 'gap_warn_threshold'] as $key) {
+            if (! isset($pending[$key])) {
+                continue;
+            }
+
+            $value = $pending[$key];
+            if (! is_int($value) || $value < 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.pending.{$key} must be a positive integer."
+                );
+            }
+        }
+    }
 }

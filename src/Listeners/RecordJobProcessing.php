@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use Throwable;
@@ -23,6 +25,16 @@ final class RecordJobProcessing
             }
 
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
+
+            $connection = (string) $event->connectionName;
+            $queue = (string) ($event->job->getQueue() ?? 'default');
+
+            // Pending-tracking cleanup runs first so it isn't accidentally skipped
+            // by an early return below in the wait-time path (missing pushed key,
+            // clock-skew rejection). If the worker successfully picked up a job,
+            // it's no longer pending — that's true regardless of whether wait-time
+            // capture had the data it needed.
+            $this->clearPendingTracking($redis, $uuid, $connection, $queue);
 
             // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
             // `SET key val EX ttl` has divergent arg shapes across drivers.
@@ -71,8 +83,6 @@ final class RecordJobProcessing
             // and MGET `wait:{uuid}` to recover wait_ms.
             // Naive `score = wait_ms` would have made trim drop the fastest
             // jobs and skew p50/p95 toward outliers — codex review.
-            $connection = (string) $event->connectionName;
-            $queue = (string) ($event->job->getQueue() ?? 'default');
             $waitKey = KeyPrefix::make("wait:{$connection}:{$queue}");
 
             $redis->command('zadd', [$waitKey, $now, $uuid]);
@@ -84,5 +94,25 @@ final class RecordJobProcessing
                 'message' => $throwable->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Drop the pending-tracking entries for a uuid that just transitioned from
+     * pending → in-flight. Idempotent on already-cleared keys (DEL + ZREM both
+     * return 0 instead of erroring).
+     */
+    private function clearPendingTracking(RedisConnection $redis, string $uuid, string $connection, string $queue): void
+    {
+        if (! Config::bool('pending.enabled', true)) {
+            return;
+        }
+
+        // CanonicalQueueKey on the cleanup side mirrors the writer in
+        // RecordJobQueued, so the zset key matches even when the producer
+        // saw a queue URL (SQS) and the worker reports the plain name.
+        $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
+
+        $redis->command('del', [KeyPrefix::make("pending:{$uuid}")]);
+        $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connection}:{$queueKey}"), $uuid]);
     }
 }

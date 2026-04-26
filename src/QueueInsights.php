@@ -14,6 +14,7 @@ use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
@@ -206,6 +207,56 @@ final class QueueInsights
     public function queueWaitPercentiles(string $connection, string $queue): array
     {
         return WaitTimeMetrics::percentiles($connection, $queue);
+    }
+
+    /**
+     * Pending jobs (available_at <= now) for a queue, oldest-first.
+     *
+     * Reads the `pending-zset:{conn}:{canonical-queue}` sorted set written
+     * by `RecordJobQueued` and hydrates each uuid with its `pending:{uuid}`
+     * hash. Driver-agnostic — works for Redis, Database, AND SQS because
+     * the data lives entirely in our Redis namespace.
+     *
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int}>
+     */
+    public function pendingJobs(string $connection, string $queue, int $limit = 50): array
+    {
+        return PendingJobsReader::readZset(
+            $connection,
+            $queue,
+            '-inf',
+            (string) Date::now()->getTimestamp(),
+            $limit,
+        );
+    }
+
+    /**
+     * Delayed jobs (available_at > now) for a queue, soonest-first.
+     *
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int}>
+     */
+    public function delayedJobs(string $connection, string $queue, int $limit = 50): array
+    {
+        // ZRANGEBYSCORE uses '(' to make the lower bound exclusive — pending
+        // jobs whose available_at == now go to `pendingJobs`, not here.
+        return PendingJobsReader::readZset(
+            $connection,
+            $queue,
+            '(' . Date::now()->getTimestamp(),
+            '+inf',
+            $limit,
+        );
+    }
+
+    /**
+     * `ZCARD` of the per-queue pending tracking set. Used by the dashboard to
+     * compute the drift gap against `liveDepth() + liveDelayed()` — when the
+     * tracked count diverges from the snapshot, the lists below are a sample,
+     * not a complete enumeration.
+     */
+    public function pendingTrackedCount(string $connection, string $queue): int
+    {
+        return PendingJobsReader::trackedCount($connection, $queue);
     }
 
     /**

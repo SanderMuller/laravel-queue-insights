@@ -81,4 +81,24 @@ return [
         'path' => 'queue-insights',
         'middleware' => ['web', 'auth', 'can:viewQueueInsights'],
     ],
+
+    /*
+     | Pending & delayed-jobs tracking. When enabled, the JobQueued listener
+     | stamps each queued job's metadata into Redis (hash + per-queue sorted
+     | set) so the dashboard can show individual pending and delayed jobs
+     | per queue — driver-agnostic, including SQS where queue-driver peeking
+     | isn't possible.
+     |
+     | Storage cost is ~500 bytes per pending job, bounded by max_per_queue.
+     | Set `enabled` to false on memory-bounded production to opt out.
+     */
+    'pending' => [
+        'enabled' => env('QUEUE_INSIGHTS_PENDING_ENABLED', true),
+        'max_per_queue' => 10000,
+        'ttl_seconds' => 86400,
+        // Tracked-vs-snapshot count drift threshold beyond which the
+        // dashboard surfaces a "tracking gap" badge so operators know to
+        // read the snapshot count, not the listed sample, as truth.
+        'gap_warn_threshold' => 5,
+    ],
 ];

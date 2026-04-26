@@ -12,6 +12,7 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 ## Features
 
 - Live depth, in-flight, and delayed counts per queue. Works on SQS, Redis, and database queues.
+- Pending & delayed-job inspector per queue — individual queued jobs with class FQCN and `runs in <countdown>` for delayed jobs. Driver-agnostic (event-captured into Redis), so SQS gets the same view as Redis and database queues.
 - Wait time per queue (p50 / p95) and per job. Measures enqueue to worker pickup.
 - 24h throughput sparkline (processed + failed) with hover tooltips per hour, alongside a headline-stats panel: jobs/min, jobs past hour, failed past hour, max throughput hour, max wait p95, max runtime p95.
 - Queues grouped into *Needs attention* (errored or stale) and *Healthy* so a broken queue can't hide in a long list.
@@ -139,6 +140,26 @@ It shows up in two places:
 Capture is automatic. Installing the package wires an `Illuminate\Queue\Events\JobQueued` listener that records the enqueue timestamp, so no host-app config is needed. The cost per job is one Redis `SETEX` at push, plus a `GET` + `ZADD` + `ZREMRANGEBYRANK` + `EXPIRE` chain at worker pickup. Retention: 1h on the per-uuid `pushed:` key, 7d on the per-uuid `wait:` sample, rolling 1000 most-recent on the per-queue ZSET.
 
 A 7-day clock-skew guard rejects any wait sample over that, so a producer host with bad NTP can't poison the percentile pool indefinitely.
+
+### Pending & delayed jobs
+
+Each queue row in the dashboard has a collapsible inspector that shows individual pending and delayed jobs — class FQCN, queued-at humanized, and (for delayed) `runs in <countdown>`. The toggle button shows the tracked count next to the queue's badges; click to expand. The expand state is URL-shareable (`?qopen=connection:queue`).
+
+The data is **event-captured into Redis**, not peeked from the queue driver. The `JobQueued` listener stamps a per-uuid hash + per-queue sorted set into the package's Redis namespace; `JobProcessing` / `JobProcessed` / `JobFailed` clean up. Driver-agnostic by design — works for SQS, where there's no way to peek individual messages without consuming them, alongside Redis and database queues.
+
+Bounded storage:
+
+- ~500 bytes per pending job (uuid + class FQCN + connection + queue + queued_at + available_at).
+- Per-queue cap (`pending.max_per_queue`, default 10000) enforced via `ZREMRANGEBYRANK` — when the cap is hit, the lowest-score (earliest `available_at`) entry is dropped first.
+- TTL safety net (`pending.ttl_seconds`, default 86400 = 24h) drops orphans whose cleanup listener never fired (worker crash, raw `Queue::push()` outside Laravel's event flow).
+
+The dashboard compares the tracked count against the snapshot's `depth + delayed` — when they diverge by more than `pending.gap_warn_threshold` (default 5), a `+N gap` badge appears on the toggle and a banner inside the inspector body warns that the lists are a sample, not a complete enumeration. Read the queue counters above for totals when the gap is non-zero. Gap usually points to one of:
+
+- A worker crashed mid-pickup and the `JobProcessing` listener didn't fire (TTL eventually cleans).
+- Jobs are being pushed via raw `Queue::push()` outside Laravel's standard dispatch (no `JobQueued` event raised).
+- The `pending.max_per_queue` cap kicked in on a high-volume queue (more jobs in the queue than the tracked sample).
+
+To opt out (memory-bounded production), set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. The listener writes become no-ops, the inspector toggle disappears, and existing keys age out via TTL.
 
 ### Customising row markup
 
