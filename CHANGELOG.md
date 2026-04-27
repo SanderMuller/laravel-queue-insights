@@ -2,6 +2,94 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 - 2026-04-27
+
+Batches, in-flight, and chained-job inspector release. Closes the visibility gaps around `Bus::batch([...])`, jobs currently being processed, and `Bus::chain([...])` continuations — all driver-agnostic, all sourced from event capture so the same view works on Redis, database, and SQS. Cross-modal navigation lets operators move between a batch view, individual job modals, and the chain detail without losing context.
+
+Drop-in upgrade from `0.3.x`. No schema, no API breaks. Two new opt-in defaults (`batches.enabled`, the new in-flight sub-section), each opt-out via one env flag.
+
+### Highlights
+
+#### Batches
+
+Top-level **Batches** section above the Queues panel for jobs dispatched via `Bus::batch([...])->dispatch()`. Each row shows the batch name (or `Batch <short-id>` when unnamed), a progress bar driven by Laravel's authoritative `Bus::findBatch()` counts, and a counts triplet (`processed/total · failed · pending`). Cancelled batches show a red `cancelled` chip; finished + no-failures show a gray `finished` chip.
+
+Clicking a row opens a batch modal with the per-uuid item list in enqueue order, status icon per item (✓ processed / ✗ failed / ▶ in-flight / ⌛ pending), and a `← Back to batch` exit. The expand state is URL-shareable (`?batch=<batchId>`).
+
+Authoritative counts come live from `Bus::findBatch()` on every render — the package only stores the index/uuid-list/reverse-lookup needed to enumerate batches and resolve uuid → display row.
+
+#### In-flight sub-section
+
+Pending now / Delayed already existed; **In-flight** is the third sub-group above them, ordered longest-running-first via a dedicated `inflight-zset` so stuck jobs surface at the top. The pending → in-flight transition is wrapped in a Lua script (`MarkInFlight.lua`) so the dashboard never sees a job missing from both groups during the handoff. Each row shows when the worker picked the job up and how long it's been running; the modal flips to an in-flight variant with `Started` + `Running for` tiles.
+
+#### Chained jobs
+
+Jobs dispatched through `Bus::chain([...])->dispatch()` (or `$job->chain([...])`) carry the remaining chain inside the serialized command body. The dashboard surfaces it in two places:
+
+- **List rows** — completed and failed rows that have a follow-up job render a small `↳ NextJob (+N)` chip. Hover reveals the full FQCN and the total chained count.
+- **Modal Chain section** — the completed and failed modals include a `Chain` block with the next job's FQCN, the `+N more chained` count, and the chain's queue/connection. The block is clickable: it swaps the modal into a "Chained jobs" detail view that lists every chained link in order with per-link routing, and a `← Back` button (or `Esc`) returns to the job view.
+
+Drilling into a single chained job inside the **failed-job modal** also surfaces its constructor properties (extracted at render time from the persisted serialized payload, framework internals filtered out) — same renderer used by the parent job's payload section. The completed-modal chain view stays metadata-only since the slim chain summary persisted on the stream entry doesn't retain user-bound data.
+
+For **failed jobs** the source is `failed_jobs.payload.data.command` — Laravel always persists this column. For **completed jobs** the listener writes a JSON-encoded `chain` field on the stream entry at the time the job runs, also independent of `capture.payloads`. Per-link `connection`/`queue` overrides set on individual jobs are preserved. Encrypted jobs (`ShouldBeEncrypted`) carry an opaque base64 blob in `data.command`, so the chip and section are silently omitted for those rows — no error, just no signal.
+
+#### Cross-modal navigation
+
+Item modals (details / failed / pending) now stack on top of the batch modal instead of unmounting it. A `← Back to batch` button in the item modal header returns to the batch view without losing context. The batch chip — present on every completed/failed/pending list row — also renders inside the modal heroes, so an operator drilling into a single job can jump to its batch in one click. New `openBatch(string $id)` Livewire action handles the routing and closes any open item modal in the same round-trip.
+
+Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and links work for items that sit outside the top-50 aggregate window or for batches older than the section cap. Without these, an operator clicking a batched-job chip on a backed-up queue could land on a misleading "no longer pending" / "Batch no longer tracked" empty state even though the data was still tracked.
+
+### Bug fixes
+
+- **`RecordJobFailed` indexed the wrong row on retry-then-fail.** `DatabaseUuidFailedJobProvider::log()` inserts a fresh row on every JobFailed, so a uuid that retried and failed again has multiple rows. The prior `where('uuid', $uuid)->value('id')` returned the OLDEST row by query default order; clicking the batch-detail item then opened the stale failure. Now sorts by `id desc`.
+- **`Batch::progress()` cross-Laravel parity.** Returns float on Laravel 11/12 (PHP `round()` defaults to float), int on Laravel 13. Cast to int in `BatchReader::projectBatch()` so the row-shape contract holds across the supported matrix.
+
+### Public API surface (additive)
+
+- `QueueInsights::recentBatches(int $limit = 50): array`
+- `QueueInsights::batchDetail(string $batchId): ?array`
+- `QueueInsights::allInFlightJobs(int $limit = 50): array`
+- `QueueInsights::allPendingJobs(int $limit = 50): array` (cross-queue aggregator — was per-queue only)
+- `QueueInsights::allDelayedJobs(int $limit = 50): array`
+- `QueueInsights::findPendingByUuid(string $uuid): ?array`
+- `Support\BatchReader` — new helper class
+- `Support\RowEnricher` — new helper class (decode chain JSON, enrich completed/failed rows with batch_id + chain)
+- `Support\Lua\MarkInFlight.lua` — new Lua script (atomic pending → in-flight transition)
+- `Support\PendingJobsReader::findByUuid(string $uuid): ?array`
+- `Support\SerializedCommandReader::extractChainContext(string $serialized): ?array` — now includes per-job `properties` map (framework internals filtered)
+- `QueueInsightsDashboard::openBatch(string $id): void` — Livewire action
+- `QueueInsightsDashboard::closeBatch(): void`
+- `QueueInsightsDashboard::openPending(string $uuid): void`
+- `QueueInsightsDashboard::closePending(): void`
+- `QueueInsightsDashboard::toggleBatchInspector(string $id): void`
+- `QueueInsightsDashboard::$expandedBatchId` — new `#[Url(as: 'batch')]` prop
+- `QueueInsightsDashboard::$selectedPendingUuid` — Livewire prop
+- New publishable Blade components: `batch-modal`, `pending-modal`, `hint`
+- New publishable partials: `batch-row`, `batch-chip`, `pending-row`
+- New config block:
+
+```php
+'batches' => [
+    'enabled' => env('QUEUE_INSIGHTS_BATCHES_ENABLED', true),
+    'max_uuids_per_batch' => 5000,
+    'max_per_query' => 100,
+    'ttl_seconds' => 604800,
+],
+
+```
+### Storage cost
+
+- Batches: ~50 bytes per uuid (per-batch list entry + reverse pointer + index entry, amortised). Per-batch keys TTL-aged via `batches.ttl_seconds` (default 7d). Index self-prunes via `ZREMRANGEBYSCORE` on each enqueue.
+- In-flight zset: ~30 bytes per running job, cleared on JobProcessed/JobFailed.
+- Authoritative batch counts come from `Bus::findBatch()` — the package's keys exist only to enumerate and resolve, not to count.
+
+### Opt-out
+
+- `QUEUE_INSIGHTS_BATCHES_ENABLED=false` — listener writes become no-ops, the Batches section disappears, chips stop rendering on existing rows.
+- `QUEUE_INSIGHTS_PENDING_ENABLED=false` — also disables the in-flight sub-section (shares the same `pending:{uuid}` hash for state).
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
+
 ## 0.3.0 - 2026-04-26
 
 ### Highlights
@@ -60,6 +148,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.2.1...0.3.0
@@ -245,6 +334,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
