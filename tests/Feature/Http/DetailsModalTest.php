@@ -371,6 +371,92 @@ it('Section C Raw pane groups standard Laravel queue-payload fields into Job Con
         ->assertSee('customValue');
 });
 
+it('Other fields renders nested arrays as a recursive tree (Sentry-style extra context)', function (): void {
+    // Realistic shape: `illuminate:log:context` is a non-standard top-level
+    // payload key carrying a nested array of log-context data. Rendering it
+    // as a single JSON blob made the field unreadable; the nested-data
+    // component drills the tree key-by-key.
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    $payload = [
+        'uuid' => 'aaaaaaaa-1111-2222-3333-444444444444',
+        'displayName' => 'App\\Jobs\\Example',
+        'maxTries' => 3,
+        'attempts' => 1,
+        'illuminate:log:context' => [
+            'data' => [
+                'user_id' => 42,
+                'team_id' => 7,
+                'request_id' => 'req-abc-123',
+            ],
+            'hidden' => [],
+            'stackedData' => [],
+        ],
+    ];
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => (string) json_encode($payload),
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        ->assertSee('Other fields')
+        ->assertSee('illuminate:log:context')
+        // The container header summarises shape ("object · 3 keys") instead of
+        // dumping the full JSON inline. Drill-through reveals the leaves.
+        ->assertSee('object · 3 keys')
+        ->assertSee('user_id')
+        ->assertSee('42')
+        ->assertSee('team_id')
+        ->assertSee('request_id')
+        ->assertSee('req-abc-123');
+});
+
+it('Other fields nested-data uses template x-if so collapsed subtrees do not materialize', function (): void {
+    // Codex perf regression: prior `<div x-show>` left every nested branch in
+    // the DOM (just hidden via CSS), so a deep payload paid the full layout
+    // cost up front. Switching to `<template x-if>` means the browser skips
+    // layout for hidden branches; assert the marker is present in the
+    // rendered HTML so a future revert to `x-show` breaks here.
+    config()->set('queue-insights.capture.payloads', 'full');
+
+    $payload = [
+        'uuid' => 'cccccccc-1111-2222-3333-444444444444',
+        'displayName' => 'App\\Jobs\\Example',
+        'maxTries' => 3,
+        'attempts' => 1,
+        'illuminate:log:context' => [
+            'data' => ['k' => 'v'],
+        ],
+    ];
+
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Foo',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'payload_body' => (string) json_encode($payload),
+    ]);
+
+    $completed = resolve(QueueInsights::class)->recentCompleted(10);
+    $id = $completed[0]['_id'];
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', $id)
+        ->assertSeeHtml('<template x-if="expanded">');
+});
+
 it('Section C Raw pane shows extracted Job instance properties from data.command', function (): void {
     config()->set('queue-insights.capture.payloads', 'full');
 

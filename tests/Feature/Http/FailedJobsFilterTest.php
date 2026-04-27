@@ -96,6 +96,51 @@ it('filters by class FQCN with prefix substring on the JSON payload', function (
     expect($rows)->toHaveCount(2);
 });
 
+it('class filter matches FQCNs containing backslashes (cross-DB LIKE regression)', function (): void {
+    // Bug report: dropdown picks landed on 0 results on MySQL even when matches
+    // existed. Root cause: addslashes + default `\` LIKE escape consumed the
+    // doubled backslash back to a single, which never matched the JSON column's
+    // `\\` form. ESCAPE '|' + json_encode round-trip fixes it. Test runs on
+    // SQLite where the prior code happened to work — assertion still pins the
+    // expected 1-result match so a regression to the broken pattern fails here.
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\BackslashedJob']]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\OtherJob']]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(class: 'App\\Jobs\\BackslashedJob'));
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['payload'])->toContain('App\\\\Jobs\\\\BackslashedJob');
+});
+
+it('class filter is case-insensitive so deep-linked URLs with mismatched casing still match', function (): void {
+    // Codex regression: the URL-bound `?fk=` prop accepts arbitrary casing.
+    // Without LOWER() on both sides, PostgreSQL's case-sensitive LIKE would
+    // silently miss while MySQL/SQLite matched — DB-dependent behaviour for
+    // user input. Normalising both sides keeps the match set stable.
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\SendEmail']]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(class: 'app\\jobs\\sendemail'));
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['payload'])->toContain('SendEmail');
+});
+
+it('class filter escapes LIKE wildcards in user input', function (): void {
+    // Defence: a user-supplied class name containing `%` or `_` (rare but
+    // possible via deep-linked URL with crafted ?fk=…) must not become a
+    // wildcard. Seed two rows: one whose displayName matches the literal
+    // wildcard input, one that would only match if the wildcard escaped.
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\With_Underscore']]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\WithXUnderscore']]);
+
+    // `_` is the LIKE single-char wildcard. Without escaping, both rows match.
+    // With escaping, only the literal underscore row matches.
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(class: 'App\\Jobs\\With_Underscore'));
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['payload'])->toContain('With_Underscore');
+});
+
 it('class filter does not match substring inside an unrelated payload field', function (): void {
     // Regression: substring match on the raw JSON column without anchoring would
     // false-match if "App\Foo" appeared inside, say, an argument value. The

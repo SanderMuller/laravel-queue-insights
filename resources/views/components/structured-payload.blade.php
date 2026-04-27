@@ -200,7 +200,10 @@
             </div>
         @endif
 
-        {{-- Other (non-standard) fields. --}}
+        {{-- Other (non-standard) fields. Containers (assoc arrays / lists)
+            render through the recursive `nested-data` component — same drill-
+            into-tree UX Sentry uses for "Additional Data". Scalars stay
+            inline with truncate-and-expand for long strings. --}}
         @if (count($otherKeys) > 0)
             <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
                 <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Other fields</p>
@@ -208,21 +211,23 @@
                     @foreach ($otherKeys as $k)
                         @php
                             $v = $body[$k];
-                            $rendered = is_scalar($v) ? (string) $v : json_encode($v, JSON_UNESCAPED_SLASHES);
-                            $rendered = is_string($rendered) ? $rendered : '';
-                            $truncated = strlen($rendered) > 200;
+                            $isContainer = is_array($v) && $v !== [];
+                            $rendered = $isContainer ? '' : (is_scalar($v) ? (string) $v : (string) json_encode($v, JSON_UNESCAPED_SLASHES));
+                            $truncated = ! $isContainer && strlen($rendered) > 200;
                         @endphp
-                        <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs">
-                            <dt class="font-mono font-medium text-gray-600">
+                        <div class="@if (! $isContainer) grid grid-cols-[max-content_1fr] gap-x-4 @endif px-4 py-2 text-xs"
+                             @if ($truncated) x-data="{ expanded: false }" @endif>
+                            <dt class="font-mono font-medium text-gray-600 {{ $isContainer ? 'mb-1 block' : '' }}">
                                 @if (isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
                                 @endif
                             </dt>
-                            <dd class="break-all font-mono {{ $v === null ? 'text-gray-400' : 'text-gray-900' }}"
-                                @if ($truncated) x-data="{ expanded: false }" @endif>
-                                @if ($truncated)
+                            <dd class="{{ $isContainer ? '-mx-4 mt-1 border-t border-gray-950/5 bg-gray-950/[0.02]' : 'break-all font-mono ' . ($v === null ? 'text-gray-400' : 'text-gray-900') }}">
+                                @if ($isContainer)
+                                    <x-queue-insights::nested-data :data="$v"/>
+                                @elseif ($truncated)
                                     <span x-show="! expanded">{{ substr($rendered, 0, 200) }}…</span>
                                     <span x-show="expanded" x-cloak>{{ $rendered }}</span>
                                     <button type="button" @click="expanded = ! expanded"

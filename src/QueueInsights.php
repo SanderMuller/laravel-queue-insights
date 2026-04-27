@@ -581,12 +581,38 @@ final class QueueInsights
         }
 
         if ($filters->class !== '') {
-            // Anchored substring LIKE against the raw JSON payload. Cross-DB
-            // LIKE case rules diverge (SQLite ASCII-insensitive, Postgres
-            // sensitive, MySQL collation-dependent) — wrap both sides in
-            // LOWER() to produce the same match set everywhere (codex review).
-            $needle = '%"displayname":"' . strtolower(addslashes($filters->class)) . '%';
-            $query->whereRaw('LOWER(payload) LIKE ?', [$needle]);
+            // Anchored substring LIKE against the raw JSON payload.
+            //
+            // The class FQCN sits in the JSON column as `"displayName":"App\\Jobs\\Foo"`
+            // — `\` JSON-escaped to `\\`. Match that exact byte sequence by
+            // re-running the FQCN through json_encode, which produces the
+            // same `\\` form, then stripping the outer quotes.
+            //
+            // Use `ESCAPE '|'` so the LIKE engine treats '|' as the escape
+            // char instead of the default '\'. Without it, MySQL's default
+            // backslash-as-escape rule consumes the literal `\\` in the
+            // pattern back to a single `\`, which never matches the JSON
+            // column's `\\` (bug report — class filter returned 0 results on
+            // MySQL even when matches existed). PostgreSQL ignores `\` in
+            // LIKE by default; SQLite likewise — `ESCAPE '|'` is portable
+            // across all three.
+            //
+            // Wrap both sides in `LOWER()` so a deep-linked filter with
+            // mismatched casing (e.g. `?fk=app\jobs\foo`) still matches the
+            // canonical-cased payload. Without normalisation PostgreSQL's
+            // case-sensitive LIKE would silently miss while MySQL/SQLite
+            // matched, producing DB-dependent behaviour for URL-bound
+            // input (codex review). ASCII-only class names sidestep the
+            // locale-aware `LOWER()` differences across DB engines.
+            $encoded = json_encode($filters->class, JSON_UNESCAPED_UNICODE);
+            if (is_string($encoded)) {
+                $needleClass = strtolower(trim($encoded, '"'));
+                // Escape LIKE wildcards (and the ESCAPE char itself) in user
+                // input so a class name containing `%` / `_` / `|` doesn't
+                // smuggle a wildcard match.
+                $needleClass = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $needleClass);
+                $query->whereRaw('LOWER(payload) LIKE ? ESCAPE ?', ['%"displayname":"' . $needleClass . '%', '|']);
+            }
         }
 
         if ($filters->from !== '') {
