@@ -6,6 +6,7 @@ namespace SanderMuller\QueueInsights\Listeners;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
@@ -55,6 +56,23 @@ final readonly class RecordJobFailed
                 if (Config::bool('pending.enabled', true)) {
                     $redis->command('del', [KeyPrefix::make("pending:{$uuid}")]);
                     $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                    // Inflight-zset entry was added by RecordJobProcessing.
+                    $redis->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                }
+
+                // Batch tracking — index uuid → failed_jobs row id. JobFailed
+                // fires AFTER FailedJobProvider::log() inserts the row, so the
+                // lookup-by-uuid is safe. Modal opens by row id (openFailed),
+                // so the batch-detail view needs the id to wire the click.
+                if (Config::bool('batches.enabled', true)) {
+                    $failedJobsId = $this->resolveFailedJobId($uuid);
+                    if ($failedJobsId !== null) {
+                        $redis->command('setex', [
+                            KeyPrefix::make("uuid-failed:{$uuid}"),
+                            Config::int('batches.ttl_seconds', 604800),
+                            (string) $failedJobsId,
+                        ]);
+                    }
                 }
             }
 
@@ -66,5 +84,27 @@ final readonly class RecordJobFailed
                 'message' => $throwable->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Look up the failed_jobs row id for a uuid. Wrapped in try/catch so a
+     * non-default failed-job storage (custom provider, missing table) only
+     * silently skips the batch-tracking write — never breaks the listener.
+     *
+     * `orderByDesc('id')` because Laravel's `DatabaseUuidFailedJobProvider`
+     * inserts a fresh row on every JobFailed, so a uuid that's been retried
+     * and failed again has multiple rows. The just-inserted one (highest id)
+     * is the one this event is for; without the order-by we'd index the
+     * oldest row and the batch-detail click would open the wrong failure.
+     */
+    private function resolveFailedJobId(string $uuid): ?int
+    {
+        try {
+            $id = DB::table('failed_jobs')->where('uuid', $uuid)->orderByDesc('id')->value('id');
+        } catch (Throwable) {
+            return null;
+        }
+
+        return is_numeric($id) ? (int) $id : null;
     }
 }

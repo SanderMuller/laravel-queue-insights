@@ -101,4 +101,22 @@ return [
         // read the snapshot count, not the listed sample, as truth.
         'gap_warn_threshold' => 5,
     ],
+
+    /*
+     | Batched-jobs tracking. When enabled, the JobQueued listener stamps
+     | per-batch metadata (uuids list + reverse uuid→batchId lookup +
+     | recent-batches index) into Redis so the dashboard can surface
+     | per-batch progress and per-item rollups for `Bus::batch([...])`
+     | dispatches.
+     |
+     | Storage cost is bounded per batch by `max_uuids_per_batch` and
+     | per index entry by `ttl_seconds`. Set `enabled` to false to opt
+     | out entirely — the section disappears and chips stop rendering.
+     */
+    'batches' => [
+        'enabled' => env('QUEUE_INSIGHTS_BATCHES_ENABLED', true),
+        'max_uuids_per_batch' => 5000,
+        'max_per_query' => 100,
+        'ttl_seconds' => 604800,
+    ],
 ];

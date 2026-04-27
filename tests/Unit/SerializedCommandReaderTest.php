@@ -113,3 +113,220 @@ it('classNameOf returns null for objects missing the incomplete-class name marke
 
     expect(SerializedCommandReader::classNameOf($obj))->toBeNull();
 });
+
+it('extractChainContext returns the next class + remaining + connection + queue when chained is non-empty', function (): void {
+    // Hand-built shape mirroring Laravel's `Queueable` trait — protected
+    // `chained` array of pre-serialized job bodies, plus `chainConnection` /
+    // `chainQueue`. byte counts computed from strlen so the test is robust
+    // across class-name renames.
+    $nextClass = 'App\\Jobs\\NextJob';
+    $afterClass = 'App\\Jobs\\AnotherJob';
+    $outerClass = 'App\\Jobs\\ChainedJob';
+
+    $nextJob = 'O:' . strlen($nextClass) . ':"' . $nextClass . '":0:{}';
+    $afterJob = 'O:' . strlen($afterClass) . ':"' . $afterClass . '":0:{}';
+
+    $blob = 'O:' . strlen($outerClass) . ':"' . $outerClass . '":3:{'
+        . "s:10:\"\x00*\x00chained\";a:2:{i:0;s:" . strlen($nextJob) . ':"' . $nextJob . '";i:1;s:' . strlen($afterJob) . ':"' . $afterJob . '";}'
+        . "s:18:\"\x00*\x00chainConnection\";s:5:\"redis\";"
+        . "s:13:\"\x00*\x00chainQueue\";s:7:\"default\";"
+        . '}';
+
+    $result = SerializedCommandReader::extractChainContext($blob);
+
+    expect($result)->toBe([
+        'next_class' => 'App\\Jobs\\NextJob',
+        'remaining' => 2,
+        'chain_connection' => 'redis',
+        'chain_queue' => 'default',
+        'jobs' => [
+            ['class' => 'App\\Jobs\\NextJob', 'connection' => 'redis', 'queue' => 'default', 'properties' => []],
+            ['class' => 'App\\Jobs\\AnotherJob', 'connection' => 'redis', 'queue' => 'default', 'properties' => []],
+        ],
+    ]);
+});
+
+it('extractChainContext returns null when chained is absent', function (): void {
+    $blob = serialize((object) ['videoId' => 18]);
+
+    expect(SerializedCommandReader::extractChainContext($blob))->toBeNull();
+});
+
+it('extractChainContext returns null when chained is empty (last link)', function (): void {
+    $outerClass = 'App\\Jobs\\ChainedJob';
+    $blob = 'O:' . strlen($outerClass) . ':"' . $outerClass . "\":1:{s:10:\"\x00*\x00chained\";a:0:{}}";
+
+    expect(SerializedCommandReader::extractChainContext($blob))->toBeNull();
+});
+
+it('extractChainContext returns null on malformed payload', function (): void {
+    expect(SerializedCommandReader::extractChainContext('not serialized'))->toBeNull()
+        ->and(SerializedCommandReader::extractChainContext(''))->toBeNull();
+});
+
+it('extractChainContext returns null on encrypted (base64-blob) command', function (): void {
+    // Encrypted jobs ship `data.command` as a base64-encoded ciphertext blob,
+    // which `unserialize` rejects. The reader must fail closed without erroring.
+    $encrypted = base64_encode(random_bytes(64));
+
+    expect(SerializedCommandReader::extractChainContext($encrypted))->toBeNull();
+});
+
+it('extractChainContext handles the public-property layout Laravel Queueable actually serializes', function (): void {
+    // Laravel's `Illuminate\Bus\Queueable` declares `chained`, `chainConnection`,
+    // and `chainQueue` as PUBLIC properties (no `\0*\0` prefix in the serialized
+    // form). The other extractChainContext tests above use the protected
+    // encoding to be defensive, but production payloads land in this shape.
+    $nextClass = 'App\\Jobs\\NextJob';
+    $nextJob = 'O:' . strlen($nextClass) . ':"' . $nextClass . '":0:{}';
+
+    $obj = new stdClass();
+    $obj->chained = [$nextJob];
+    $obj->chainConnection = 'redis';
+    $obj->chainQueue = 'default';
+
+    $result = SerializedCommandReader::extractChainContext(serialize($obj));
+
+    expect($result)->toBe([
+        'next_class' => 'App\\Jobs\\NextJob',
+        'remaining' => 1,
+        'chain_connection' => 'redis',
+        'chain_queue' => 'default',
+        'jobs' => [
+            ['class' => 'App\\Jobs\\NextJob', 'connection' => 'redis', 'queue' => 'default', 'properties' => []],
+        ],
+    ]);
+});
+
+it('extractChainContext prefers the next jobs own connection/queue over the outer chain defaults', function (): void {
+    // Mirrors Queueable::dispatchNextJobInChain — `$next->connection` /
+    // `$next->queue` (when set on the next job itself) win over the parent's
+    // `chainConnection` / `chainQueue` fallbacks.
+    $next = new stdClass();
+    $next->connection = 'sqs';
+    $next->queue = 'priority';
+
+    $outer = new stdClass();
+    $outer->chained = [serialize($next)];
+    $outer->chainConnection = 'redis';
+    $outer->chainQueue = 'default';
+
+    $result = SerializedCommandReader::extractChainContext(serialize($outer));
+
+    expect($result)->toBe([
+        'next_class' => 'stdClass',
+        'remaining' => 1,
+        'chain_connection' => 'sqs',
+        'chain_queue' => 'priority',
+        'jobs' => [
+            ['class' => 'stdClass', 'connection' => 'sqs', 'queue' => 'priority', 'properties' => []],
+        ],
+    ]);
+});
+
+it('extractChainContext falls back to outer chainConnection/chainQueue when the next job has none', function (): void {
+    $next = new stdClass(); // no connection / queue overrides
+    $outer = new stdClass();
+    $outer->chained = [serialize($next)];
+    $outer->chainConnection = 'redis';
+    $outer->chainQueue = 'default';
+
+    $result = SerializedCommandReader::extractChainContext(serialize($outer));
+
+    expect($result)->toBe([
+        'next_class' => 'stdClass',
+        'remaining' => 1,
+        'chain_connection' => 'redis',
+        'chain_queue' => 'default',
+        'jobs' => [
+            ['class' => 'stdClass', 'connection' => 'redis', 'queue' => 'default', 'properties' => []],
+        ],
+    ]);
+});
+
+it('extractChainContext fails closed when ANY chained entry is malformed (not just the first)', function (): void {
+    // Codex review: silently skipping a malformed mid-list entry would
+    // misorder the chain — the next valid entry would claim the "next" slot
+    // it doesn't actually own — and would let the completed-stream count
+    // diverge from the failed-job-payload count. One bad entry = no chain
+    // context at all. Strict failure mode keeps both surfaces consistent.
+    $valid = serialize(new stdClass());
+    $malformed = 'O:99:"App\\Jobs\\Spoof":5:{';
+
+    $outer = new stdClass();
+    $outer->chained = [$valid, $malformed, $valid];
+
+    expect(SerializedCommandReader::extractChainContext(serialize($outer)))->toBeNull();
+});
+
+it('extractChainContext fails closed when chained[0] looks like O:... but does not parse', function (): void {
+    // The header `O:99:"App\\Jobs\\Spoof":...` declares a 99-char class name
+    // and 5 properties, but the body is empty. Header-regex parsing alone
+    // would happily return 'App\\Jobs\\Spoof'; safely re-extracting the
+    // payload rejects it because it isn't a valid serialized object.
+    $spoofed = 'O:99:"App\\Jobs\\Spoof":5:{';
+
+    $outer = new stdClass();
+    $outer->chained = [$spoofed];
+
+    $result = SerializedCommandReader::extractChainContext(serialize($outer));
+
+    expect($result)->toBeNull();
+});
+
+it('extractChainContext omits chain_connection/chain_queue when not set on the job', function (): void {
+    $nextClass = 'App\\Jobs\\NextJob';
+    $outerClass = 'App\\Jobs\\ChainedJob';
+    $nextJob = 'O:' . strlen($nextClass) . ':"' . $nextClass . '":0:{}';
+
+    $blob = 'O:' . strlen($outerClass) . ':"' . $outerClass . '":1:{'
+        . "s:10:\"\x00*\x00chained\";a:1:{i:0;s:" . strlen($nextJob) . ':"' . $nextJob . '";}'
+        . '}';
+
+    $result = SerializedCommandReader::extractChainContext($blob);
+
+    expect($result)->toBe([
+        'next_class' => 'App\\Jobs\\NextJob',
+        'remaining' => 1,
+        'chain_connection' => null,
+        'chain_queue' => null,
+        'jobs' => [
+            ['class' => 'App\\Jobs\\NextJob', 'connection' => null, 'queue' => null, 'properties' => []],
+        ],
+    ]);
+});
+
+it('extractChainContext exposes chained-job constructor properties (filtering framework internals)', function (): void {
+    // Hand-build a serialized job carrying both user data (videoId, payload)
+    // and Laravel framework internals (queue, connection, maxTries, batchId).
+    // The framework keys must be filtered out — they're already shown as
+    // chips in the modal — leaving only the user-bound properties for the
+    // chain-detail view.
+    $next = new stdClass();
+    $next->videoId = 42;
+    $next->payload = ['notify' => true, 'retries' => 3];
+    $next->queue = 'priority';        // framework — filtered
+    $next->connection = 'sqs';        // framework — filtered
+    $next->maxTries = 5;              // framework — filtered
+    $next->batchId = 'batch-xyz';     // framework — filtered
+
+    $outer = new stdClass();
+    $outer->chained = [serialize($next)];
+
+    $result = SerializedCommandReader::extractChainContext(serialize($outer));
+
+    expect($result)->not->toBeNull();
+    if ($result === null) {
+        return;
+    }
+
+    expect($result['jobs'][0]['class'])->toBe('stdClass')
+        ->and($result['jobs'][0]['properties'])->toBe([
+            'videoId' => 42,
+            'payload' => ['notify' => true, 'retries' => 3],
+        ])
+        // Connection/queue still surface from the framework keys for the chips
+        // — only filtered out of `properties`.
+        ->and($result['jobs'][0]['connection'])->toBe('sqs')
+        ->and($result['jobs'][0]['queue'])->toBe('priority');
+});

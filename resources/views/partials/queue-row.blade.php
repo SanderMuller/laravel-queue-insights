@@ -42,10 +42,20 @@
         </dl>
         <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-xs">
             @if($q['error'])
-                <span class="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700 ring-1 ring-inset ring-red-600/20" title="{{ $q['error'] }}">error</span>
+                <x-queue-insights::hint triggerClass="rounded bg-red-50 px-1.5 py-0.5 font-medium text-red-700 ring-1 ring-inset ring-red-600/20 cursor-help">
+                    error
+                    <x-slot:tip>
+                        Most recent snapshot for this queue raised an error. The driver-reported message: <code class="rounded bg-white/10 px-1 font-mono">{{ $q['error'] }}</code>. Check the worker host can reach the queue backend (SQS credentials, Redis connectivity, DB grants) and look for a stack trace in the Laravel log alongside the next <code class="rounded bg-white/10 px-1 font-mono">queue-insights:snapshot</code> run.
+                    </x-slot:tip>
+                </x-queue-insights::hint>
             @endif
             @if($q['stale'])
-                <span class="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">stale</span>
+                <x-queue-insights::hint triggerClass="rounded bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20 cursor-help">
+                    stale
+                    <x-slot:tip>
+                        Last snapshot is older than 120s. The <code class="rounded bg-white/10 px-1 font-mono">queue-insights:snapshot</code> command should run every minute via Laravel's scheduler &mdash; check <code class="rounded bg-white/10 px-1 font-mono">schedule:run</code> is wired into cron and the worker host can reach Redis.
+                    </x-slot:tip>
+                </x-queue-insights::hint>
             @endif
             <span class="rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-gray-700">{{ $q['driver'] }}</span>
 
@@ -67,7 +77,14 @@
             @if($q['last_at'])
                 <span class="basis-full text-right text-xs text-gray-400" title="{{ $q['last_at']->toIso8601String() }}">last {{ $q['last_at']->diffForHumans() }}</span>
             @else
-                <span class="basis-full text-right text-xs text-gray-400">no snapshot yet</span>
+                <span class="basis-full text-right text-xs text-gray-400">
+                    <x-queue-insights::hint placement="bottom" triggerClass="cursor-help underline decoration-dotted decoration-gray-300 underline-offset-2">
+                        no snapshot yet
+                        <x-slot:tip>
+                            No depth snapshot has been recorded for this queue yet. The <code class="rounded bg-white/10 px-1 font-mono">queue-insights:snapshot</code> command writes one each minute &mdash; make sure Laravel's scheduler is running (<code class="rounded bg-white/10 px-1 font-mono">* * * * * php artisan schedule:run</code>) and <code class="rounded bg-white/10 px-1 font-mono">queue-insights.schedule.enabled</code> is <code class="rounded bg-white/10 px-1 font-mono">true</code>. If it has been more than a minute, check the logs for snapshot errors.
+                        </x-slot:tip>
+                    </x-queue-insights::hint>
+                </span>
             @endif
         </div>
     </div>
@@ -91,7 +108,12 @@
                                 $queuedAt = (int) ($job['queued_at'] ?? 0);
                             @endphp
                             <li class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
-                                <span class="truncate font-mono text-gray-900">{{ $job['class'] ?? '—' }}</span>
+                                <span class="flex min-w-0 items-center gap-1.5">
+                                    <span class="truncate font-mono text-gray-900">{{ $job['class'] ?? '—' }}</span>
+                                    @if (! empty($job['batch_id']))
+                                        @include('queue-insights::partials.batch-chip', ['batchId' => $job['batch_id']])
+                                    @endif
+                                </span>
                                 <span class="shrink-0 text-gray-500" title="{{ \Illuminate\Support\Facades\Date::createFromTimestamp($queuedAt)->toIso8601String() }}">
                                     queued {{ \Illuminate\Support\Facades\Date::createFromTimestamp($queuedAt)->diffForHumans() }}
                                 </span>
@@ -108,7 +130,12 @@
                                 $availableAt = (int) ($job['available_at'] ?? 0);
                             @endphp
                             <li class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
-                                <span class="truncate font-mono text-gray-900">{{ $job['class'] ?? '—' }}</span>
+                                <span class="flex min-w-0 items-center gap-1.5">
+                                    <span class="truncate font-mono text-gray-900">{{ $job['class'] ?? '—' }}</span>
+                                    @if (! empty($job['batch_id']))
+                                        @include('queue-insights::partials.batch-chip', ['batchId' => $job['batch_id']])
+                                    @endif
+                                </span>
                                 <span class="shrink-0 text-gray-500" title="{{ \Illuminate\Support\Facades\Date::createFromTimestamp($availableAt)->toIso8601String() }}">
                                     runs {{ \Illuminate\Support\Facades\Date::createFromTimestamp($availableAt)->diffForHumans() }}
                                 </span>

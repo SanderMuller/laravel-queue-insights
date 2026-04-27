@@ -79,6 +79,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         ConfigValidator::validateSnapshots(Config::array('snapshots'));
         ConfigValidator::validatePending(Config::array('pending'));
+        ConfigValidator::validateBatches(Config::array('batches'));
 
         $this->registerListeners();
         $this->registerSchedule();

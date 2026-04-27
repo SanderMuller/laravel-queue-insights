@@ -90,4 +90,31 @@ final class ConfigValidator
             }
         }
     }
+
+    /**
+     * Validate the batches-tracking block. Mirrors `validatePending`.
+     *
+     * @param  array<array-key, mixed>  $batches
+     */
+    public static function validateBatches(array $batches): void
+    {
+        if (isset($batches['enabled']) && ! is_bool($batches['enabled'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.batches.enabled must be a boolean.'
+            );
+        }
+
+        foreach (['max_uuids_per_batch', 'max_per_query', 'ttl_seconds'] as $key) {
+            if (! isset($batches[$key])) {
+                continue;
+            }
+
+            $value = $batches[$key];
+            if (! is_int($value) || $value < 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.batches.{$key} must be a positive integer."
+                );
+            }
+        }
+    }
 }

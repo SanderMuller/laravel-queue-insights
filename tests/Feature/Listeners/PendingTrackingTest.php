@@ -175,7 +175,7 @@ function makePendingProcessingEvent(string $uuid, string $connection = 'redis', 
     return new JobProcessing(connectionName: $connection, job: $job);
 }
 
-it('RecordJobProcessing clears pending tracking on pending → in-flight transition', function (): void {
+it('RecordJobProcessing transitions a uuid from pending → in-flight', function (): void {
     $uuid = '01ARZ3NDEKTSV4RRFFQ69PROC';
 
     (new RecordJobQueued())->handle(makePendingEvent($uuid, 'redis', 'work'));
@@ -185,22 +185,28 @@ it('RecordJobProcessing clears pending tracking on pending → in-flight transit
 
     (new RecordJobProcessing())->handle(makePendingProcessingEvent($uuid, 'redis', 'work'));
 
-    expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
-        ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))
-        ->toBe(0);
+    // Hash kept (now stamped with state + started_at), uuid moved from
+    // pending-zset to inflight-zset.
+    expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(1)
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'state'))->toBe('in_flight')
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'started_at'))->not->toBeNull()
+        ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))->toBe(0)
+        ->and(R::int('zcard', 'qmtest:inflight-zset:redis:work'))->toBe(1);
 });
 
-it('RecordJobProcessing cleanup is idempotent on already-cleared keys', function (): void {
+it('RecordJobProcessing transition is idempotent when no prior pending entry exists', function (): void {
     $uuid = '01ARZ3NDEKTSV4RRFFQ69IDEM';
 
-    // No prior queued event — nothing to clear.
+    // No prior queued event — listener still stamps state on a fresh hash so
+    // a worker that picked up a job we never saw queued (raw push, missed
+    // event) still surfaces in the dashboard.
     (new RecordJobProcessing())->handle(makePendingProcessingEvent($uuid));
 
-    // No keys, no errors.
-    expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0);
+    expect(R::str('hget', 'qmtest:pending:' . $uuid, 'state'))->toBe('in_flight')
+        ->and(R::int('zcard', 'qmtest:inflight-zset:redis:default'))->toBe(1);
 });
 
-it('RecordJobProcessing cleanup is a no-op when pending.enabled is false', function (): void {
+it('RecordJobProcessing transition is a no-op when pending.enabled is false', function (): void {
     $uuid = '01ARZ3NDEKTSV4RRFFQ69NOOP';
 
     (new RecordJobQueued())->handle(makePendingEvent($uuid, 'redis', 'work'));
@@ -208,10 +214,11 @@ it('RecordJobProcessing cleanup is a no-op when pending.enabled is false', funct
 
     (new RecordJobProcessing())->handle(makePendingProcessingEvent($uuid, 'redis', 'work'));
 
-    // Pending hash still in place because cleanup didn't run.
+    // Hash + pending-zset stay as-is (no state stamp, no inflight-zset write).
     expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(1)
-        ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))
-        ->toBe(1);
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'state'))->toBeNull()
+        ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))->toBe(1)
+        ->and(R::int('zcard', 'qmtest:inflight-zset:redis:work'))->toBe(0);
 });
 
 /**

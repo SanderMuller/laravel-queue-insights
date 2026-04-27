@@ -13,6 +13,8 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 
 - Live depth, in-flight, and delayed counts per queue. Works on SQS, Redis, and database queues.
 - Pending & delayed-job inspector per queue — individual queued jobs with class FQCN and `runs in <countdown>` for delayed jobs. Driver-agnostic (event-captured into Redis), so SQS gets the same view as Redis and database queues.
+- Batched-jobs section — per-batch progress bar, processed/failed/pending counts, finished/cancelled state, and an expandable per-item rollup that links each uuid back to the existing completed/failed modal. Per-row chip on completed/failed/pending lists jumps to the batch in one click.
+- Chained-jobs visibility — completed and failed rows surface the next job in a `Bus::chain([...])` chain via a small `↳ Next (+N)` chip and a Chain section in the modal, sourced directly from the job's serialized payload.
 - Wait time per queue (p50 / p95) and per job. Measures enqueue to worker pickup.
 - 24h throughput sparkline (processed + failed) with hover tooltips per hour, alongside a headline-stats panel: jobs/min, jobs past hour, failed past hour, max throughput hour, max wait p95, max runtime p95.
 - Queues grouped into *Needs attention* (errored or stale) and *Healthy* so a broken queue can't hide in a long list.
@@ -161,6 +163,45 @@ The dashboard compares the tracked count against the snapshot's `depth + delayed
 
 To opt out (memory-bounded production), set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. The listener writes become no-ops, the inspector toggle disappears, and existing keys age out via TTL.
 
+### Batches
+
+The dashboard renders a top-level **Batches** section above the Queues panel for jobs dispatched via `Bus::batch([...])->dispatch()`. Each row shows the batch name (or `Batch <short-id>` when unnamed), a progress bar driven by Laravel's authoritative `Bus::findBatch()` counts, and a counts triplet (`processed/total · failed · pending`). Cancelled batches show a red `cancelled` chip; finished + no-failures show a gray `finished` chip; jobs that fail when `allowFailures()` is off render `cancelled (first failure)` even before Laravel stamps `cancelled_at`.
+
+Expanding a row reveals the per-uuid item list in enqueue order, with a status icon (✓ processed / ✗ failed / ⌛ pending) per item. Clicking a completed item opens the existing completed-job modal (by stream id); clicking a failed item opens the failed-job modal (by `failed_jobs.id`). The expand state is URL-shareable (`?batch=<batchId>`).
+
+Every completed, failed, and pending row that belongs to a batch carries a small batch chip — clicking it opens the batch modal directly. The chip also renders inside the completed/failed/pending modal heroes, so an operator drilling into a single job can jump to its batch in one click. Inside an item modal that was opened from a batch, a `← Back to batch` button in the header returns you to the batch view without losing context (item modals stack visually on top of the batch modal).
+
+The data is **event-captured into Redis** alongside Laravel's own `BatchRepository`. The `JobQueued` listener writes three keys per batched job:
+
+- `qi:batches:index` (sorted set) — recent batchIds, ordered by first-seen unix timestamp. Used to enumerate batches without `SCAN`. Score-pruned on every enqueue (no whole-key TTL) so the head doesn't accumulate forever.
+- `qi:batch:{id}:uuids` (list) — RPUSH-ordered uuids in the batch. Bounded per batch by `batches.max_uuids_per_batch` (default 5000, best-effort under heavy concurrent dispatch).
+- `qi:batch:uuid:{uuid}` (string) — reverse lookup uuid → batchId, used to render the per-row chip on completed jobs.
+
+`RecordJobProcessed` and `RecordJobFailed` add two more per-uuid index keys (`qi:uuid-completed:{uuid}` and `qi:uuid-failed:{uuid}`) so the per-item rollup can route clicks into the existing modal flows.
+
+Bounded storage:
+
+- ~50 bytes per uuid (`qi:batch:{id}:uuids` entry + `qi:batch:uuid:{uuid}` reverse pointer + index entry, amortised per batch).
+- TTL on every per-batch key (`batches.ttl_seconds`, default 604800 = 7d). Self-pruning on the index via `ZREMRANGEBYSCORE` on each enqueue; per-batch keys age out via Redis EXPIRE.
+- Authoritative counts (`pending_jobs`, `processed_jobs`, `failed_jobs`, `progress`, `finished_at`, `cancelled_at`) come from `Bus::findBatch()` on every render — the captured keys exist only to enumerate batches and resolve uuid → display row, NOT to count.
+
+**Retry caveat.** `queue:retry` and `queue:retry-batch` use `Queue::pushRaw()`, which does NOT fire `JobQueued`, so a retried job won't refresh as a fresh pending entry in the per-item rollup. The retry will still flow through `JobProcessed` (which DOES fire), so a successful retry overwrites `qi:uuid-failed:{uuid}` with `qi:uuid-completed:{uuid}` and the row flips from ✗ to ✓ within one poll cycle.
+
+To opt out, set `QUEUE_INSIGHTS_BATCHES_ENABLED=false`. The listener writes become no-ops, the Batches section disappears, and chips stop rendering on existing rows.
+
+### Chained jobs
+
+Jobs dispatched through `Bus::chain([...])->dispatch()` (or `$job->chain([...])`) carry the remaining chain inside the serialized command body. The dashboard renders that forward chain context in two places:
+
+- **List rows** — completed and failed rows that have a follow-up job render a small `↳ NextJob (+N)` chip, where the leaf-class name shows the immediate next job and `+N` counts the further-down-chain jobs after it. Hover reveals the full FQCN and the total chained count.
+- **Modal Chain section** — the completed and failed modals include a `Chain` block with the next job's FQCN, the `+N more chained` count, and the chain's queue/connection (when set on the job). The block is clickable: it swaps the modal into a "Chained jobs" detail view that lists every chained link in order with per-link connection/queue, and a `← Back` button (or `Esc`) returns to the job view. Drilling into a single chained job inside the **failed-job modal** also surfaces its constructor properties (extracted from the serialized payload, framework internals filtered out) — same renderer used by the parent job's payload section. The completed-modal chain view stays metadata-only since the slim chain summary persisted on the stream entry doesn't retain user-bound data.
+
+For **failed jobs** the source is `failed_jobs.payload.data.command` — Laravel always persists this column, so chain context renders regardless of the package's `capture.payloads` setting. For **completed jobs** the listener writes a JSON-encoded `chain` field (a list of `{class, connection, queue}` per chained link, typically ~80–300 bytes) onto each completed-stream entry at the time the job runs, also independent of `capture.payloads`. Per-link `connection`/`queue` overrides set on individual jobs are preserved — the displayed route reflects what Laravel will actually dispatch to. Encrypted jobs (`ShouldBeEncrypted`) carry an opaque base64 blob in `data.command`, so the chip and section are silently omitted for those rows — no error, just no signal.
+
+**Backward chain visibility (which job ran *before* this one) is intentionally not tracked.** Laravel dispatches the next chained job synchronously inside its own `CallQueuedHandler::call()`, before any post-processed listener can stamp lineage onto the child. Capturing prior-chain history reliably would require overriding Laravel-internal classes, which a third-party package shouldn't do — see `internal/specs/chained-jobs.md` for the full evaluation. May land in a future release with a different approach if real demand surfaces.
+
+`queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job will still carry the correct `chain` field — the retry doesn't lose chain visibility.
+
 ### Customising row markup
 
 The dashboard's queue, completed, and failed lists are each rendered through a Blade partial, plus a shared filter-form partial. They're publishable — a host that wants to swap a row's columns or restyle the filter chrome can publish the partials and edit them in place without forking the whole `dashboard.blade.php` view:
@@ -174,6 +215,8 @@ php artisan vendor:publish --tag=queue-insights-views
 | `partials/queue-row.blade.php`          | One row in the Queues list (Needs attention + Healthy groups)  |
 | `partials/completed-row.blade.php`      | One row in Recent completed                                    |
 | `partials/failed-list-row.blade.php`    | One row in Recent failed                                       |
+| `partials/batch-row.blade.php`          | One row in the Batches section (header + per-item rollup)      |
+| `partials/batch-chip.blade.php`         | The small chip rendered on rows that belong to a batch         |
 | `partials/filter-form.blade.php`        | The collapsible 5-field filter form (used by both completed + failed) |
 | `partials/stat-tile.blade.php`          | One tile in the headline-stats panel beside the throughput sparkline  |
 

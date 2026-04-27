@@ -3,6 +3,8 @@
     'failed' => [],
     /** Whether the current user passes the retryFailedJobs gate. Drives Retry button visibility. */
     'canRetry' => false,
+    /** Currently-open batch id, '' if none. Drives the "Back to batch" button so the user can return to the batch view they came from. */
+    'expandedBatchId' => '',
 ])
 
 @php
@@ -28,6 +30,25 @@
     }
 
     $failedException = $failed['exception'] ?? null;
+
+    // Forward chain — `data.command` in the failed_jobs payload carries the
+    // remaining chain. Encrypted commands return null gracefully.
+    $failedChain = \SanderMuller\QueueInsights\Support\RowEnricher::chainFromPayload($failedPayloadDecoded);
+
+    // Batch id — plaintext at `data.batchId` even on ShouldBeEncrypted jobs.
+    // Drives the batch chip so operators can jump from a failed job to the
+    // batch it belongs to. Suppressed when batches.enabled = false to keep
+    // the chip from rendering an unreachable target.
+    $failedBatchId = null;
+    if (\SanderMuller\QueueInsights\Support\Config::bool('batches.enabled', true)
+        && is_array($failedPayloadDecoded)
+        && isset($failedPayloadDecoded['data']) && is_array($failedPayloadDecoded['data'])
+        && isset($failedPayloadDecoded['data']['batchId'])
+        && is_string($failedPayloadDecoded['data']['batchId'])
+        && $failedPayloadDecoded['data']['batchId'] !== ''
+    ) {
+        $failedBatchId = $failedPayloadDecoded['data']['batchId'];
+    }
 
     // Wait time — enqueue → worker pickup. Decorated server-side onto $failed.
     $failedWaitMs = $failed['wait_ms'] ?? null;
@@ -107,8 +128,12 @@
 <div role="dialog"
      aria-modal="true"
      aria-labelledby="qi-failed-modal-title"
-     x-data
-     x-on:keydown.escape.window="$wire.closeFailed()"
+     x-data="{ view: 'job', chainIndex: 0 }"
+     x-on:keydown.escape.window="
+        if (view === 'chain-detail') { view = 'chain'; }
+        else if (view === 'chain') { view = 'job'; }
+        else { $wire.closeFailed(); }
+     "
      class="fixed inset-0 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closeFailed">
     <div x-trap.noscroll="true"
@@ -117,14 +142,41 @@
         {{-- Header --}}
         <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 bg-white px-4 py-4">
             <div class="flex items-center gap-2">
-                <span class="inline-flex size-6 items-center justify-center rounded-md bg-red-50 text-red-600 ring-1 ring-inset ring-red-600/20">
+                @if ($expandedBatchId !== '')
+                    <button type="button"
+                            x-show="view === 'job'"
+                            wire:click="closeFailed"
+                            aria-label="Back to batch"
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                        <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
+                        </svg>
+                        <span>Back to batch</span>
+                    </button>
+                @endif
+                <button type="button"
+                        x-show="view === 'chain' || view === 'chain-detail'"
+                        x-cloak
+                        x-on:click="view = (view === 'chain-detail') ? 'chain' : 'job'"
+                        aria-label="Back"
+                        class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                    <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
+                    </svg>
+                    <span>Back</span>
+                </button>
+                <span x-show="view === 'job'" class="inline-flex size-6 items-center justify-center rounded-md bg-red-50 text-red-600 ring-1 ring-inset ring-red-600/20">
                     <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd"
                               d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"
                               clip-rule="evenodd"/>
                     </svg>
                 </span>
-                <h3 id="qi-failed-modal-title" class="text-sm font-semibold text-gray-900">Failed job</h3>
+                <h3 id="qi-failed-modal-title" class="text-sm font-semibold text-gray-900">
+                    <span x-show="view === 'job'">Failed job</span>
+                    <span x-show="view === 'chain'" x-cloak>Chained jobs</span>
+                    <span x-show="view === 'chain-detail'" x-cloak>Chained job details</span>
+                </h3>
             </div>
             <div class="flex items-center gap-1.5">
                 {{-- Retry — gated, two-click confirm. Server-side `retryFailed`
@@ -173,7 +225,7 @@
             </div>
         </div>
 
-        <div class="p-4">
+        <div class="p-4" x-show="view === 'job'">
             {{-- Identity hero — displayName + connection/queue --}}
             <section data-section="base" class="mb-6">
                 <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">Failed</p>
@@ -191,8 +243,43 @@
                             <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Queue</dt>
                             <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $failed['queue'] ?? '—' }}</dd>
                         </dl>
+                        @if ($failedBatchId !== null)
+                            @include('queue-insights::partials.batch-chip', ['batchId' => $failedBatchId])
+                        @endif
                     </div>
                 </div>
+
+                @if ($failedChain !== null)
+                    <button type="button"
+                            data-section="chain"
+                            x-on:click="view = 'chain'"
+                            class="mt-3 block w-full text-left rounded-xl bg-white p-4 ring-1 ring-gray-950/5 transition hover:bg-gray-50 hover:ring-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                            aria-label="View full chain details">
+                        <div class="flex items-center justify-between gap-2">
+                            <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Chain</p>
+                            <span class="text-[10px] font-medium text-emerald-700">View {{ $failedChain['remaining'] }} chained {{ $failedChain['remaining'] === 1 ? 'job' : 'jobs' }} →</span>
+                        </div>
+                        <dl class="mt-2 space-y-1 text-xs">
+                            <div class="flex flex-wrap items-baseline gap-x-2">
+                                <dt class="text-gray-400">Next</dt>
+                                <dd class="break-all font-mono text-gray-900">{{ $failedChain['next_class'] }}</dd>
+                                @if ($failedChain['remaining'] > 1)
+                                    <dd class="text-gray-500">(+{{ $failedChain['remaining'] - 1 }} more chained)</dd>
+                                @endif
+                            </div>
+                            @if ($failedChain['chain_queue'] !== null || $failedChain['chain_connection'] !== null)
+                                <div class="flex flex-wrap items-baseline gap-x-2">
+                                    <dt class="text-gray-400">Queue</dt>
+                                    <dd class="font-mono text-gray-700">{{ $failedChain['chain_queue'] ?? '—' }}</dd>
+                                    @if ($failedChain['chain_connection'] !== null)
+                                        <dd class="text-gray-400">·</dd>
+                                        <dd class="font-mono text-gray-700">{{ $failedChain['chain_connection'] }}</dd>
+                                    @endif
+                                </div>
+                            @endif
+                        </dl>
+                    </button>
+                @endif
 
                 {{-- Metrics row --}}
                 <dl class="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5">
@@ -278,5 +365,137 @@
             @endif
             <pre id="qi-failed-markdown" class="hidden" aria-hidden="true">{{ $failedMarkdown }}</pre>
         </div>
+
+        @if ($failedChain !== null)
+            @php
+                // Bound the rendered chain to keep a long, job-supplied chain
+                // from blowing up modal DOM. Both the list AND the per-item
+                // detail blocks render N entries; without a cap a job with a
+                // 1000-link chain would ship 2000 hidden DOM nodes per
+                // modal-open. 50 is well above any realistic chain.
+                $chainCap = 50;
+                $chainJobs = array_slice($failedChain['jobs'], 0, $chainCap);
+                $chainTotal = count($failedChain['jobs']);
+                $chainTruncated = $chainTotal > $chainCap;
+            @endphp
+            <div class="p-4" x-show="view === 'chain'" x-cloak data-section="chain-detail">
+                <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">Chain ({{ $failedChain['remaining'] }} {{ $failedChain['remaining'] === 1 ? 'job' : 'jobs' }} after this one)</p>
+                <ol class="overflow-hidden rounded-xl ring-1 ring-gray-950/5 divide-y divide-gray-950/5">
+                    @foreach ($chainJobs as $i => $job)
+                        <li>
+                            <button type="button"
+                                    x-on:click="chainIndex = {{ $i }}; view = 'chain-detail'"
+                                    aria-label="View details for chained job {{ $i + 1 }}"
+                                    class="flex w-full items-start gap-3 bg-white p-4 text-left transition hover:bg-gray-50 focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500">
+                                <span aria-hidden="true" class="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-950/[0.04] text-[11px] font-semibold tabular-nums text-gray-600 ring-1 ring-inset ring-gray-950/10">{{ $i + 1 }}</span>
+                                <div class="min-w-0 flex-1">
+                                    <p class="break-all font-mono text-sm text-gray-900">{{ $job['class'] }}</p>
+                                    <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                                        <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                            <dt class="bg-gray-950/[0.04] px-1.5 py-0.5 font-medium text-gray-500">Connection</dt>
+                                            <dd class="bg-white px-1.5 py-0.5 font-mono text-gray-700">{{ $job['connection'] ?? '—' }}</dd>
+                                        </dl>
+                                        <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                            <dt class="bg-gray-950/[0.04] px-1.5 py-0.5 font-medium text-gray-500">Queue</dt>
+                                            <dd class="bg-white px-1.5 py-0.5 font-mono text-gray-700">{{ $job['queue'] ?? '—' }}</dd>
+                                        </dl>
+                                        @if ($i === 0)
+                                            <span class="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>
+                                        @endif
+                                    </div>
+                                </div>
+                                <svg class="mt-1 size-3 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                    <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
+                                </svg>
+                            </button>
+                        </li>
+                    @endforeach
+                </ol>
+                @if ($chainTruncated)
+                    <p class="mt-2 text-[11px] text-amber-700">
+                        Showing the first {{ $chainCap }} of {{ $chainTotal }} chained jobs. The remaining {{ $chainTotal - $chainCap }} are hidden to keep the modal responsive.
+                    </p>
+                @endif
+                <p class="mt-3 text-[11px] text-gray-500">
+                    Chain context comes from the failed_jobs payload — the next link's own connection/queue overrides the parent chain defaults when set. These jobs haven't run yet, so individual run history isn't available here.
+                </p>
+            </div>
+
+            {{-- Chain item drill-down. Driven by Alpine `chainIndex` state set
+                from the chain-list buttons above; the server renders each
+                possible chain entry here and Alpine swaps visibility client-
+                side. Avoids extra round-trips for click-to-detail. Capped to
+                the same window as the list above so the hidden DOM stays
+                bounded. --}}
+            <div class="p-4" x-show="view === 'chain-detail'" x-cloak>
+                @foreach ($chainJobs as $i => $job)
+                    <div x-show="chainIndex === {{ $i }}" x-cloak>
+                        <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">
+                            Chained job {{ $i + 1 }} of {{ $chainTotal }}
+                            @if ($i === 0)<span class="ml-1 rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>@endif
+                        </p>
+                        <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10">
+                            <dl>
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Class</dt>
+                                <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $job['class'] }}</dd>
+                            </dl>
+                            <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                                <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                    <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Connection</dt>
+                                    <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $job['connection'] ?? '—' }}</dd>
+                                </dl>
+                                <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                    <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Queue</dt>
+                                    <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $job['queue'] ?? '—' }}</dd>
+                                </dl>
+                            </div>
+                        </div>
+
+                        <dl class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5">
+                            <div class="bg-white p-4">
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Position</dt>
+                                <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900">
+                                    {{ $i + 1 }} <span class="text-xs tabular-nums text-gray-400">of {{ $chainTotal }}</span>
+                                </dd>
+                            </div>
+                            <div class="bg-white p-4">
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Status</dt>
+                                <dd class="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                                    <span aria-hidden="true" class="inline-block size-1.5 rounded-full bg-gray-400"></span>
+                                    not yet dispatched
+                                </dd>
+                            </div>
+                        </dl>
+
+                        {{-- Per-chained-job properties — extracted at render time
+                            from the failed_jobs payload, so the user sees the same
+                            constructor-bound data the worker would deserialize on
+                            retry. Empty for jobs whose chained body was unparseable
+                            (encrypted) or whose constructor stored nothing. --}}
+                        @php
+                            $chainProps = is_array($job['properties'] ?? null) ? $job['properties'] : [];
+                        @endphp
+                        @if (count($chainProps) > 0)
+                            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">
+                                <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Job instance</p>
+                                <x-queue-insights::serialized-properties :properties="$chainProps"/>
+                            </div>
+                        @else
+                            <div class="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-[11px] text-gray-500 ring-1 ring-inset ring-gray-950/5">
+                                No constructor properties available for this chained job — either it carries no user-bound data, or its serialized body wasn't parseable (e.g. encrypted blob).
+                            </div>
+                        @endif
+
+                        <p class="mt-4 text-[11px] text-gray-500">
+                            @if ($i === 0)
+                                This job runs first once the failed parent is retried — Laravel re-dispatches the chain head with the remaining {{ $chainTotal - 1 }} {{ $chainTotal === 2 ? 'link' : 'links' }} attached.
+                            @else
+                                This job runs after job {{ $i }} ({{ $failedChain['jobs'][$i - 1]['class'] }}) finishes successfully. It's still serialized inside the parent's chain context — no individual instance has been pushed onto a queue yet.
+                            @endif
+                        </p>
+                    </div>
+                @endforeach
+            </div>
+        @endif
     </div>
 </div>

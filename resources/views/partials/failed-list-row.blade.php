@@ -12,6 +12,16 @@
     $namespace = $lastBackslash !== false ? substr((string) $fqcn, 0, $lastBackslash + 1) : '';
     $shortName = $lastBackslash !== false ? substr((string) $fqcn, $lastBackslash + 1) : (string) $fqcn;
     $clickable = $f['id'] !== null;
+
+    /** @var array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string}|null $chain */
+    $chain = is_array($f['chain'] ?? null) ? $f['chain'] : null;
+    $chainNextLast = null;
+    $chainExtra = 0;
+    if ($chain !== null) {
+        $nextLastSlash = strrpos($chain['next_class'], '\\');
+        $chainNextLast = $nextLastSlash !== false ? substr($chain['next_class'], $nextLastSlash + 1) : $chain['next_class'];
+        $chainExtra = max(0, $chain['remaining'] - 1);
+    }
 @endphp
 <li @class([
         'grid grid-cols-12 items-center gap-4 px-4 py-2.5',
@@ -46,6 +56,19 @@
             @if (! empty($f['short_uuid']))
                 <span class="text-gray-300" aria-hidden="true">·</span>
                 <span class="font-mono text-gray-400">#{{ $f['short_uuid'] }}</span>
+            @endif
+            @if (! empty($f['batch_id']))
+                @include('queue-insights::partials.batch-chip', ['batchId' => $f['batch_id']])
+            @endif
+            @if ($chain !== null)
+                <span class="inline-flex items-center gap-1 rounded-md bg-gray-950/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-gray-600 ring-1 ring-inset ring-gray-950/10"
+                      title="Next: {{ $chain['next_class'] }} ({{ $chain['remaining'] }} chained)">
+                    <span aria-hidden="true">↳</span>
+                    <span>{{ $chainNextLast }}</span>
+                    @if ($chainExtra > 0)
+                        <span class="text-gray-400">(+{{ $chainExtra }})</span>
+                    @endif
+                </span>
             @endif
         </p>
     </div>

@@ -500,6 +500,73 @@ it('Section C Raw pane shows serialized-command blob collapsed with byte count',
         ->assertSee(number_format(strlen($serialized)) . ' bytes');
 });
 
+it('Chain section renders when chain JSON field is present on the stream entry', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    openDetailsModal([
+        'class' => 'App\\Jobs\\Fake',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'chain' => (string) json_encode([
+            ['class' => 'App\\Jobs\\NextJob', 'connection' => 'redis', 'queue' => 'default'],
+            ['class' => 'App\\Jobs\\AfterJob', 'connection' => 'redis', 'queue' => 'default'],
+        ]),
+    ])
+        ->assertSee('Chain')
+        ->assertSee('App\\Jobs\\NextJob')
+        ->assertSee('+1 more chained')
+        // Click-through trigger and chain detail panel both rendered.
+        ->assertSeeHtml('aria-label="View full chain details"')
+        ->assertSeeHtml('data-section="chain-detail"')
+        ->assertSee('App\\Jobs\\AfterJob');
+});
+
+it('chain list entries are clickable buttons that drill into the chain-detail view', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    openDetailsModal([
+        'class' => 'App\\Jobs\\Fake',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'chain' => (string) json_encode([
+            ['class' => 'App\\Jobs\\NextJob', 'connection' => 'redis', 'queue' => 'default'],
+            ['class' => 'App\\Jobs\\AfterJob', 'connection' => 'redis', 'queue' => 'default'],
+        ]),
+    ])
+        // Each chain entry is now a button that switches the modal's Alpine
+        // `view` to chain-detail. Pin to the per-index click so adding a new
+        // chain link surfaces here too.
+        ->assertSeeHtml("chainIndex = 0; view = 'chain-detail'")
+        ->assertSeeHtml("chainIndex = 1; view = 'chain-detail'")
+        ->assertSeeHtml('aria-label="View details for chained job 1"')
+        ->assertSeeHtml('aria-label="View details for chained job 2"')
+        // Drill-down view block is rendered server-side; Alpine swaps
+        // visibility when chainIndex flips.
+        ->assertSee('Chained job 1 of 2')
+        ->assertSee('Chained job 2 of 2')
+        ->assertSee('not yet dispatched');
+});
+
+it('Chain section is omitted when chain field is absent', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    openDetailsModal([
+        'class' => 'App\\Jobs\\Fake',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'duration_ms' => '100',
+        'attempts' => '1',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+    ])
+        ->assertDontSeeHtml('data-section="chain"');
+});
+
 it('Section C decode-failure fallback renders raw string without colorizer attribute', function (): void {
     config()->set('queue-insights.capture.payloads', 'full');
 

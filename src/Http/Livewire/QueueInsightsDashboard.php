@@ -13,6 +13,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
 use InvalidArgumentException;
@@ -20,10 +21,12 @@ use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\QueueInsights;
+use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use SanderMuller\QueueInsights\Support\RowEnricher;
 use Throwable;
 
 #[Layout('queue-insights::layouts.app')]
@@ -35,6 +38,8 @@ final class QueueInsightsDashboard extends Component
     public ?string $selectedPayloadId = null;
 
     public ?int $selectedFailedId = null;
+
+    public ?string $selectedPendingUuid = null;
 
     public string $payloadTab = 'raw';
 
@@ -87,6 +92,15 @@ final class QueueInsightsDashboard extends Component
     #[Url(as: 'qopen', except: '')]
     public string $expandedQueueKey = '';
 
+    /*
+     * Batches inspector — single-batch expand state. URL-shareable so an
+     * operator can paste the dashboard URL and land on a peer's expanded
+     * batch view. Empty string = nothing expanded.
+     */
+
+    #[Url(as: 'batch', except: '')]
+    public string $expandedBatchId = '';
+
     /**
      * Defense-in-depth: enforce the `viewQueueInsights` Gate on component mount,
      * not just on the bundled route. A host app that embeds the component in a
@@ -115,6 +129,10 @@ final class QueueInsightsDashboard extends Component
         // Reset tab to the default on every open so users who flipped to JSON on a
         // prior modal see the default Raw KV view first on the next row.
         $this->payloadTab = 'raw';
+        // expandedBatchId is intentionally preserved — opening an item from the
+        // batch modal stacks the item modal on top, and closing it (close*)
+        // returns the user to the batch view. Dashboard.blade.php renders the
+        // batch modal first so the item modal sits visually on top.
     }
 
     public function closePayload(): void
@@ -130,6 +148,39 @@ final class QueueInsightsDashboard extends Component
     public function closeFailed(): void
     {
         $this->selectedFailedId = null;
+    }
+
+    public function openPending(string $uuid): void
+    {
+        // Pending row → modal. The dashboard's render() re-reads the
+        // pending hash by uuid each poll, so a worker grabbing the job
+        // mid-modal degrades to an empty `selectedPending` and the modal
+        // shows the "no longer pending" empty state on the next poll.
+        $this->selectedPendingUuid = $uuid;
+    }
+
+    public function closePending(): void
+    {
+        $this->selectedPendingUuid = null;
+    }
+
+    /**
+     * Open a batch from an item context (chip click in details/failed/pending
+     * modal, or any other "go to this batch" affordance). Closes any open item
+     * modal so only the batch modal remains visible — distinct from
+     * `toggleBatchInspector`, which is the row-toggle on the Batches section
+     * and intentionally toggles open/close.
+     */
+    public function openBatch(string $id): void
+    {
+        if ($id === '') {
+            return;
+        }
+
+        $this->selectedPayloadId = null;
+        $this->selectedFailedId = null;
+        $this->selectedPendingUuid = null;
+        $this->expandedBatchId = $id;
     }
 
     public function setPayloadTab(string $tab): void
@@ -154,6 +205,23 @@ final class QueueInsightsDashboard extends Component
         // pendingJobs / delayedJobs round-trips per poll. Multi-open is an
         // operator request away if it ever lands on the roadmap.
         $this->expandedQueueKey = $this->expandedQueueKey === $key ? '' : $key;
+    }
+
+    public function toggleBatchInspector(string $id): void
+    {
+        // Single-batch expand mirrors toggleQueueInspector: only the expanded
+        // row pays the per-uuid hydration cost on each 10s poll.
+        $this->expandedBatchId = $this->expandedBatchId === $id ? '' : $id;
+    }
+
+    public function closeBatch(): void
+    {
+        // Unconditional close — distinct from `toggleBatchInspector` because
+        // the modal's backdrop / X / Esc bindings need a non-toggle exit. If
+        // they routed through toggle, a race-rendered empty modal (where the
+        // mounted batch id was lost) would flip the prop to an arbitrary
+        // value instead of closing.
+        $this->expandedBatchId = '';
     }
 
     public function clearCompletedFilters(): void
@@ -515,6 +583,16 @@ final class QueueInsightsDashboard extends Component
             $selectedPayload['wait_ms'] = is_string($payloadUuid)
                 ? (string) ($svc->jobWaitMs($payloadUuid) ?? '')
                 : '';
+
+            // Reverse-lookup the batch id for THIS uuid only (one MGET) so
+            // the details-modal's batch chip can render. The full
+            // recentCompleted enrichment runs later for the table; doing it
+            // again here for one row is the cheapest way to keep the modal
+            // shape stable without depending on table-render order.
+            if (is_string($payloadUuid) && $payloadUuid !== '') {
+                $payloadBatchIds = BatchReader::batchIdsForUuids([$payloadUuid]);
+                $selectedPayload['batch_id'] = $payloadBatchIds[$payloadUuid] ?? null;
+            }
         }
 
         if ($selectedFailed !== null) {
@@ -541,16 +619,44 @@ final class QueueInsightsDashboard extends Component
 
         $filterOptions = $this->buildFilterOptions($classes);
 
+        $batches = BatchReader::sectionRows($svc, $this->expandedBatchId);
+
+        $pendingEnabled = Config::bool('pending.enabled', true);
+        $pendingRows = $pendingEnabled ? $svc->allPendingJobs(50) : [];
+        $delayedRows = $pendingEnabled ? $svc->allDelayedJobs(50) : [];
+        $inFlightRows = $pendingEnabled ? $svc->allInFlightJobs(50) : [];
+
+        $selectedPending = $this->resolveSelectedPending(
+            array_merge($inFlightRows, $pendingRows, $delayedRows),
+            $svc,
+        );
+
+        $selectedBatch = $this->resolveSelectedBatch($batches);
+
+        // Drive `inert` from the same booleans that actually mount the
+        // modals — codex review #1. Routing it off raw selection ids
+        // froze the dashboard when an id was set but the modal never
+        // mounted (config flip, aged-out row, ?batch= URL with batches
+        // disabled).
+        $hasOpenModal = $selectedPayload !== null
+            || $selectedFailed !== null
+            || ($pendingEnabled && $this->selectedPendingUuid !== null)
+            || (Config::bool('batches.enabled', true) && $this->expandedBatchId !== '');
+
         return ViewFactory::make('queue-insights::dashboard', [
             'queues' => $queues,
             'classes' => $classes,
+            'pendingRows' => $pendingRows,
+            'delayedRows' => $delayedRows,
+            'inFlightRows' => $inFlightRows,
+            'pendingEnabled' => $pendingEnabled,
             'filterConnectionOptions' => $filterOptions['connections'],
             'filterQueueOptions' => $filterOptions['queues'],
             'filterClassOptions' => $filterOptions['classes'],
             'captureMode' => $captureMode,
-            'completedRows' => $this->buildCompletedFilter()->apply($this->enrichCompletedRows($recentCompleted)),
+            'completedRows' => $this->buildCompletedFilter()->apply(RowEnricher::completed($recentCompleted)),
             'completedFiltersActive' => $this->completedFiltersActive(),
-            'failedRows' => $this->enrichFailedRows($recentFailed),
+            'failedRows' => RowEnricher::failed($recentFailed),
             'selectedClass' => $this->selectedClass,
             'selectedPayload' => $selectedPayload,
             'selectedFailed' => $selectedFailed,
@@ -561,7 +667,73 @@ final class QueueInsightsDashboard extends Component
             'failedFiltersActive' => ! $failedFilters->isEmpty(),
             'canRetry' => $canRetry,
             'bulkRetryCount' => $bulkRetryCount,
+            'batches' => $batches,
+            'batchesEnabled' => Config::bool('batches.enabled', true),
+            'expandedBatchId' => $this->expandedBatchId,
+            'selectedBatch' => $selectedBatch,
+            'selectedPending' => $selectedPending,
+            'selectedPendingUuid' => $this->selectedPendingUuid,
+            'hasOpenModal' => $hasOpenModal,
         ]);
+    }
+
+    /**
+     * Resolve the open batch row from the section data so the batch modal can
+     * mount it. Searches the visible Batches section first (already loaded
+     * for the page), then falls back to a direct `BatchReader::detailRow()`
+     * lookup so a batch chip whose target sits OUTSIDE the recent-batches
+     * window (`batches.max_per_query`) still resolves — without the fallback
+     * the modal would land on the misleading "Batch no longer tracked"
+     * empty state even though `Bus::findBatch()` succeeds.
+     *
+     * Returns null only when the BatchRepository row genuinely aged out.
+     *
+     * @param  list<array<string, mixed>>  $batches
+     * @return array<string, mixed>|null
+     */
+    private function resolveSelectedBatch(array $batches): ?array
+    {
+        if ($this->expandedBatchId === '') {
+            return null;
+        }
+
+        foreach ($batches as $row) {
+            if (($row['id'] ?? null) === $this->expandedBatchId) {
+                return $row;
+            }
+        }
+
+        return BatchReader::detailRow($this->expandedBatchId);
+    }
+
+    /**
+     * Look up the currently-open pending row by uuid. Searches the rows we
+     * already fetched for the section first, then falls back to a direct
+     * `pending:{uuid}` hash lookup so a batched job sitting outside the top-50
+     * aggregates (or any uuid arrived at via a deep-linked URL) still mounts
+     * with real data — not the misleading "no longer pending" empty state
+     * that comes from `null` here.
+     *
+     * Returns null only when the uuid genuinely isn't tracked anymore (worker
+     * grabbed it mid-modal, TTL fired, or pending tracking was disabled at
+     * queue time).
+     *
+     * @param  list<array<string, mixed>>  $allRows  pending + delayed + in-flight combined
+     * @return array<string, mixed>|null
+     */
+    private function resolveSelectedPending(array $allRows, QueueInsights $svc): ?array
+    {
+        if ($this->selectedPendingUuid === null) {
+            return null;
+        }
+
+        foreach ($allRows as $row) {
+            if (($row['uuid'] ?? null) === $this->selectedPendingUuid) {
+                return $row;
+            }
+        }
+
+        return $svc->findPendingByUuid($this->selectedPendingUuid);
     }
 
     /**
@@ -683,88 +855,6 @@ final class QueueInsightsDashboard extends Component
         }
 
         return $rows;
-    }
-
-    /**
-     * Enrich recentCompleted stream entries with a short id suffix for display.
-     *
-     * @param  list<array<string, string>>  $recentCompleted
-     * @return list<array<string, mixed>>
-     */
-    private function enrichCompletedRows(array $recentCompleted): array
-    {
-        $rows = [];
-        foreach ($recentCompleted as $row) {
-            $id = $row['_id'] ?? '';
-            $rows[] = $row + [
-                'short_id' => is_string($id) && $id !== '' ? mb_substr(explode('-', $id)[0], -9) : '',
-            ];
-        }
-
-        return $rows;
-    }
-
-    /**
-     * Enrich failed_jobs rows with decoded-payload fields for a Horizon-style 2-line row:
-     *   - display_name (class name from payload)
-     *   - attempts + max_tries
-     *   - exception_class + exception_message (first line parse)
-     *   - short_uuid (last 8 chars — enough to scan)
-     *
-     * @param  list<array<array-key, mixed>>  $recentFailed
-     * @return list<array<string, mixed>>
-     */
-    private function enrichFailedRows(array $recentFailed): array
-    {
-        $rows = [];
-        foreach ($recentFailed as $row) {
-            $payload = is_string($row['payload'] ?? null) ? json_decode($row['payload'], true) : null;
-            $exception = is_string($row['exception'] ?? null) ? $row['exception'] : '';
-            $exceptionFirst = explode("\n", $exception, 2)[0] ?? '';
-            [$excClass, $excMessage] = $this->splitExceptionHeader($exceptionFirst);
-
-            $uuid = is_string($row['uuid'] ?? null) ? $row['uuid'] : '';
-
-            $rows[] = [
-                'id' => is_numeric($row['id'] ?? null) ? (int) $row['id'] : null,
-                'uuid' => $uuid,
-                'short_uuid' => $uuid !== '' ? mb_substr($uuid, -8) : '',
-                'connection' => $row['connection'] ?? null,
-                'queue' => $row['queue'] ?? null,
-                'failed_at' => $row['failed_at'] ?? null,
-                'display_name' => is_array($payload) && isset($payload['displayName']) && is_string($payload['displayName'])
-                    ? $payload['displayName']
-                    : null,
-                'attempts' => is_array($payload) && isset($payload['attempts']) && is_numeric($payload['attempts'])
-                    ? (int) $payload['attempts']
-                    : null,
-                'max_tries' => is_array($payload) && isset($payload['maxTries']) && is_numeric($payload['maxTries'])
-                    ? (int) $payload['maxTries']
-                    : null,
-                'exception_class' => $excClass,
-                'exception_message' => $excMessage,
-            ];
-        }
-
-        return $rows;
-    }
-
-    /**
-     * "RuntimeException: Something broke" → ["RuntimeException", "Something broke"].
-     *
-     * @return array{0: string, 1: string}
-     */
-    private function splitExceptionHeader(string $firstLine): array
-    {
-        $colon = strpos($firstLine, ':');
-        if ($colon === false) {
-            return [$firstLine, ''];
-        }
-
-        return [
-            trim(substr($firstLine, 0, $colon)),
-            trim(substr($firstLine, $colon + 1)),
-        ];
     }
 
     /**

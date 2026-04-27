@@ -17,6 +17,16 @@
     $lastBackslash = strrpos($fqcn, '\\');
     $namespace = $lastBackslash !== false ? substr($fqcn, 0, $lastBackslash + 1) : '';
     $shortName = $lastBackslash !== false ? substr($fqcn, $lastBackslash + 1) : $fqcn;
+
+    /** @var array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string}|null $chain */
+    $chain = is_array($row['chain'] ?? null) ? $row['chain'] : null;
+    $chainNextLast = null;
+    $chainExtra = 0;
+    if ($chain !== null) {
+        $nextLastSlash = strrpos($chain['next_class'], '\\');
+        $chainNextLast = $nextLastSlash !== false ? substr($chain['next_class'], $nextLastSlash + 1) : $chain['next_class'];
+        $chainExtra = max(0, $chain['remaining'] - 1);
+    }
 @endphp
 <li class="grid grid-cols-12 items-center gap-4 px-4 py-2.5 cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500"
     role="button"
@@ -30,9 +40,24 @@
         {{-- Tight inline: zero whitespace between namespace and leaf so the
             mono-font space gap doesn't appear between them. --}}
         <p class="truncate font-mono text-sm">@if ($namespace !== '')<span class="text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900">{{ $shortName }}</span></p>
-        @if (! empty($row['short_id']))
-            <p class="mt-0.5 font-mono text-xs text-gray-400">#{{ $row['short_id'] }}</p>
-        @endif
+        <p class="mt-0.5 flex items-center gap-1.5">
+            @if (! empty($row['short_id']))
+                <span class="font-mono text-xs text-gray-400">#{{ $row['short_id'] }}</span>
+            @endif
+            @if (! empty($row['batch_id']))
+                @include('queue-insights::partials.batch-chip', ['batchId' => $row['batch_id']])
+            @endif
+            @if ($chain !== null)
+                <span class="inline-flex items-center gap-1 rounded-md bg-gray-950/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-gray-600 ring-1 ring-inset ring-gray-950/10"
+                      title="Next: {{ $chain['next_class'] }} ({{ $chain['remaining'] }} chained)">
+                    <span aria-hidden="true">↳</span>
+                    <span>{{ $chainNextLast }}</span>
+                    @if ($chainExtra > 0)
+                        <span class="text-gray-400">(+{{ $chainExtra }})</span>
+                    @endif
+                </span>
+            @endif
+        </p>
     </div>
     <div class="col-span-3 min-w-0">
         <p class="truncate text-xs text-gray-500">{{ $row['connection'] ?? '—' }}</p>

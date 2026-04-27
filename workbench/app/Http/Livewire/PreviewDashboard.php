@@ -9,6 +9,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\View as ViewFactory;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use SanderMuller\QueueInsights\Support\RowEnricher;
 
 #[Layout('queue-insights::layouts.app')]
 final class PreviewDashboard extends Component
@@ -40,6 +41,10 @@ final class PreviewDashboard extends Component
     public string $completedFilterTo = '';
 
     public string $expandedQueueKey = '';
+
+    public string $expandedBatchId = '';
+
+    public ?string $selectedPendingUuid = null;
 
     public function openPayload(string $id): void
     {
@@ -81,6 +86,26 @@ final class PreviewDashboard extends Component
     public function toggleQueueInspector(string $key): void
     {
         $this->expandedQueueKey = $this->expandedQueueKey === $key ? '' : $key;
+    }
+
+    public function toggleBatchInspector(string $id): void
+    {
+        $this->expandedBatchId = $this->expandedBatchId === $id ? '' : $id;
+    }
+
+    public function closeBatch(): void
+    {
+        $this->expandedBatchId = '';
+    }
+
+    public function openPending(string $uuid): void
+    {
+        $this->selectedPendingUuid = $uuid;
+    }
+
+    public function closePending(): void
+    {
+        $this->selectedPendingUuid = null;
     }
 
     public function clearFailedFilters(): void
@@ -156,13 +181,27 @@ final class PreviewDashboard extends Component
 
         foreach ($failedRows as $row) {
             if (($row['id'] ?? null) === $this->selectedFailedId) {
+                $payload = [
+                    'displayName' => $row['display_name'] ?? 'App\\Jobs\\Preview',
+                    'maxTries' => $row['max_tries'] ?? 3,
+                    'attempts' => $row['attempts'] ?? 1,
+                ];
+
+                // When this seeded row carries a chain, embed a real serialized
+                // chained command in `data.command` so the failed-modal's
+                // RowEnricher::chainFromPayload() picks it up and renders the
+                // Chain section. The shape mirrors what Laravel produces from
+                // `Bus::chain([...])->dispatch()`.
+                if (is_array($row['chain'] ?? null)) {
+                    $payload['data'] = [
+                        'commandName' => $row['display_name'] ?? 'App\\Jobs\\Preview',
+                        'command' => self::buildChainedCommand($row['chain']),
+                    ];
+                }
+
                 return array_merge($row, [
                     'uuid' => 'preview-uuid-' . $this->selectedFailedId,
-                    'payload' => json_encode([
-                        'displayName' => $row['display_name'] ?? 'App\\Jobs\\Preview',
-                        'maxTries' => $row['max_tries'] ?? 3,
-                        'attempts' => $row['attempts'] ?? 1,
-                    ]),
+                    'payload' => json_encode($payload),
                     'exception' => "{$row['exception_class']}: {$row['exception_message']}\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                     'wait_ms' => 250,
                 ]);
@@ -173,9 +212,77 @@ final class PreviewDashboard extends Component
     }
 
     /**
+     * Build a Laravel-shaped serialized job command with a non-empty `chained`
+     * array, so the failed-modal Chain section can decode it via the same
+     * `SerializedCommandReader::extractChainContext` path the real flow uses.
+     *
+     * @param  array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string}  $chain
+     */
+    private static function buildChainedCommand(array $chain): string
+    {
+        $nextJob = new \stdClass();
+        if ($chain['chain_connection'] !== null) {
+            $nextJob->connection = $chain['chain_connection'];
+        }
+        if ($chain['chain_queue'] !== null) {
+            $nextJob->queue = $chain['chain_queue'];
+        }
+
+        $nextSerialized = serialize($nextJob);
+
+        // Replace the outer class name from `stdClass` to the next-job FQCN
+        // we want to display. The `O:N:"<FQCN>":` header drives the regex
+        // extraction in SerializedCommandReader.
+        $nextWithFqcn = preg_replace(
+            '/^O:\d+:"[^"]+":/',
+            'O:' . strlen($chain['next_class']) . ':"' . $chain['next_class'] . '":',
+            $nextSerialized,
+            1,
+        );
+
+        // Pad the chained array to `remaining` length with placeholder filler
+        // jobs so `count($chained)` lines up with the displayed remaining.
+        $chainedEntries = [$nextWithFqcn];
+        for ($i = 1; $i < $chain['remaining']; $i++) {
+            $filler = 'App\\Jobs\\ChainStep' . ($i + 1);
+            $chainedEntries[] = 'O:' . strlen($filler) . ':"' . $filler . '":0:{}';
+        }
+
+        $outer = new \stdClass();
+        $outer->chained = $chainedEntries;
+        if ($chain['chain_connection'] !== null) {
+            $outer->chainConnection = $chain['chain_connection'];
+        }
+        if ($chain['chain_queue'] !== null) {
+            $outer->chainQueue = $chain['chain_queue'];
+        }
+
+        return serialize($outer);
+    }
+
+    /**
      * @param  list<array<string, mixed>>  $completedRows
      * @return array<string, mixed>|null
      */
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return array<string, mixed>|null
+     */
+    private function resolvePreviewSelectedPending(array $rows): ?array
+    {
+        if ($this->selectedPendingUuid === null) {
+            return null;
+        }
+
+        foreach ($rows as $row) {
+            if (($row['uuid'] ?? null) === $this->selectedPendingUuid) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
     private function resolvePreviewSelectedPayload(array $completedRows): ?array
     {
         if ($this->selectedPayloadId === null) {
@@ -234,6 +341,145 @@ final class PreviewDashboard extends Component
         return ViewFactory::make('queue-insights::dashboard', $this->seedData());
     }
 
+    /**
+     * Seed two batches — one in-progress with a few items, one finished —
+     * so the Batches section is exercisable in the preview. Item rows wire
+     * their click handlers to the same openPayload / openFailed actions
+     * used by the rest of the dashboard.
+     *
+     * @return list<array<string, mixed>>
+     */
+    /**
+     * Mirrors `QueueInsightsDashboard::resolveSelectedBatch` — picks the row
+     * whose id matches the open `expandedBatchId` so the batch modal mounts
+     * with the matching seed payload.
+     *
+     * @param  list<array<string, mixed>>  $batches
+     * @return array<string, mixed>|null
+     */
+    private function resolvePreviewSelectedBatch(array $batches): ?array
+    {
+        if ($this->expandedBatchId === '') {
+            return null;
+        }
+
+        foreach ($batches as $row) {
+            if (($row['id'] ?? null) === $this->expandedBatchId) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function seedBatches(Carbon $now): array
+    {
+        $batchOneItems = [
+            ['uuid' => 'preview-uuid-batch1-a', 'class' => 'App\\Jobs\\GenerateReport', 'status' => 'completed', 'stream_id' => '01HK0M2', 'failed_id' => null, 'timestamp' => $now->copy()->subMinutes(15)->getTimestamp()],
+            ['uuid' => 'preview-uuid-batch1-b', 'class' => 'App\\Jobs\\GenerateReport', 'status' => 'completed', 'stream_id' => null, 'failed_id' => null, 'timestamp' => $now->copy()->subMinutes(13)->getTimestamp()],
+            ['uuid' => 'preview-uuid-batch1-c', 'class' => 'App\\Jobs\\GenerateReport', 'status' => 'failed', 'stream_id' => null, 'failed_id' => 1, 'timestamp' => $now->copy()->subMinutes(8)->getTimestamp()],
+            ['uuid' => 'preview-uuid-batch1-d', 'class' => 'App\\Jobs\\GenerateReport', 'status' => 'pending', 'stream_id' => null, 'failed_id' => null, 'timestamp' => $now->copy()->subMinutes(2)->getTimestamp()],
+        ];
+
+        $batchTwoItems = [
+            ['uuid' => 'preview-uuid-batch2-a', 'class' => 'App\\Jobs\\BackfillStats', 'status' => 'completed', 'stream_id' => null, 'failed_id' => null, 'timestamp' => $now->copy()->subHours(2)->getTimestamp()],
+            ['uuid' => 'preview-uuid-batch2-b', 'class' => 'App\\Jobs\\BackfillStats', 'status' => 'completed', 'stream_id' => null, 'failed_id' => null, 'timestamp' => $now->copy()->subMinutes(110)->getTimestamp()],
+        ];
+
+        $batches = [
+            [
+                'id' => 'preview-batch-001',
+                'name' => 'Nightly report fan-out',
+                'total_jobs' => 12,
+                'pending_jobs' => 4,
+                'processed_jobs' => 7,
+                'failed_jobs' => 1,
+                'progress' => 66,
+                'allows_failures' => true,
+                'created_at' => $now->copy()->subMinutes(20),
+                'finished_at' => null,
+                'cancelled_at' => null,
+                'items_seed' => $batchOneItems,
+            ],
+            [
+                'id' => 'preview-batch-002',
+                'name' => null,
+                'total_jobs' => 5,
+                'pending_jobs' => 0,
+                'processed_jobs' => 5,
+                'failed_jobs' => 0,
+                'progress' => 100,
+                'allows_failures' => false,
+                'created_at' => $now->copy()->subHours(2),
+                'finished_at' => $now->copy()->subMinutes(95),
+                'cancelled_at' => null,
+                'items_seed' => $batchTwoItems,
+            ],
+        ];
+
+        $rows = [];
+        foreach ($batches as $batch) {
+            $isOpen = $this->expandedBatchId !== '' && $this->expandedBatchId === $batch['id'];
+            $items = $batch['items_seed'];
+            unset($batch['items_seed']);
+
+            $rows[] = $batch + [
+                'is_open' => $isOpen,
+                'items' => $isOpen ? $items : [],
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Seed pending jobs (available_at <= now) so the dashboard's
+     * Pending-now group has rows to show. Mirrors the production shape from
+     * `QueueInsights::allPendingJobs()`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function seedPendingRows(Carbon $now): array
+    {
+        return [
+            ['uuid' => 'pending-uuid-1', 'class' => 'App\\Jobs\\SendWelcomeEmail', 'connection' => 'redis', 'queue' => 'default', 'queued_at' => $now->copy()->subSeconds(45)->getTimestamp(), 'available_at' => $now->copy()->subSeconds(45)->getTimestamp(), 'batch_id' => null],
+            ['uuid' => 'pending-uuid-2', 'class' => 'App\\Jobs\\SyncStripeCustomer', 'connection' => 'redis', 'queue' => 'default', 'queued_at' => $now->copy()->subMinutes(2)->getTimestamp(), 'available_at' => $now->copy()->subMinutes(2)->getTimestamp(), 'batch_id' => null],
+            ['uuid' => 'pending-uuid-3', 'class' => 'App\\Jobs\\GenerateReport', 'connection' => 'sqs', 'queue' => 'reports', 'queued_at' => $now->copy()->subMinutes(8)->getTimestamp(), 'available_at' => $now->copy()->subMinutes(8)->getTimestamp(), 'batch_id' => 'preview-batch-001'],
+        ];
+    }
+
+    /**
+     * Seed delayed jobs (available_at > now) for the dashboard's Delayed
+     * sub-group. Same row shape as `seedPendingRows` — the partial branches
+     * on an `isDelayed` flag passed by the section, not on the row itself.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function seedDelayedRows(Carbon $now): array
+    {
+        return [
+            ['uuid' => 'delayed-uuid-1', 'class' => 'App\\Jobs\\SendReminder', 'connection' => 'redis', 'queue' => 'mail', 'queued_at' => $now->copy()->subMinute()->getTimestamp(), 'available_at' => $now->copy()->addMinutes(2)->getTimestamp(), 'batch_id' => null, 'state' => null, 'started_at' => null],
+            ['uuid' => 'delayed-uuid-2', 'class' => 'App\\Jobs\\WeeklyDigest', 'connection' => 'redis', 'queue' => 'mail', 'queued_at' => $now->copy()->subHour()->getTimestamp(), 'available_at' => $now->copy()->addHours(1)->getTimestamp(), 'batch_id' => null, 'state' => null, 'started_at' => null],
+        ];
+    }
+
+    /**
+     * Seed in-flight jobs — a worker has picked them up (RecordJobProcessing
+     * stamps `state=in_flight` + `started_at`). Mirrors the shape returned by
+     * `QueueInsights::allInFlightJobs()` so the dashboard can demo the
+     * In-flight sub-group + per-row "running" badge in local preview.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function seedInFlightRows(Carbon $now): array
+    {
+        return [
+            ['uuid' => 'inflight-uuid-1', 'class' => 'App\\Jobs\\ProcessImport', 'connection' => 'redis', 'queue' => 'default', 'queued_at' => $now->copy()->subSeconds(45)->getTimestamp(), 'available_at' => $now->copy()->subSeconds(45)->getTimestamp(), 'batch_id' => null, 'state' => 'in_flight', 'started_at' => $now->copy()->subSeconds(20)->getTimestamp()],
+            ['uuid' => 'inflight-uuid-2', 'class' => 'App\\Jobs\\GenerateInvoicePdf', 'connection' => 'redis', 'queue' => 'high', 'queued_at' => $now->copy()->subMinutes(3)->getTimestamp(), 'available_at' => $now->copy()->subMinutes(3)->getTimestamp(), 'batch_id' => null, 'state' => 'in_flight', 'started_at' => $now->copy()->subMinutes(2)->getTimestamp()],
+        ];
+    }
+
     /** @return array<string, mixed> */
     private function seedData(): array
     {
@@ -259,18 +505,38 @@ final class PreviewDashboard extends Component
             ];
         }
 
+        // Raw stream-entry shape — `chain` is a JSON-encoded list, mirroring
+        // what `RecordJobProcessed::writeStreams()` writes in production. The
+        // chip path runs each row through `RowEnricher::decodeChain()` below;
+        // the modal path uses these raw rows directly so its blade decodes
+        // the JSON string itself.
+        $importJobs = [
+            ['class' => 'App\\Jobs\\NotifyImportFinished', 'connection' => 'redis', 'queue' => 'mail'],
+            ['class' => 'App\\Jobs\\IndexImportArtifacts', 'connection' => 'redis', 'queue' => 'default'],
+        ];
+        $stripeJobs = [
+            ['class' => 'App\\Jobs\\AuditCustomerSync', 'connection' => 'redis', 'queue' => 'default'],
+        ];
+
         $completedRows = [
             ['_id' => '01HK0M1', 'class' => 'App\\Jobs\\SendWelcomeEmail', 'short_id' => '01HK0M1', 'connection' => 'redis', 'queue' => 'default', 'duration_ms' => 342, 'attempts' => 1, 'processed_at' => $now->copy()->subSeconds(20)->toIso8601String()],
-            ['_id' => '01HK0M2', 'class' => 'App\\Jobs\\GenerateReport', 'short_id' => '01HK0M2', 'connection' => 'sqs', 'queue' => 'reports', 'duration_ms' => 18420, 'attempts' => 1, 'processed_at' => $now->copy()->subMinute()->toIso8601String()],
-            ['_id' => '01HK0M3', 'class' => 'App\\Jobs\\ProcessImport', 'short_id' => '01HK0M3', 'connection' => 'redis', 'queue' => 'mail', 'duration_ms' => 1240, 'attempts' => 2, 'processed_at' => $now->copy()->subMinutes(2)->toIso8601String()],
-            ['_id' => '01HK0M4', 'class' => 'App\\Jobs\\SyncStripeCustomer', 'short_id' => '01HK0M4', 'connection' => 'redis', 'queue' => 'default', 'duration_ms' => 520, 'attempts' => 1, 'processed_at' => $now->copy()->subMinutes(3)->toIso8601String()],
+            ['_id' => '01HK0M2', 'class' => 'App\\Jobs\\GenerateReport', 'short_id' => '01HK0M2', 'connection' => 'sqs', 'queue' => 'reports', 'duration_ms' => 18420, 'attempts' => 1, 'processed_at' => $now->copy()->subMinute()->toIso8601String(), 'batch_id' => 'preview-batch-001'],
+            ['_id' => '01HK0M3', 'class' => 'App\\Jobs\\ProcessImport', 'short_id' => '01HK0M3', 'connection' => 'redis', 'queue' => 'mail', 'duration_ms' => 1240, 'attempts' => 2, 'processed_at' => $now->copy()->subMinutes(2)->toIso8601String(), 'chain' => json_encode($importJobs)],
+            ['_id' => '01HK0M4', 'class' => 'App\\Jobs\\SyncStripeCustomer', 'short_id' => '01HK0M4', 'connection' => 'redis', 'queue' => 'default', 'duration_ms' => 520, 'attempts' => 1, 'processed_at' => $now->copy()->subMinutes(3)->toIso8601String(), 'chain' => json_encode($stripeJobs)],
             ['_id' => '01HK0M5', 'class' => 'App\\Jobs\\SendWelcomeEmail', 'short_id' => '01HK0M5', 'connection' => 'redis', 'queue' => 'default', 'duration_ms' => 295, 'attempts' => 1, 'processed_at' => $now->copy()->subMinutes(5)->toIso8601String()],
         ];
 
+        $chainProcessImport = [
+            'next_class' => 'App\\Jobs\\NotifyImportFinished',
+            'remaining' => 3,
+            'chain_connection' => 'redis',
+            'chain_queue' => 'mail',
+        ];
+
         $failedRows = [
-            ['id' => 1, 'display_name' => 'App\\Jobs\\GenerateReport', 'exception_class' => 'RuntimeException', 'exception_message' => 'Database connection timeout', 'short_uuid' => 'a3f9c2', 'connection' => 'sqs', 'queue' => 'reports', 'failed_at' => $now->copy()->subMinutes(8)->toIso8601String(), 'attempts' => 3, 'max_tries' => 3],
+            ['id' => 1, 'display_name' => 'App\\Jobs\\GenerateReport', 'exception_class' => 'RuntimeException', 'exception_message' => 'Database connection timeout', 'short_uuid' => 'a3f9c2', 'connection' => 'sqs', 'queue' => 'reports', 'failed_at' => $now->copy()->subMinutes(8)->toIso8601String(), 'attempts' => 3, 'max_tries' => 3, 'batch_id' => 'preview-batch-001'],
             ['id' => 2, 'display_name' => 'App\\Jobs\\SendWelcomeEmail', 'exception_class' => 'Swift_TransportException', 'exception_message' => 'SMTP server refused connection', 'short_uuid' => 'b7e221', 'connection' => 'redis', 'queue' => 'mail', 'failed_at' => $now->copy()->subMinutes(20)->toIso8601String(), 'attempts' => 2, 'max_tries' => 3],
-            ['id' => 3, 'display_name' => 'App\\Jobs\\ProcessImport', 'exception_class' => 'InvalidArgumentException', 'exception_message' => 'Malformed CSV row 482', 'short_uuid' => 'c1d809', 'connection' => 'redis', 'queue' => 'mail', 'failed_at' => $now->copy()->subHour()->toIso8601String(), 'attempts' => 1, 'max_tries' => 1],
+            ['id' => 3, 'display_name' => 'App\\Jobs\\ProcessImport', 'exception_class' => 'InvalidArgumentException', 'exception_message' => 'Malformed CSV row 482', 'short_uuid' => 'c1d809', 'connection' => 'redis', 'queue' => 'mail', 'failed_at' => $now->copy()->subHour()->toIso8601String(), 'attempts' => 1, 'max_tries' => 1, 'chain' => $chainProcessImport],
             ['id' => null, 'display_name' => 'App\\Jobs\\LegacyOrphan', 'exception_class' => null, 'exception_message' => null, 'short_uuid' => null, 'connection' => 'redis', 'queue' => 'default', 'failed_at' => $now->copy()->subHours(3)->toIso8601String(), 'attempts' => null, 'max_tries' => null],
         ];
 
@@ -288,6 +554,17 @@ final class PreviewDashboard extends Component
         sort($queueNames);
         sort($classNames);
 
+        // Decode the chain field from each raw stream-entry row so the chip
+        // partial sees `chain` as an array (matching what `RowEnricher::completed`
+        // produces in production). The modal still receives the raw row via
+        // `resolvePreviewSelectedPayload` so its blade decodes the JSON itself.
+        $enrichedCompletedRows = array_map(static function (array $row): array {
+            $chainEncoded = is_string($row['chain'] ?? null) ? $row['chain'] : '';
+            $row['chain'] = RowEnricher::decodeChain($chainEncoded);
+
+            return $row;
+        }, $completedRows);
+
         return [
             'queues' => $queues,
             'classes' => $classes,
@@ -295,7 +572,7 @@ final class PreviewDashboard extends Component
             'filterQueueOptions' => $queueNames,
             'filterClassOptions' => $classNames,
             'captureMode' => 'eager',
-            'completedRows' => $completedRows,
+            'completedRows' => $enrichedCompletedRows,
             'failedRows' => $failedRows,
             'selectedClass' => $this->selectedClass,
             'selectedPayload' => $this->resolvePreviewSelectedPayload($completedRows),
@@ -327,6 +604,24 @@ final class PreviewDashboard extends Component
                 || $this->filterClass !== ''
                 || $this->filterFrom !== ''
                 || $this->filterTo !== '') ? count($failedRows) : null,
+            'batches' => $this->seedBatches($now),
+            'batchesEnabled' => true,
+            'expandedBatchId' => $this->expandedBatchId,
+            'selectedBatch' => $this->resolvePreviewSelectedBatch($this->seedBatches($now)),
+            'hasOpenModal' => $this->selectedPayloadId !== null
+                || $this->selectedFailedId !== null
+                || $this->selectedPendingUuid !== null
+                || $this->expandedBatchId !== '',
+            // Pending-jobs section uses the same empty-state seeding strategy
+            // — the real component fans this out across configured queues.
+            'pendingRows' => $this->seedPendingRows($now),
+            'selectedPendingUuid' => $this->selectedPendingUuid,
+            'selectedPending' => $this->resolvePreviewSelectedPending(
+                array_merge($this->seedInFlightRows($now), $this->seedPendingRows($now), $this->seedDelayedRows($now)),
+            ),
+            'delayedRows' => $this->seedDelayedRows($now),
+            'inFlightRows' => $this->seedInFlightRows($now),
+            'pendingEnabled' => true,
         ];
     }
 }

@@ -10,20 +10,26 @@ final class LuaScripts
 {
     private static ?string $updateMaxDuration = null;
 
+    private static ?string $markInFlight = null;
+
     public static function updateMaxDuration(): string
     {
-        if (self::$updateMaxDuration !== null) {
-            return self::$updateMaxDuration;
-        }
+        return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
+    }
 
-        $path = __DIR__ . '/Lua/UpdateMaxDuration.lua';
+    public static function markInFlight(): string
+    {
+        return self::$markInFlight ??= self::load(__DIR__ . '/Lua/MarkInFlight.lua');
+    }
 
+    private static function load(string $path): string
+    {
         $content = @file_get_contents($path);
 
         if ($content === false) {
             throw new RuntimeException("Unable to load Lua script at [{$path}].");
         }
 
-        return self::$updateMaxDuration = $content;
+        return $content;
     }
 }

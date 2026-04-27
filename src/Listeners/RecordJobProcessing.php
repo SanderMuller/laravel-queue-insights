@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use Throwable;
 
 final class RecordJobProcessing
@@ -29,16 +31,15 @@ final class RecordJobProcessing
             $connection = (string) $event->connectionName;
             $queue = (string) ($event->job->getQueue() ?? 'default');
 
-            // Pending-tracking cleanup runs first so it isn't accidentally skipped
-            // by an early return below in the wait-time path (missing pushed key,
-            // clock-skew rejection). If the worker successfully picked up a job,
-            // it's no longer pending — that's true regardless of whether wait-time
-            // capture had the data it needed.
-            $this->clearPendingTracking($redis, $uuid, $connection, $queue);
-
             // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
             // `SET key val EX ttl` has divergent arg shapes across drivers.
             $now = microtime(true);
+
+            // Pending → in-flight transition runs before the wait-time path so
+            // it isn't accidentally skipped by an early return below (missing
+            // pushed key, clock-skew rejection). If the worker successfully
+            // picked up a job, it's in-flight regardless.
+            $this->markInFlight($redis, $uuid, $connection, $queue, (int) $now);
             $redis->command('setex', [
                 KeyPrefix::make("start:{$uuid}"),
                 3600,
@@ -97,11 +98,26 @@ final class RecordJobProcessing
     }
 
     /**
-     * Drop the pending-tracking entries for a uuid that just transitioned from
-     * pending → in-flight. Idempotent on already-cleared keys (DEL + ZREM both
-     * return 0 instead of erroring).
+     * Move a uuid from pending → in-flight: stamp `state` + `started_at` on
+     * the existing `pending:{uuid}` hash, drop it from `pending-zset`, and
+     * add it to `inflight-zset` (score = start time so the dashboard can
+     * order by "started Xs ago" and surface stuck jobs).
+     *
+     * The full transition is wrapped in a Lua script so all five mutations
+     * (hash stamp, hash EXPIRE, pending ZREM, inflight ZADD, inflight EXPIRE)
+     * land atomically. A non-atomic version could leave a running job
+     * visible in neither group if a connection drop hit between ZREM and
+     * ZADD — the dashboard would silently lose a live job. Lua executes
+     * server-side, so the worst case is the script fails entirely (caller
+     * catches and logs) and the row stays in pending until the next attempt
+     * or TTL.
+     *
+     * Reusing the same hash keeps the per-uuid metadata (class, connection,
+     * queue, queued_at, batch_id) addressable for the in-flight modal
+     * without a second write path. Cleanup on Processed/Failed deletes the
+     * hash + both zset entries.
      */
-    private function clearPendingTracking(RedisConnection $redis, string $uuid, string $connection, string $queue): void
+    private function markInFlight(RedisConnection $redis, string $uuid, string $connection, string $queue, int $startedAt): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
@@ -112,7 +128,16 @@ final class RecordJobProcessing
         // saw a queue URL (SQS) and the worker reports the plain name.
         $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
 
-        $redis->command('del', [KeyPrefix::make("pending:{$uuid}")]);
-        $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connection}:{$queueKey}"), $uuid]);
+        RedisEval::exec(
+            $redis,
+            LuaScripts::markInFlight(),
+            3,
+            KeyPrefix::make("pending:{$uuid}"),
+            KeyPrefix::make("pending-zset:{$connection}:{$queueKey}"),
+            KeyPrefix::make("inflight-zset:{$connection}:{$queueKey}"),
+            $uuid,
+            (string) $startedAt,
+            (string) Config::int('pending.ttl_seconds', 86400),
+        );
     }
 }

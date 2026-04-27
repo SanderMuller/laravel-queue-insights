@@ -5,7 +5,7 @@
         would be inerted. See Resolved Q #13 + #16. --}}
     <div id="qi-dashboard-content"
          class="flex flex-col gap-8"
-         x-data x-bind:inert="$wire.selectedPayloadId !== null || $wire.selectedFailedId !== null">
+         x-data x-bind:inert="@js($hasOpenModal)">
 
         <x-queue-insights::flash-banner/>
 
@@ -43,6 +43,43 @@
             </dl>
         </div>
 
+        @if($batchesEnabled)
+            @php
+                $activeBatchCount = count(array_filter($batches, fn ($b) => ! ($b['finished_at'] instanceof \Carbon\CarbonInterface) && ! ($b['cancelled_at'] instanceof \Carbon\CarbonInterface)));
+            @endphp
+            <section id="qi-batches-section" aria-label="Batches">
+                <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <div class="flex items-center gap-2">
+                        <svg class="size-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path d="M3.5 3.75A1.75 1.75 0 0 1 5.25 2h9.5A1.75 1.75 0 0 1 16.5 3.75v3.5A1.75 1.75 0 0 1 14.75 9h-9.5A1.75 1.75 0 0 1 3.5 7.25v-3.5ZM3.5 12.75A1.75 1.75 0 0 1 5.25 11h9.5a1.75 1.75 0 0 1 1.75 1.75v3.5A1.75 1.75 0 0 1 14.75 18h-9.5A1.75 1.75 0 0 1 3.5 16.25v-3.5Z"/>
+                        </svg>
+                        <h2 class="text-lg font-semibold tracking-tight text-gray-900">Batches</h2>
+                    </div>
+                    <p class="text-sm text-gray-500 tabular-nums">{{ $activeBatchCount }} active · {{ count($batches) }} tracked</p>
+                </div>
+
+                @if(count($batches) === 0)
+                    <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
+                        No active batches.
+                    </div>
+                @else
+                    <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
+                        <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+                            <div class="col-span-5">Batch</div>
+                            <div class="col-span-3">Progress</div>
+                            <div class="col-span-2 text-center">Counts</div>
+                            <div class="col-span-2 text-right">Status</div>
+                        </div>
+                        <ul role="list" class="divide-y divide-gray-950/5">
+                            @foreach($batches as $batch)
+                                @include('queue-insights::partials.batch-row', ['batch' => $batch])
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+            </section>
+        @endif
+
         <section>
             <div class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <div class="flex items-center gap-2">
@@ -66,7 +103,14 @@
                         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" clip-rule="evenodd"/>
                         </svg>
-                        Needs attention <span class="font-normal text-red-500">({{ count($atRisk) }})</span>
+                        <x-queue-insights::hint triggerClass="inline-flex items-center gap-1 cursor-help underline decoration-dotted decoration-red-300 underline-offset-2">
+                            <span>Needs attention</span>
+                            <span class="font-normal text-red-500">({{ count($atRisk) }})</span>
+                            <x-slot:tip>
+                                Queues whose last snapshot is older than 120s, missing entirely, or whose snapshot command errored.
+                                The scheduled <code class="rounded bg-white/10 px-1 font-mono">queue-insights:snapshot</code> task (every minute) writes these &mdash; confirm Laravel's scheduler is running and the Redis connection is reachable.
+                            </x-slot:tip>
+                        </x-queue-insights::hint>
                     </h3>
                     <div class="mb-5 rounded-lg bg-white ring-1 ring-red-600/20">
                         <div class="grid grid-cols-12 items-center gap-4 border-b border-red-200/60 px-4 py-2 text-xs font-medium text-red-700/80">
@@ -110,6 +154,99 @@
                 @endif
             @endif
         </section>
+
+        {{-- Pending jobs across all configured queues. Drawn from the
+            `pending-zset:{conn}:{queue}` Redis tracking written by
+            RecordJobQueued — driver-agnostic, oldest-first. Hidden when
+            pending tracking is disabled (no zset writes = nothing to show). --}}
+        @if($pendingEnabled)
+        <section aria-label="Pending jobs">
+            <div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div class="flex items-center gap-2">
+                    <svg class="size-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-13a.75.75 0 0 0-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 1 0 1.06-1.06l-2.78-2.78V5Z" clip-rule="evenodd"/>
+                    </svg>
+                    <h2 class="text-lg font-semibold tracking-tight text-gray-900">Pending</h2>
+                </div>
+                <p class="text-sm text-gray-500 tabular-nums">{{ count($inFlightRows) }} in-flight · {{ count($pendingRows) }} pending · {{ count($delayedRows) }} delayed</p>
+                <x-queue-insights::hint placement="bottom" triggerClass="cursor-help text-xs text-gray-400 underline decoration-dotted decoration-gray-300 underline-offset-2">
+                    what is this?
+                    <x-slot:tip>
+                        Jobs the package is currently tracking. <strong>In-flight</strong> = a worker has picked it up and is processing (longest-running first). <strong>Pending now</strong> = waiting in line, runnable now (oldest first). <strong>Delayed</strong> = scheduled for a future <code class="rounded bg-white/10 px-1 font-mono">available_at</code> (soonest first). Each group is capped at 50, aggregated across every connection / queue listed in <code class="rounded bg-white/10 px-1 font-mono">queue-insights.snapshots</code>.
+                    </x-slot:tip>
+                </x-queue-insights::hint>
+            </div>
+
+            @if(count($inFlightRows) === 0 && count($pendingRows) === 0 && count($delayedRows) === 0)
+                <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
+                    No pending jobs tracked.
+                </div>
+            @else
+                @if(count($inFlightRows) > 0)
+                    <h3 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-wide text-amber-700">
+                        <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm6.39-2.908a.75.75 0 0 1 .766.027l3.5 2.25a.75.75 0 0 1 0 1.262l-3.5 2.25A.75.75 0 0 1 8 12.25v-4.5a.75.75 0 0 1 .39-.658Z" clip-rule="evenodd"/>
+                        </svg>
+                        In-flight <span class="font-normal text-amber-500">({{ count($inFlightRows) }})</span>
+                    </h3>
+                    <div class="mb-5 rounded-lg bg-white ring-1 ring-amber-600/15">
+                        <div class="grid grid-cols-12 items-center gap-4 border-b border-amber-200/60 px-4 py-2 text-xs font-medium text-amber-700/80">
+                            <div class="col-span-5">Job</div>
+                            <div class="col-span-3">Queue</div>
+                            <div class="col-span-2 text-right">Queued</div>
+                            <div class="col-span-2 text-right">Started</div>
+                        </div>
+                        <ul role="list" class="divide-y divide-amber-200/60">
+                            @foreach($inFlightRows as $row)
+                                @include('queue-insights::partials.pending-row', ['row' => $row, 'isInFlight' => true, 'isDelayed' => false])
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
+                @if(count($pendingRows) > 0)
+                    <h3 class="mb-2 text-xs font-semibold tracking-wide text-gray-500">
+                        Pending now <span class="font-normal text-gray-400">({{ count($pendingRows) }})</span>
+                    </h3>
+                    <div class="mb-5 rounded-lg bg-white ring-1 ring-gray-950/5">
+                        <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+                            <div class="col-span-5">Job</div>
+                            <div class="col-span-3">Queue</div>
+                            <div class="col-span-2 text-right">Queued</div>
+                            <div class="col-span-2 text-right">Available</div>
+                        </div>
+                        <ul role="list" class="divide-y divide-gray-950/5">
+                            @foreach($pendingRows as $row)
+                                @include('queue-insights::partials.pending-row', ['row' => $row, 'isDelayed' => false])
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
+                @if(count($delayedRows) > 0)
+                    <h3 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-wide text-indigo-700">
+                        <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-13a.75.75 0 0 0-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 1 0 1.06-1.06l-2.78-2.78V5Z" clip-rule="evenodd"/>
+                        </svg>
+                        Delayed <span class="font-normal text-indigo-500">({{ count($delayedRows) }})</span>
+                    </h3>
+                    <div class="rounded-lg bg-white ring-1 ring-indigo-600/15">
+                        <div class="grid grid-cols-12 items-center gap-4 border-b border-indigo-200/60 px-4 py-2 text-xs font-medium text-indigo-700/80">
+                            <div class="col-span-5">Job</div>
+                            <div class="col-span-3">Queue</div>
+                            <div class="col-span-2 text-right">Queued</div>
+                            <div class="col-span-2 text-right">Runs</div>
+                        </div>
+                        <ul role="list" class="divide-y divide-indigo-200/60">
+                            @foreach($delayedRows as $row)
+                                @include('queue-insights::partials.pending-row', ['row' => $row, 'isDelayed' => true])
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+            @endif
+        </section>
+        @endif
 
         {{-- Recent completed --}}
         <section>
@@ -258,17 +395,44 @@
 
     </div>{{-- /#qi-dashboard-content --}}
 
+    {{-- Modal stacking order: batch modal renders FIRST so item modals
+        (details / failed / pending), declared after, sit visually on top
+        when both are open. Opening an item from the batch modal preserves
+        `expandedBatchId` (see QueueInsightsDashboard::openPayload et al.)
+        so closing the item modal restores the batch view underneath —
+        same back-and-forth pattern the chain detail uses inside a single
+        modal, generalised across modals. --}}
+
+    {{-- Batch detail modal — opens when the user clicks a batch row in the
+        Batches section, or via openBatch() from an item modal's batch
+        chip. Mounted by `expandedBatchId !== ''` (empty string = closed). --}}
+    @if($batchesEnabled && $expandedBatchId !== '')
+        <x-queue-insights::batch-modal :batch="$selectedBatch"/>
+    @endif
+
     {{-- Details modal (completed jobs) --}}
     @if($selectedPayload !== null)
         <x-queue-insights::details-modal
             :payload="$selectedPayload"
             :payload-tab="$payloadTab"
-            :capture-mode="$captureMode"/>
+            :capture-mode="$captureMode"
+            :expanded-batch-id="$expandedBatchId"/>
     @endif
 
     {{-- Failed-job detail modal --}}
     @if($selectedFailed !== null)
-        <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry"/>
+        <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry" :expanded-batch-id="$expandedBatchId"/>
+    @endif
+
+    {{-- Pending-job modal — opens whenever the user clicks a row in the
+        Pending or Delayed sub-group. Re-fetches the row each poll so a
+        worker grabbing the job mid-modal flips the modal into its
+        "no longer pending" empty state. Mounted by `selectedPendingUuid`,
+        not by `$selectedPending` — that way clicking → opening → race
+        still mounts the modal so the user sees the empty-state, instead
+        of a confusing silent no-op. --}}
+    @if($pendingEnabled && $selectedPendingUuid !== null)
+        <x-queue-insights::pending-modal :pending="$selectedPending" :expanded-batch-id="$expandedBatchId"/>
     @endif
 </div>
 

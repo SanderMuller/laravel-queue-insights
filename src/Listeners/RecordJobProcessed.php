@@ -16,6 +16,7 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
+use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
 
 final readonly class RecordJobProcessed
@@ -70,7 +71,24 @@ final readonly class RecordJobProcessed
             $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
 
             // Streams
-            $this->writeStreams($redis, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow);
+            $globalStreamId = $this->writeStreams($redis, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow);
+
+            // Batch tracking — index uuid → completed-stream entry id so the
+            // batch-detail view can resolve a uuid to the existing completed
+            // modal flow (which opens by stream id).
+            $uuidForBatch = $event->job->uuid();
+            if (
+                $globalStreamId !== null
+                && $uuidForBatch !== null
+                && $uuidForBatch !== ''
+                && Config::bool('batches.enabled', true)
+            ) {
+                $redis->command('setex', [
+                    KeyPrefix::make("uuid-completed:{$uuidForBatch}"),
+                    Config::int('batches.ttl_seconds', 604800),
+                    $globalStreamId,
+                ]);
+            }
 
             // Belt-and-suspenders pending-tracking cleanup. RecordJobProcessing
             // already cleared on the pending → in-flight transition; this is
@@ -80,6 +98,10 @@ final readonly class RecordJobProcessed
             if ($uuidForCleanup !== null && $uuidForCleanup !== '' && Config::bool('pending.enabled', true)) {
                 $redis->command('del', [KeyPrefix::make("pending:{$uuidForCleanup}")]);
                 $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuidForCleanup]);
+                // In-flight zset entry was added by RecordJobProcessing; drop
+                // it now so the dashboard's In-flight group only ever shows
+                // jobs that are actually running.
+                $redis->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuidForCleanup]);
             }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobProcessed failed', [
@@ -128,7 +150,7 @@ final readonly class RecordJobProcessed
         string $queueKey,
         ?int $durationMs,
         string $isoNow,
-    ): void {
+    ): ?string {
         $baseFields = [
             'class' => $class,
             'connection' => $connectionName,
@@ -136,7 +158,19 @@ final readonly class RecordJobProcessed
             'duration_ms' => (string) ($durationMs ?? ''),
             'attempts' => (string) $event->job->attempts(),
             'processed_at' => $isoNow,
+            // uuid lets enrichCompletedRows reverse-route a row to its batch
+            // via `qi:batch:uuid:{uuid}` without needing payload capture on.
+            'uuid' => (string) ($event->job->uuid() ?? ''),
         ];
+
+        // Forward chain context — JSON-encoded list of every chained job's
+        // class + per-link connection/queue, so the modal can offer a click-
+        // through detail view without needing payload capture on. Typical
+        // size: ~80-300 bytes for a 1-5 link chain.
+        $chainJson = $this->encodedChain($event);
+        if ($chainJson !== null) {
+            $baseFields['chain'] = $chainJson;
+        }
 
         if (Config::string('capture.payloads', 'off') !== 'off') {
             foreach ($this->sanitizer->sanitize($event) as $key => $value) {
@@ -150,12 +184,46 @@ final readonly class RecordJobProcessed
         $globalKey = KeyPrefix::make('completed');
         $perClassKey = KeyPrefix::make("completed:{$class}");
 
-        $this->xaddApprox($redis, $globalKey, $globalMax, $baseFields);
+        $globalStreamId = $this->xaddApprox($redis, $globalKey, $globalMax, $baseFields);
 
         $perClassFields = $baseFields;
         unset($perClassFields['class']);
 
         $this->xaddApprox($redis, $perClassKey, $perClassMax, $perClassFields);
+
+        return $globalStreamId;
+    }
+
+    private function encodedChain(JobProcessed $event): ?string
+    {
+        $payload = $event->job->payload();
+        $data = $payload['data'] ?? null;
+        $command = is_array($data) ? ($data['command'] ?? null) : null;
+        if (! is_string($command) || $command === '') {
+            return null;
+        }
+
+        $chain = SerializedCommandReader::extractChainContext($command);
+        if ($chain === null) {
+            return null;
+        }
+
+        // Persist class/connection/queue only — `properties` per chained job
+        // would bloat the stream entry (typical user-data blob is far larger
+        // than the routing summary), can carry __PHP_Incomplete_Class refs
+        // that don't round-trip cleanly through JSON, and may include PII
+        // that the captured-stream retention window outlives. The failed-job
+        // modal re-extracts properties at render time from the full
+        // serialized payload — that path keeps them.
+        $slim = array_map(static fn (array $job): array => [
+            'class' => $job['class'],
+            'connection' => $job['connection'],
+            'queue' => $job['queue'],
+        ], $chain['jobs']);
+
+        $encoded = json_encode($slim, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return $encoded === false ? null : $encoded;
     }
 
     private function encodeStreamValue(mixed $value): string
@@ -176,11 +244,11 @@ final readonly class RecordJobProcessed
     /**
      * @param  array<string, string>  $fields
      */
-    private function xaddApprox(RedisConnection $redis, string $key, int $maxLen, array $fields): void
+    private function xaddApprox(RedisConnection $redis, string $key, int $maxLen, array $fields): ?string
     {
         // phpredis and Predis expose different XADD signatures. Route through eval() so a
         // single code path works on both drivers without a PhpRedisConnection::xAdd fork.
-        RedisEval::exec(
+        $result = RedisEval::exec(
             $redis,
             "return redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1], '*', unpack(ARGV, 2))",
             1,
@@ -188,6 +256,8 @@ final readonly class RecordJobProcessed
             (string) $maxLen,
             ...$this->flattenFields($fields),
         );
+
+        return is_string($result) && $result !== '' ? $result : null;
     }
 
     /**

@@ -122,9 +122,20 @@ it('Esc keydown handler is wired to closeFailed on the failed modal', function (
         ->assertSeeHtml('$wire.closeFailed()');
 });
 
-it('inert wrapper triggers on either selectedPayloadId or selectedFailedId', function (): void {
+it('inert wrapper is driven by a server-computed hasOpenModal flag', function (): void {
+    // Codex regression: the previous predicate routed off raw selection ids,
+    // which could freeze the dashboard when an id was set but no modal was
+    // actually mounted. Now driven by `$hasOpenModal` — the server computes
+    // it from the same booleans that gate modal mounts.
     Livewire::test(QueueInsightsDashboard::class)
-        ->assertSeeHtml('$wire.selectedPayloadId !== null || $wire.selectedFailedId !== null');
+        // No modal open by default → inert is literal `false`.
+        ->assertSeeHtml('x-bind:inert="false"');
+
+    $id = seedFailedJob();
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        // Failed modal is mounted → inert flips to `true`.
+        ->assertSeeHtml('x-bind:inert="true"');
 });
 
 it('stack trace component splits app vs vendor frames and offers a vendor toggle', function (): void {
@@ -195,6 +206,75 @@ it('omits the stack-trace copy button + source when no exception is recorded', f
         ->toContain('id="qi-failed-markdown"')
         ->not->toContain('id="qi-failed-stack"')
         ->not->toContain('data-qi-copy-target="qi-failed-stack"');
+});
+
+it('failed modal renders Chain section when payload.data.command carries a non-empty chained array', function (): void {
+    $nextClass = 'App\\Jobs\\NextJob';
+    $afterClass = 'App\\Jobs\\AnotherJob';
+    $outerClass = 'App\\Jobs\\Fake';
+    $nextJob = 'O:' . strlen($nextClass) . ':"' . $nextClass . '":0:{}';
+    $afterJob = 'O:' . strlen($afterClass) . ':"' . $afterClass . '":0:{}';
+    $command = 'O:' . strlen($outerClass) . ':"' . $outerClass . '":3:{'
+        . "s:10:\"\x00*\x00chained\";a:2:{i:0;s:" . strlen($nextJob) . ':"' . $nextJob . '";i:1;s:' . strlen($afterJob) . ':"' . $afterJob . '";}'
+        . "s:18:\"\x00*\x00chainConnection\";s:5:\"redis\";"
+        . "s:13:\"\x00*\x00chainQueue\";s:7:\"default\";"
+        . '}';
+
+    $id = seedFailedJob([
+        'payload' => json_encode([
+            'displayName' => $outerClass,
+            'maxTries' => 1,
+            'attempts' => 1,
+            'data' => ['commandName' => $outerClass, 'command' => $command],
+        ]),
+    ]);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        ->assertSee('Chain')
+        ->assertSee('App\\Jobs\\NextJob')
+        ->assertSee('+1 more chained');
+});
+
+it('failed modal chain entries are clickable buttons that drill into chain-detail', function (): void {
+    // Same payload shape as the previous test, just asserting the new
+    // drill-down affordance.
+    $nextClass = 'App\\Jobs\\NextChainJob';
+    $afterClass = 'App\\Jobs\\AnotherChainJob';
+    $outerClass = 'App\\Jobs\\FakeOuter';
+    $nextJob = 'O:' . strlen($nextClass) . ':"' . $nextClass . '":0:{}';
+    $afterJob = 'O:' . strlen($afterClass) . ':"' . $afterClass . '":0:{}';
+    $command = 'O:' . strlen($outerClass) . ':"' . $outerClass . '":3:{'
+        . "s:10:\"\x00*\x00chained\";a:2:{i:0;s:" . strlen($nextJob) . ':"' . $nextJob . '";i:1;s:' . strlen($afterJob) . ':"' . $afterJob . '";}'
+        . "s:18:\"\x00*\x00chainConnection\";s:5:\"redis\";"
+        . "s:13:\"\x00*\x00chainQueue\";s:7:\"default\";"
+        . '}';
+
+    $id = seedFailedJob([
+        'payload' => json_encode([
+            'displayName' => $outerClass,
+            'maxTries' => 1,
+            'attempts' => 1,
+            'data' => ['commandName' => $outerClass, 'command' => $command],
+        ]),
+    ]);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        ->assertSeeHtml("chainIndex = 0; view = 'chain-detail'")
+        ->assertSeeHtml("chainIndex = 1; view = 'chain-detail'")
+        ->assertSeeHtml('aria-label="View details for chained job 1"')
+        // Drill-down detail blocks render server-side for both indices.
+        ->assertSee('Chained job 1 of 2')
+        ->assertSee('Chained job 2 of 2');
+});
+
+it('failed modal omits Chain section when no chained array is present', function (): void {
+    $id = seedFailedJob();
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        ->assertDontSeeHtml('data-section="chain"');
 });
 
 it('Markdown export survives exception text that contains literal triple backticks', function (): void {

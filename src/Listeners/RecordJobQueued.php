@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use Throwable;
 
 /**
@@ -56,6 +57,7 @@ final class RecordJobQueued
             ]);
 
             $this->writePendingTracking($redis, $event, $uuid, $payload);
+            $this->writeBatchTracking($redis, $uuid, $payload);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
                 'exception' => $throwable::class,
@@ -106,18 +108,27 @@ final class RecordJobQueued
 
         $ttl = Config::int('pending.ttl_seconds', 86400);
 
-        // Five HSET round-trips (one per field) over a single multi-field call so
+        // Six HSET round-trips (one per field) over a single multi-field call so
         // the listener stays portable across phpredis variants — Predis 2.x's
         // hset() helper is 3-arg, and `command('hset', [key, ...flat])` shape
-        // diverges between phpredis 4 and 5. The cost is ~5 commands instead of 1;
+        // diverges between phpredis 4 and 5. The cost is ~6 commands instead of 1;
         // listener fires per-job-queue at producer-side rate, so the absolute
         // throughput hit is negligible vs the maintainability win.
+        $data = is_array($payload) && isset($payload['data']) && is_array($payload['data']) ? $payload['data'] : null;
+        $batchId = is_array($data) && isset($data['batchId']) && is_string($data['batchId']) && $data['batchId'] !== ''
+            ? $data['batchId']
+            : '';
+
         foreach ([
             'connection' => $connection,
             'queue' => $queueKey,
             'class' => $displayName,
             'queued_at' => (string) $queuedAt,
             'available_at' => (string) $availableAt,
+            // Empty string when the job isn't part of a batch — keeps the field
+            // shape stable so `PendingJobsReader::readHash` can read it
+            // unconditionally without an HEXISTS round-trip.
+            'batch_id' => $batchId,
         ] as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
         }
@@ -148,5 +159,77 @@ final class RecordJobQueued
         $delay = $event->delay;
 
         return is_int($delay) ? $queuedAt + $delay : $queuedAt;
+    }
+
+    /**
+     * Stamp batch-tracking keys when the queued payload carries a `batchId`
+     * field (set by Laravel's `Bus::batch([...])` flow on every Batchable
+     * job). The batchId is plaintext at `data.batchId` — readable even on
+     * `ShouldBeEncrypted` jobs whose `data.command` is encrypted.
+     *
+     * Three keys per batch:
+     *   - `qi:batches:index`       sorted set of batchIds, score = first-seen ts
+     *   - `qi:batch:{id}:uuids`    list of uuids in the batch (RPUSH order)
+     *   - `qi:batch:uuid:{uuid}`   reverse lookup uuid → batchId (per-row chip)
+     *
+     * @param  array<array-key, mixed>|null  $payload  Decoded JobQueued payload.
+     */
+    private function writeBatchTracking(RedisConnection $redis, string $uuid, ?array $payload): void
+    {
+        if (! Config::bool('batches.enabled', true)) {
+            return;
+        }
+
+        $data = is_array($payload) && isset($payload['data']) && is_array($payload['data'])
+            ? $payload['data']
+            : null;
+
+        $batchId = is_array($data) && isset($data['batchId']) && is_string($data['batchId']) && $data['batchId'] !== ''
+            ? $data['batchId']
+            : null;
+
+        if ($batchId === null) {
+            return;
+        }
+
+        $now = Date::now()
+            ->getTimestamp();
+        $ttl = Config::int('batches.ttl_seconds', 604800);
+        $cap = Config::int('batches.max_uuids_per_batch', 5000);
+
+        $indexKey = KeyPrefix::make('batches:index');
+        // ZADD NX preserves the first-write-wins score so the head's
+        // created-at timestamp survives concurrent JobQueued events.
+        // Routed via eval() to dodge phpredis-vs-Predis option-shape divergence
+        // — same pattern as RecordJobProcessed::xaddApprox.
+        RedisEval::exec(
+            $redis,
+            "return redis.call('ZADD', KEYS[1], 'NX', ARGV[1], ARGV[2])",
+            1,
+            $indexKey,
+            (string) $now,
+            $batchId,
+        );
+        // EXPIRE on the index would reset whole-key TTL on every ZADD, so
+        // old batchIds would never age out. Score-based pruning is cheap
+        // (logarithmic) and self-bounding on each enqueue.
+        $redis->command('zremrangebyscore', [$indexKey, '-inf', (string) ($now - $ttl)]);
+
+        $uuidsKey = KeyPrefix::make("batch:{$batchId}:uuids");
+        $count = $redis->command('llen', [$uuidsKey]);
+        if (! is_int($count) || $count < $cap) {
+            // Best-effort cap: under heavy concurrent dispatch a few writers
+            // can race past the limit before any sees it. ±10 over-cap is
+            // acceptable; Bus::findBatch()->totalJobs is the authoritative
+            // count.
+            $redis->command('rpush', [$uuidsKey, $uuid]);
+            $redis->command('expire', [$uuidsKey, $ttl]);
+        }
+
+        $redis->command('setex', [
+            KeyPrefix::make("batch:uuid:{$uuid}"),
+            $ttl,
+            $batchId,
+        ]);
     }
 }

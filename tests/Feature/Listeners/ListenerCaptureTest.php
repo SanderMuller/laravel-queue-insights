@@ -176,6 +176,54 @@ it('treats a non-numeric start:{uuid} value as a missing sample (no duration wri
     expect(R::int('get', 'qmtest:processed:App\\Jobs\\Fake:' . $bucket))->toBe(1);
 });
 
+it('persists chain JSON on the completed-stream entry when the job has a non-empty chain', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    $nextClass = 'App\\Jobs\\NextJob';
+    $afterClass = 'App\\Jobs\\AnotherJob';
+    $outerClass = 'App\\Jobs\\Fake';
+
+    $nextJob = 'O:' . strlen($nextClass) . ':"' . $nextClass . '":0:{}';
+    $afterJob = 'O:' . strlen($afterClass) . ':"' . $afterClass . '":0:{}';
+
+    $command = 'O:' . strlen($outerClass) . ':"' . $outerClass . '":3:{'
+        . "s:10:\"\x00*\x00chained\";a:2:{i:0;s:" . strlen($nextJob) . ':"' . $nextJob . '";i:1;s:' . strlen($afterJob) . ':"' . $afterJob . '";}'
+        . "s:18:\"\x00*\x00chainConnection\";s:5:\"redis\";"
+        . "s:13:\"\x00*\x00chainQueue\";s:7:\"default\";"
+        . '}';
+
+    /** @var Job&MockInterface $job */
+    $job = Mockery::mock(Job::class);
+    $job->shouldReceive('uuid')->andReturn('chain-uuid');
+    $job->shouldReceive('getQueue')->andReturn('default');
+    $job->shouldReceive('resolveName')->andReturn($outerClass);
+    $job->shouldReceive('payload')->andReturn(['data' => ['commandName' => $outerClass, 'command' => $command]]);
+    $job->shouldReceive('attempts')->andReturn(1);
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed('redis', $job));
+
+    $entries = R::raw('xrange', 'qmtest:completed', '-', '+');
+    $fields = firstStreamEntryFields($entries);
+
+    expect($fields)->toHaveKey('chain');
+    $decoded = json_decode((string) $fields['chain'], true);
+    expect($decoded)->toBe([
+        ['class' => 'App\\Jobs\\NextJob', 'connection' => 'redis', 'queue' => 'default'],
+        ['class' => 'App\\Jobs\\AnotherJob', 'connection' => 'redis', 'queue' => 'default'],
+    ]);
+});
+
+it('omits chain when the job has no chain', function (): void {
+    config()->set('queue-insights.capture.payloads', 'off');
+
+    dispatch(new TestJob());
+
+    $entries = R::raw('xrange', 'qmtest:completed', '-', '+');
+    $fields = firstStreamEntryFields($entries);
+
+    expect($fields)->not->toHaveKey('chain');
+});
+
 it('swallows redis errors without breaking the job pipeline', function (): void {
     config()->set('queue-insights.redis_connection', 'nonexistent_connection');
 

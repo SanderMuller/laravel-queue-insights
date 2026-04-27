@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\DTO\JobClassMetrics;
+use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
@@ -210,6 +211,53 @@ final class QueueInsights
     }
 
     /**
+     * Pending jobs (available_at <= now) across every configured queue,
+     * sorted by `available_at` ascending — the jobs that have been
+     * runnable longest come first. That ordering matches the pending zset
+     * score so we don't pay a per-uuid hash hydration just to re-sort,
+     * and it's what ops cares about for a "what's been waiting" view.
+     *
+     * Two-stage to keep the 10s poll cheap:
+     *   1. Per queue, ZRANGEBYSCORE WITHSCORES (limit = global limit) —
+     *      no hash reads. N round-trips, returns uuid → score tuples.
+     *   2. Globally sort, slice to $limit, then HGETALL only the
+     *      survivors. Worst-case HGETALL count is bounded by $limit (50),
+     *      independent of how many queues are backed up.
+     *
+     * Caps total at 200 so a misuse can't flood the dashboard.
+     *
+     * @return list<array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     */
+    public function allPendingJobs(int $limit = 50): array
+    {
+        return PendingJobsReader::allPending($this->configuredQueues(), $limit);
+    }
+
+    /**
+     * Delayed jobs (available_at > now) across every configured queue,
+     * sorted soonest-first. Mirror of `allPendingJobs` for the dashboard's
+     * top-level Delayed sub-section.
+     *
+     * @return list<array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     */
+    public function allDelayedJobs(int $limit = 50): array
+    {
+        return PendingJobsReader::allDelayed($this->configuredQueues(), $limit);
+    }
+
+    /**
+     * In-flight jobs (currently being processed by workers) across every
+     * configured queue, sorted longest-running first. Drives the dashboard's
+     * top-level In-flight sub-group above Pending now.
+     *
+     * @return list<array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     */
+    public function allInFlightJobs(int $limit = 50): array
+    {
+        return PendingJobsReader::allInFlight($this->configuredQueues(), $limit);
+    }
+
+    /**
      * Pending jobs (available_at <= now) for a queue, oldest-first.
      *
      * Reads the `pending-zset:{conn}:{canonical-queue}` sorted set written
@@ -217,7 +265,7 @@ final class QueueInsights
      * hash. Driver-agnostic — works for Redis, Database, AND SQS because
      * the data lives entirely in our Redis namespace.
      *
-     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int}>
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
      */
     public function pendingJobs(string $connection, string $queue, int $limit = 50): array
     {
@@ -233,7 +281,7 @@ final class QueueInsights
     /**
      * Delayed jobs (available_at > now) for a queue, soonest-first.
      *
-     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int}>
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
      */
     public function delayedJobs(string $connection, string $queue, int $limit = 50): array
     {
@@ -257,6 +305,63 @@ final class QueueInsights
     public function pendingTrackedCount(string $connection, string $queue): int
     {
         return PendingJobsReader::trackedCount($connection, $queue);
+    }
+
+    /**
+     * Single-uuid hydration — fallback for the dashboard's pending modal when
+     * the requested uuid sits outside the capped 50-row aggregate windows.
+     * Returns the same row shape as `allPendingJobs()`/`allInFlightJobs()`.
+     *
+     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}|null
+     */
+    public function findPendingByUuid(string $uuid): ?array
+    {
+        return PendingJobsReader::findByUuid($uuid);
+    }
+
+    /**
+     * Recent batches (newest first) joined to Laravel's authoritative
+     * `Bus::findBatch()` for live counts. Drives the dashboard's Batches
+     * section.
+     *
+     * @return list<array{
+     *   id: string,
+     *   name: ?string,
+     *   total_jobs: int,
+     *   pending_jobs: int,
+     *   processed_jobs: int,
+     *   failed_jobs: int,
+     *   progress: int,
+     *   created_at: ?CarbonInterface,
+     *   finished_at: ?CarbonInterface,
+     *   cancelled_at: ?CarbonInterface,
+     * }>
+     */
+    public function recentBatches(int $limit = 50): array
+    {
+        return BatchReader::recentBatches($limit);
+    }
+
+    /**
+     * Single-batch view with a uuid list, for the Batches-section expand.
+     *
+     * @return array{
+     *   id: string,
+     *   name: ?string,
+     *   total_jobs: int,
+     *   pending_jobs: int,
+     *   processed_jobs: int,
+     *   failed_jobs: int,
+     *   progress: int,
+     *   created_at: ?CarbonInterface,
+     *   finished_at: ?CarbonInterface,
+     *   cancelled_at: ?CarbonInterface,
+     *   uuids: list<string>,
+     * }|null
+     */
+    public function batchDetail(string $batchId): ?array
+    {
+        return BatchReader::batchDetail($batchId);
     }
 
     /**

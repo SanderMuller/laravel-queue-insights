@@ -106,6 +106,124 @@ final class SerializedCommandReader
     }
 
     /**
+     * Inspect a serialized command body for Laravel job-chain context.
+     *
+     * Returns a structure when `chained` is non-empty (there is at least one
+     * further job to point at). Returns `null` when the blob isn't an object,
+     * has no `chained` property, the array is empty (last link in the chain),
+     * or `data.command` isn't a plain serialized blob (e.g. encrypted base64).
+     *
+     * Each entry in `chained` is itself a serialized job body. Each one is
+     * re-`extract()`-ed safely (allowed_classes=false, no constructors run)
+     * to read the next job's class, connection, and queue — never trusting
+     * the `O:NN:"<FQCN>":` prefix alone since a malformed entry could lie.
+     *
+     * Per-job `properties` carries the chained job's own constructor-bound
+     * data, with framework-internal noise filtered out — same shape the
+     * `serialized-properties` component renders for the parent job. Empty
+     * map when the chained job has no inspectable user properties.
+     *
+     * @return array{
+     *     next_class: string,
+     *     remaining: int,
+     *     chain_connection: ?string,
+     *     chain_queue: ?string,
+     *     jobs: list<array{class: string, connection: ?string, queue: ?string, properties: array<string, mixed>}>,
+     * }|null
+     */
+    public static function extractChainContext(string $serialized): ?array
+    {
+        $extracted = self::extract($serialized);
+        if ($extracted === null) {
+            return null;
+        }
+
+        $chained = $extracted['properties']['chained'] ?? null;
+        if (! is_array($chained) || $chained === []) {
+            return null;
+        }
+
+        $outerConnection = self::nullableString($extracted['properties']['chainConnection'] ?? null);
+        $outerQueue = self::nullableString($extracted['properties']['chainQueue'] ?? null);
+
+        // Fail closed on ANY unparsable chained entry — silently skipping
+        // would misorder the chain (a malformed `chained[0]` would let
+        // `chained[1]` claim the "next" slot, even though Laravel tries
+        // chained[0] first) AND would let `count($jobs)` diverge from
+        // `count($chained)`, which the listener later round-trips lossily
+        // through Redis. One bad entry = no chain context at all, both
+        // surfaces consistent.
+        $jobs = [];
+        foreach ($chained as $entry) {
+            if (! is_string($entry) || $entry === '') {
+                return null;
+            }
+
+            $entryExtracted = self::extract($entry);
+            if ($entryExtracted === null) {
+                return null;
+            }
+
+            $entryClass = $entryExtracted['class'];
+            if (! is_string($entryClass) || $entryClass === '') {
+                return null;
+            }
+
+            // Per-link route override — Laravel's `dispatchNextJobInChain`
+            // does `$next->onConnection($next->connection ?: $this->chainConnection)`
+            // (Queueable.php:336). Prefer the link's own props, fall back to
+            // the parent's chainConnection/chainQueue defaults.
+            $entryProps = $entryExtracted['properties'];
+            $jobs[] = [
+                'class' => $entryClass,
+                'connection' => self::nullableString($entryProps['connection'] ?? null) ?? $outerConnection,
+                'queue' => self::nullableString($entryProps['queue'] ?? null) ?? $outerQueue,
+                'properties' => self::filterFrameworkProps($entryProps),
+            ];
+        }
+
+        $next = $jobs[0];
+
+        return [
+            'next_class' => $next['class'],
+            'remaining' => count($jobs),
+            'chain_connection' => $next['connection'],
+            'chain_queue' => $next['queue'],
+            'jobs' => $jobs,
+        ];
+    }
+
+    /**
+     * Strip Laravel queue/Bus framework internals from a serialized job's
+     * properties map so the chain-detail view only surfaces user data —
+     * not the routing/scheduling/middleware bookkeeping that's already
+     * rendered as dedicated chips elsewhere in the modal.
+     *
+     * Mirrors the well-known field list in `structured-payload.blade.php`,
+     * extended with chain-specific Queueable internals.
+     *
+     * @param  array<string, mixed>  $properties
+     * @return array<string, mixed>
+     */
+    private static function filterFrameworkProps(array $properties): array
+    {
+        $framework = [
+            'connection', 'queue', 'delay', 'afterCommit', 'middleware',
+            'chainConnection', 'chainQueue', 'chained', 'chainCatchCallbacks',
+            'job', 'jobId', 'attempts', 'maxTries', 'maxExceptions',
+            'timeout', 'backoff', 'retryUntil', 'failOnTimeout',
+            'batchId', 'shouldBeEncrypted', 'tags',
+        ];
+
+        return array_diff_key($properties, array_flip($framework));
+    }
+
+    private static function nullableString(mixed $value): ?string
+    {
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
      * Best-effort one-line summary for a value extracted from a serialized job.
      * Recurses one level into __PHP_Incomplete_Class instances ("ClassName {…}").
      */
