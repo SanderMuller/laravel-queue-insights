@@ -291,7 +291,12 @@ final class BatchReader
             'pending_jobs' => $batch->pendingJobs,
             'processed_jobs' => $batch->processedJobs(),
             'failed_jobs' => $batch->failedJobs,
-            'progress' => $batch->progress(),
+            // `Batch::progress()` returns float on Laravel 11/12 and int on
+            // Laravel 13 (round()'s default int_type changed). Cast so the
+            // docblock's `progress: int` holds across the matrix and downstream
+            // strict-equality consumers (Pest `toBe(67)` vs `toBe(67.0)`)
+            // don't diverge by Laravel version.
+            'progress' => (int) $batch->progress(),
             'created_at' => $batch->createdAt,
             'finished_at' => $batch->finishedAt,
             'cancelled_at' => $batch->cancelledAt,
