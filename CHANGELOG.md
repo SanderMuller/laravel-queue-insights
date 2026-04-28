@@ -2,6 +2,121 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 - 2026-04-28
+
+Minor release. Two user-visible UX changes — a tabbed dashboard with an Overview pane and server-side pagination on Completed/Failed — plus an internal cleanup sprint that decomposes the Livewire dashboard component into focused, testable support classes.
+
+No public API breaks. No config changes, no schema, no published-asset moves.
+
+### What's new
+
+#### Tabbed dashboard with an Overview pane
+
+The dashboard reorganises into six tabs — Overview (default), Queues, Pending, Batches, Completed, Failed — anchored by a sticky tab strip. The active tab persists in `window.location.hash` (`#qi-overview`, `#qi-queues`, …) so refreshes and bookmarks land where the operator left off.
+
+The new Overview pane is a 4-card mission grid:
+
+- **Queues card** — top-N queues (at-risk first, padded by deepest), backlog + in-flight totals, "needs attention" / "all healthy" status pill.
+- **Pending card** — top-N rows across in-flight / pending-now / delayed (in-flight tagged so the dot pulses), with a sub-counter row.
+- **Recent completed card** — top-5 most-recent completions with the past-hour throughput badge.
+- **Recent failed card** — top-5 most-recent failures with the past-hour failure badge.
+
+Each card row is the same clickable + keyboard-accessible affordance as the full table — opening the same modal — and a "See all N →" footer button switches to the matching tab via the URL hash.
+
+The persistent hero (sparkline + 6-KPI panel) sits above the tab strip so the throughput trend stays visible across tabs.
+
+#### Server-side pagination on Completed and Failed
+
+Completed and Failed lists paginate at 25 rows per page. Page state lives in URL-shareable Livewire props (`?cp=`/`?fp=`) so a deep-linked page survives refresh; bookmarking page 5 of a list that's since shrunk to 2 pages clamps gracefully to the last available page. Filter changes auto-reset to page 1 via a single `updated()` hook keyed off prop-name prefix.
+
+Pagination paginates over the most-recent 250-row window per tab (10 pages of 25). Older history is not paginated by design — the dashboard remains a recency view, not a historical archive.
+
+#### Compact metadata pills + unified row scaffolding
+
+The metadata pill (`Connection: redis`, `Queue: default`, `ID: <uuid>`) used to be a divergent two-half `<dl>` open-coded fifteen times across the four modal components. The styling-drift bug where the `<dd>` half rendered transparent (`bg-gray-950/[0.04]` dt + `bg-white` dd → recent UI noise) is fixed and the markup lifted into a single component:
+
+```blade
+<x-queue-insights::meta-pill label="Connection" :value="$payload['connection'] ?? null"/>
+<x-queue-insights::meta-pill label="Queue" :value="$payload['queue'] ?? null" size="sm"/>
+
+```
+A second new component, `<x-queue-insights::list-row>`, owns the four main row partials' `role="button"` + `tabindex` + keyboard handler scaffold — one place to fix click + a11y wiring instead of four.
+
+#### Modal stacking-context fix
+
+The four modal overlays (details / failed / pending / batch) gain `z-50` on the `fixed inset-0` wrapper so the modal sits above any portaled UI regardless of source order. Existing modal interaction is unchanged.
+
+#### Workbench preview — `openBatch` + paged seed data
+
+The workbench `PreviewDashboard` mirrors production's `openBatch` cross-modal navigation and pads its seed data so the preview exercises multi-page pagination state.
+
+### Internal — `Dashboard\` namespace + `DashboardData` orchestrator
+
+Six `@internal` classes consolidate logic that used to live inline inside the 964-line Livewire component:
+
+| Class | Role |
+|---|---|
+| `Dashboard\DashboardData` | Orchestrator. `build($component)` returns the full view-data array; the component's `render()` is now a one-liner. Owns `PER_PAGE` (25) and `RECENT_FETCH_LIMIT` (250). `EXPECTED_KEYS` enumerates the contract. |
+| `Dashboard\ModalResolver` | Resolves the open modal target (payload / failed / pending / batch). Pure scans for the first two; `findPendingByUuid` + `BatchReader::detailRow` fallbacks for the latter two so deep-linked selections outside the loaded window still mount. |
+| `Dashboard\HeadlineStatsBuilder` | jobs/min, past-hour totals, max wait, max runtime — one shape, derived from data already loaded. |
+| `Dashboard\FilterOptionsBuilder` | Connection/queue/class option lists for the filter dropdowns. |
+| `Dashboard\ClassRowsBuilder` | Per-class row set with 24h aggregate metrics. |
+| `Dashboard\QueueRowsBuilder` | Per-queue rows with live depth/in-flight/delayed, staleness flag, wait percentiles, pending-inspector fields. |
+
+Two more `@internal` Support classes lift cross-cutting helpers:
+
+- `Support\QueueAggregates` — `aggregate()` partition + total, `queuePreview()` + `pendingPreview()` for the Overview cards.
+- `Support\FailedJobUuidCollector` — pluck the bulk-retry uuid set; lives outside the Livewire component on purpose so the query isn't part of the client-callable action surface.
+
+`Support\WaitTimeMetrics::format(?int)` — public formatter for ms → human strings. The dashboard exposes it as a `$fmtMs` callable in view data.
+
+The Livewire component shrinks from 964 → ~510 LOC. `render()`:
+
+```php
+public function render(DashboardData $data): View
+{
+    return ViewFactory::make('queue-insights::dashboard', $data->build($this));
+}
+
+```
+### Internal — view decomposition
+
+`tabs-workspace.blade.php` (formerly 507 lines hosting six panes) splits into:
+
+```
+resources/views/partials/
+├── tabs-workspace.blade.php       (~80 LOC: tab strip + Alpine state + 6 @includes)
+├── persistent-hero.blade.php
+├── pagination-controls.blade.php
+├── card-mini-row.blade.php
+└── tabs/
+    ├── pane-overview.blade.php
+    ├── pane-queues.blade.php
+    ├── pane-pending.blade.php
+    ├── pane-batches.blade.php
+    ├── pane-completed.blade.php
+    ├── pane-failed.blade.php
+    └── tab-button.blade.php
+
+```
+`dashboard.blade.php` is now a 44-line shell: flash banner, hero, tabs-workspace, modal mounts. The 47-line `@php` derivation block at the top of `dashboard.blade.php` is gone — `$queuePreview`, `$pendingPreview`, `$totalDepth`, `$totalInFlight`, `$atRisk`, `$healthy`, `$fmtMs` are computed in the component layer.
+
+### Diagnostics noise floor
+
+- Drop unused `use Illuminate\Support\Facades\Redis` from the dashboard component.
+- Rename the unused override param `$artisan` → `$_artisan` in `tests/Support/RecordingConsoleKernel`.
+- Add the `int` type to the `PER_PAGE` typed-constant.
+
+### Public API surface (additive)
+
+- `<x-queue-insights::meta-pill>` — new publishable Blade component.
+- `<x-queue-insights::list-row>` — new publishable Blade component.
+- `Support\WaitTimeMetrics::format(?int $ms): string` — new public static formatter.
+
+All `Dashboard\*` and the new `Support\QueueAggregates` / `Support\FailedJobUuidCollector` classes are `@internal` and not part of the supported surface.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.4.1...0.5.0
+
 ## 0.4.1 - 2026-04-28
 
 ### Bug fixes
@@ -121,6 +236,7 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
 ],
 
 
+
 ```
 ### Storage cost
 
@@ -193,6 +309,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -380,6 +497,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
