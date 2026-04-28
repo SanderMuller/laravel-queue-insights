@@ -2,6 +2,50 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.1 - 2026-04-28
+
+### Bug fixes
+
+#### Failed-jobs class filter returned 0 results on MySQL
+
+`Recent failed → filter → class → pick any` came back empty even when matches existed. Root cause was a backslash-in-LIKE collision inside `applyFailedJobFilters`:
+
+- `addslashes('App\Jobs\Foo')` doubled each `\` to `\\`.
+- MySQL's default LIKE escape (`\`) then consumed the doubled backslash back to a single `\`.
+- The pattern looked for `App\Jobs\Foo` while the JSON column actually stored `App\\Jobs\\Foo` (json_encode persists `\` as `\\`). No match.
+
+Fix: derive the needle from `json_encode($filters->class)` so it produces the exact byte sequence stored in the column, plus `ESCAPE '|'` so the LIKE engine treats `|` (not `\`) as the escape char — portable across MySQL, PostgreSQL, and SQLite. `LOWER()` stays on both sides so deep-linked URLs with mismatched casing still match (without it, PostgreSQL's case-sensitive LIKE would silently miss while MySQL/SQLite matched). User-supplied `%` / `_` / `|` are escaped so a hostile FQCN can't smuggle a wildcard match.
+
+Three new regression tests cover backslash matching, mixed-case input, and wildcard escape.
+
+#### Boundary-case test flake on the prefer-stable cell
+
+The `pending vs delayed by available_at <= now boundary` test seeded `d1 = now + 1` and asserted it landed in `delayedJobs()` only. On a slow runner a second-rollover between the test capturing `$now` and `QueueInsights::pendingJobs()` re-reading `Date::now()` flipped the boundary case into the pending bucket. Pinned via `Date::setTestNow()` so both reads see the same timestamp.
+
+### What's new
+
+#### Sentry-style nested-data renderer for Other fields
+
+`illuminate:log:context` and any other non-standard top-level payload key whose value is a nested array used to render as a single opaque JSON-blob line with truncate-and-expand. The completed-job and failed-job payload Raw tab now drills container values through a recursive tree component:
+
+- Container header summarises shape (`object · 3 keys` / `array · 12 items`).
+- Click-to-expand chevron, key/value rows, scalars inline.
+- Depth-capped at 6 to bound DOM weight on pathological inputs.
+- Uses `<template x-if>` (not `x-show`) so collapsed subtrees never materialize into the DOM — browser skips layout/style cost on hidden branches.
+- XSS-safe: keys and values flow through Blade's `{{ }}` auto-escape.
+
+Reuses the same component pattern (`serialized-properties`) operators are already familiar with from the Job-instance panel, so no new mental model.
+
+#### Public API surface (additive)
+
+- `<x-queue-insights::nested-data :data="$value">` — new publishable Blade component for rendering arbitrary tree-shaped data.
+
+### Install / upgrade
+
+If you've previously published the views (`php artisan vendor:publish --tag=queue-insights-views`), re-publish to pick up the new `nested-data` component, or rebase your fork onto the new file. The class-filter fix is in `src/`, no view re-publish required for that part.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.4.0...0.4.1
+
 ## 0.4.0 - 2026-04-27
 
 Batches, in-flight, and chained-job inspector release. Closes the visibility gaps around `Bus::batch([...])`, jobs currently being processed, and `Bus::chain([...])` continuations — all driver-agnostic, all sourced from event capture so the same view works on Redis, database, and SQS. Cross-modal navigation lets operators move between a batch view, individual job modals, and the chain detail without losing context.
@@ -76,6 +120,7 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
     'ttl_seconds' => 604800,
 ],
 
+
 ```
 ### Storage cost
 
@@ -148,6 +193,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 ```
@@ -334,6 +380,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
