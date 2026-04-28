@@ -532,7 +532,16 @@ final class PreviewDashboard extends Component
     }
 
     /** @return array<string, mixed> */
-    private function seedData(): array
+    /**
+     * Public so `PreviewDashboardSmokeTest` can assert the workbench
+     * preview's view-data shape matches the production view contract
+     * (`DashboardData::EXPECTED_KEYS`). Not part of the package public
+     * API — `PreviewDashboard` lives under `workbench/` and never
+     * ships.
+     *
+     * @return array<string, mixed>
+     */
+    public function seedData(): array
     {
         $now = Carbon::now();
 

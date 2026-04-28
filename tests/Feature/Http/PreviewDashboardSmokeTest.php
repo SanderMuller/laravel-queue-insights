@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
+use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use Workbench\App\Http\Livewire\PreviewDashboard;
 
 beforeEach(function (): void {
@@ -22,4 +23,14 @@ it('PreviewDashboard renders without undefined-variable errors', function (): vo
         ->assertOk()
         ->assertSee('Queues')
         ->assertSee('Batches');
+});
+
+it('PreviewDashboard seedData covers every DashboardData::EXPECTED_KEYS contract key', function (): void {
+    // Workbench preview is hand-rolled — when a new view-data key lands
+    // in DashboardData::EXPECTED_KEYS, the preview's seedData() has to
+    // mirror it or the workbench dashboard silently degrades. Pin the
+    // contract here so drift surfaces at test time, not at preview-load.
+    $previewKeys = array_keys((new PreviewDashboard())->seedData());
+
+    expect($previewKeys)->toEqualCanonicalizing(DashboardData::EXPECTED_KEYS);
 });

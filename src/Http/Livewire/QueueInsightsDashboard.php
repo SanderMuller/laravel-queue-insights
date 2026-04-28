@@ -16,19 +16,9 @@ use Illuminate\Support\Facades\View as ViewFactory;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
-use SanderMuller\QueueInsights\Dashboard\ClassRowsBuilder;
-use SanderMuller\QueueInsights\Dashboard\FilterOptionsBuilder;
-use SanderMuller\QueueInsights\Dashboard\HeadlineStatsBuilder;
-use SanderMuller\QueueInsights\Dashboard\ModalResolver;
-use SanderMuller\QueueInsights\Dashboard\QueueRowsBuilder;
+use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\QueueInsights;
-use SanderMuller\QueueInsights\Support\BatchReader;
-use SanderMuller\QueueInsights\Support\CompletedRowFilter;
-use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
-use SanderMuller\QueueInsights\Support\QueueAggregates;
-use SanderMuller\QueueInsights\Support\RowEnricher;
-use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
 #[Layout('queue-insights::layouts.app')]
@@ -86,14 +76,12 @@ final class QueueInsightsDashboard extends Component
 
     /*
      * Pagination — completed + failed lists. URL-shareable (`cp`/`fp`) so a
-     * deep-linked page survives refresh. Per-page is fixed at 25 to keep the
-     * tab content above-fold-friendly; ramp up if the host app reports it
-     * feels too small. Page is clamped to the available range at render time
-     * so bookmarking page 5 of a list that's since shrunk to 2 pages still
-     * lands on page 2 instead of an empty view.
+     * deep-linked page survives refresh. Per-page is owned by
+     * `Dashboard\DashboardData::PER_PAGE` (fixed at 25 to keep the tab
+     * content above-fold-friendly). Page is clamped to the available
+     * range at render time so bookmarking page 5 of a list that's since
+     * shrunk to 2 pages still lands on page 2 instead of an empty view.
      */
-
-    private const int PER_PAGE = 25;
 
     #[Url(as: 'cp', except: 1)]
     public int $completedPage = 1;
@@ -278,26 +266,13 @@ final class QueueInsightsDashboard extends Component
         $this->completedPage = 1;
     }
 
-    private function buildCompletedFilter(): CompletedRowFilter
-    {
-        return new CompletedRowFilter(
-            connection: $this->completedFilterConnection,
-            queue: $this->completedFilterQueue,
-            from: $this->completedFilterFrom,
-            to: $this->completedFilterTo,
-        );
-    }
-
-    private function completedFiltersActive(): bool
-    {
-        return $this->selectedClass !== null
-            || $this->completedFilterConnection !== ''
-            || $this->completedFilterQueue !== ''
-            || $this->completedFilterFrom !== ''
-            || $this->completedFilterTo !== '';
-    }
-
-    private function buildFailedFilters(): FailedJobFilters
+    /**
+     * Build a `FailedJobFilters` value object from the current Livewire-tracked
+     * filter state. Public so `Dashboard\DashboardData::build()` can read the
+     * same filter shape the bulk-retry action uses — keeps the two paths in
+     * lockstep without duplicating the constructor wiring.
+     */
+    public function buildFailedFilters(): FailedJobFilters
     {
         return new FailedJobFilters(
             connection: $this->filterConnection,
@@ -454,10 +429,12 @@ final class QueueInsightsDashboard extends Component
     /**
      * Pluck uuids matching the current filters, capped at 101 rows so
      * the count check can distinguish "exactly 100" from "more than 100".
+     * Public so `Dashboard\DashboardData::build()` can compute the bulk-
+     * retry UI eligibility count from the same query.
      *
      * @return list<string>
      */
-    private function collectFilteredFailedUuids(FailedJobFilters $filters): array
+    public function collectFilteredFailedUuids(FailedJobFilters $filters): array
     {
         $query = QueueInsights::applyFailedJobFilters(
             DB::table('failed_jobs')->orderByDesc('id')->limit(101),
@@ -528,160 +505,8 @@ final class QueueInsightsDashboard extends Component
         return mb_substr($clean, 0, 80);
     }
 
-    public function render(
-        QueueInsights $svc,
-        ModalResolver $modals,
-        ClassRowsBuilder $classRowsBuilder,
-        FilterOptionsBuilder $filterOptionsBuilder,
-        HeadlineStatsBuilder $headlineStatsBuilder,
-        QueueRowsBuilder $queueRowsBuilder,
-    ): View {
-        $captureMode = Config::string('capture.payloads', 'off');
-
-        $queues = $queueRowsBuilder->build($this->expandedQueueKey);
-        $classes = $classRowsBuilder->build();
-
-        $failedFilters = $this->buildFailedFilters();
-
-        $recentCompleted = $svc->recentCompleted(50, $this->selectedClass);
-        $recentFailed = $svc->recentFailed(50, $failedFilters);
-        $throughput = $svc->hourlyThroughput();
-
-        $selectedPayload = $modals->selectedPayload($this->selectedPayloadId, $recentCompleted);
-        $selectedFailed = $modals->selectedFailed($this->selectedFailedId, $recentFailed);
-
-        // Decorate the selected rows with the per-job wait sample. Modals
-        // render `Wait: —` when this is null (legacy job pre-dating the
-        // JobQueued listener, or a driver that omits payload.uuid).
-        if ($selectedPayload !== null) {
-            $payloadUuid = $selectedPayload['uuid'] ?? null;
-            $selectedPayload['wait_ms'] = is_string($payloadUuid)
-                ? (string) ($svc->jobWaitMs($payloadUuid) ?? '')
-                : '';
-
-            // Reverse-lookup the batch id for THIS uuid only (one MGET) so
-            // the details-modal's batch chip can render. The full
-            // recentCompleted enrichment runs later for the table; doing it
-            // again here for one row is the cheapest way to keep the modal
-            // shape stable without depending on table-render order.
-            if (is_string($payloadUuid) && $payloadUuid !== '') {
-                $payloadBatchIds = BatchReader::batchIdsForUuids([$payloadUuid]);
-                $selectedPayload['batch_id'] = $payloadBatchIds[$payloadUuid] ?? null;
-            }
-        }
-
-        if ($selectedFailed !== null) {
-            $failedUuid = $selectedFailed['uuid'] ?? null;
-            $selectedFailed['wait_ms'] = is_string($failedUuid)
-                ? $svc->jobWaitMs($failedUuid)
-                : null;
-        }
-
-        // Bulk-retry UI eligibility (server-side enforcement still applies in
-        // retryFailedBulk()). Only check when:
-        //   - filters are non-empty (spec §3.4 footgun guard)
-        //   - the host has defined the retryFailedJobs gate at all (otherwise
-        //     the button has nowhere to land)
-        $canRetry = Gate::has('retryFailedJobs') && Gate::allows('retryFailedJobs');
-        $bulkRetryCount = null;
-        if ($canRetry && ! $failedFilters->isEmpty()) {
-            try {
-                $bulkRetryCount = count($this->collectFilteredFailedUuids($failedFilters));
-            } catch (Throwable) {
-                $bulkRetryCount = null;
-            }
-        }
-
-        $filterOptions = $filterOptionsBuilder->build($classes);
-
-        $batches = BatchReader::sectionRows($svc, $this->expandedBatchId);
-
-        $pendingEnabled = Config::bool('pending.enabled', true);
-        $pendingRows = $pendingEnabled ? $svc->allPendingJobs(50) : [];
-        $delayedRows = $pendingEnabled ? $svc->allDelayedJobs(50) : [];
-        $inFlightRows = $pendingEnabled ? $svc->allInFlightJobs(50) : [];
-
-        $selectedPending = $modals->selectedPending(
-            $this->selectedPendingUuid,
-            array_merge($inFlightRows, $pendingRows, $delayedRows),
-        );
-
-        $selectedBatch = $modals->selectedBatch($this->expandedBatchId, $batches);
-
-        // Drive `inert` from the same booleans that actually mount the
-        // modals — codex review #1. Routing it off raw selection ids
-        // froze the dashboard when an id was set but the modal never
-        // mounted (config flip, aged-out row, ?batch= URL with batches
-        // disabled).
-        $hasOpenModal = $selectedPayload !== null
-            || $selectedFailed !== null
-            || ($pendingEnabled && $this->selectedPendingUuid !== null)
-            || (Config::bool('batches.enabled', true) && $this->expandedBatchId !== '');
-
-        // Server-side pagination — slice the post-filter list to the active
-        // page so the tab pane never renders more than PER_PAGE rows. Page
-        // is clamped to the actual range so a bookmarked deep page on a list
-        // that's since shrunk gracefully lands on the last available page.
-        $completedAll = $this->buildCompletedFilter()->apply(RowEnricher::completed($recentCompleted));
-        $completedTotal = count($completedAll);
-        $completedTotalPages = max(1, (int) ceil($completedTotal / self::PER_PAGE));
-        $completedPage = min(max(1, $this->completedPage), $completedTotalPages);
-        $completedRowsPaged = array_slice($completedAll, ($completedPage - 1) * self::PER_PAGE, self::PER_PAGE);
-
-        $failedAll = RowEnricher::failed($recentFailed);
-        $failedTotal = count($failedAll);
-        $failedTotalPages = max(1, (int) ceil($failedTotal / self::PER_PAGE));
-        $failedPage = min(max(1, $this->failedPage), $failedTotalPages);
-        $failedRowsPaged = array_slice($failedAll, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
-
-        $aggregates = QueueAggregates::aggregate($queues);
-
-        return ViewFactory::make('queue-insights::dashboard', [
-            'queues' => $queues,
-            'totalDepth' => $aggregates['total_depth'],
-            'totalInFlight' => $aggregates['total_inflight'],
-            'atRisk' => $aggregates['at_risk'],
-            'healthy' => $aggregates['healthy'],
-            'queuePreview' => QueueAggregates::queuePreview($aggregates['at_risk'], $aggregates['deepest']),
-            'pendingPreview' => QueueAggregates::pendingPreview($inFlightRows, $pendingRows, $delayedRows),
-            'fmtMs' => WaitTimeMetrics::format(...),
-            'classes' => $classes,
-            'pendingRows' => $pendingRows,
-            'delayedRows' => $delayedRows,
-            'inFlightRows' => $inFlightRows,
-            'pendingEnabled' => $pendingEnabled,
-            'filterConnectionOptions' => $filterOptions['connections'],
-            'filterQueueOptions' => $filterOptions['queues'],
-            'filterClassOptions' => $filterOptions['classes'],
-            'captureMode' => $captureMode,
-            'completedRows' => $completedRowsPaged,
-            'completedTotal' => $completedTotal,
-            'completedPage' => $completedPage,
-            'completedTotalPages' => $completedTotalPages,
-            'completedPerPage' => self::PER_PAGE,
-            'completedFiltersActive' => $this->completedFiltersActive(),
-            'failedRows' => $failedRowsPaged,
-            'failedTotal' => $failedTotal,
-            'failedPage' => $failedPage,
-            'failedTotalPages' => $failedTotalPages,
-            'failedPerPage' => self::PER_PAGE,
-            'selectedClass' => $this->selectedClass,
-            'selectedPayload' => $selectedPayload,
-            'selectedFailed' => $selectedFailed,
-            'payloadTab' => $this->payloadTab,
-            'throughput' => $throughput,
-            'stats' => $headlineStatsBuilder->build($throughput, $queues, $classes),
-            'pendingGapWarnThreshold' => Config::int('pending.gap_warn_threshold', 5),
-            'failedFiltersActive' => ! $failedFilters->isEmpty(),
-            'canRetry' => $canRetry,
-            'bulkRetryCount' => $bulkRetryCount,
-            'batches' => $batches,
-            'batchesEnabled' => Config::bool('batches.enabled', true),
-            'expandedBatchId' => $this->expandedBatchId,
-            'selectedBatch' => $selectedBatch,
-            'selectedPending' => $selectedPending,
-            'selectedPendingUuid' => $this->selectedPendingUuid,
-            'hasOpenModal' => $hasOpenModal,
-        ]);
+    public function render(DashboardData $data): View
+    {
+        return ViewFactory::make('queue-insights::dashboard', $data->build($this));
     }
 }
