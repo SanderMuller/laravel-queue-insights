@@ -95,10 +95,7 @@
                             <dd class="mt-1 break-all text-sm font-medium text-gray-900">{{ $label }}</dd>
                         </dl>
                         <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                            <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">ID</dt>
-                                <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $id }}</dd>
-                            </dl>
+                            <x-queue-insights::meta-pill label="ID" :value="$id"/>
                             @if ($statusChip)
                                 <span class="rounded-md px-1.5 py-0.5 font-medium ring-1 ring-inset {{ $statusChip['cls'] }}">
                                     {{ $statusChip['label'] }}

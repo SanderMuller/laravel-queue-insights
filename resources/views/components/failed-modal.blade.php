@@ -235,14 +235,8 @@
                         <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $failedDisplayName ?? '—' }}</dd>
                     </dl>
                     <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                            <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Connection</dt>
-                            <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $failed['connection'] ?? '—' }}</dd>
-                        </dl>
-                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                            <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Queue</dt>
-                            <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $failed['queue'] ?? '—' }}</dd>
-                        </dl>
+                        <x-queue-insights::meta-pill label="Connection" :value="$failed['connection'] ?? null"/>
+                        <x-queue-insights::meta-pill label="Queue" :value="$failed['queue'] ?? null"/>
                         @if ($failedBatchId !== null)
                             @include('queue-insights::partials.batch-chip', ['batchId' => $failedBatchId])
                         @endif
@@ -391,14 +385,8 @@
                                 <div class="min-w-0 flex-1">
                                     <p class="break-all font-mono text-sm text-gray-900">{{ $job['class'] }}</p>
                                     <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-                                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                            <dt class="bg-gray-50 px-1.5 py-0.5 font-medium text-gray-500">Connection</dt>
-                                            <dd class="bg-gray-50 px-1.5 py-0.5 font-mono text-gray-700">{{ $job['connection'] ?? '—' }}</dd>
-                                        </dl>
-                                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                            <dt class="bg-gray-50 px-1.5 py-0.5 font-medium text-gray-500">Queue</dt>
-                                            <dd class="bg-gray-50 px-1.5 py-0.5 font-mono text-gray-700">{{ $job['queue'] ?? '—' }}</dd>
-                                        </dl>
+                                        <x-queue-insights::meta-pill label="Connection" :value="$job['connection'] ?? null" size="sm"/>
+                                        <x-queue-insights::meta-pill label="Queue" :value="$job['queue'] ?? null" size="sm"/>
                                         @if ($i === 0)
                                             <span class="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>
                                         @endif
@@ -440,14 +428,8 @@
                                 <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $job['class'] }}</dd>
                             </dl>
                             <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                                <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                    <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Connection</dt>
-                                    <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $job['connection'] ?? '—' }}</dd>
-                                </dl>
-                                <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                    <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Queue</dt>
-                                    <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $job['queue'] ?? '—' }}</dd>
-                                </dl>
+                                <x-queue-insights::meta-pill label="Connection" :value="$job['connection'] ?? null"/>
+                                <x-queue-insights::meta-pill label="Queue" :value="$job['queue'] ?? null"/>
                             </div>
                         </div>
 
