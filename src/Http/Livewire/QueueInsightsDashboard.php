@@ -271,6 +271,8 @@ final class QueueInsightsDashboard extends Component
      * filter state. Public so `Dashboard\DashboardData::build()` can read the
      * same filter shape the bulk-retry action uses — keeps the two paths in
      * lockstep without duplicating the constructor wiring.
+     *
+     * @internal
      */
     public function buildFailedFilters(): FailedJobFilters
     {
@@ -431,6 +433,8 @@ final class QueueInsightsDashboard extends Component
      * the count check can distinguish "exactly 100" from "more than 100".
      * Public so `Dashboard\DashboardData::build()` can compute the bulk-
      * retry UI eligibility count from the same query.
+     *
+     * @internal
      *
      * @return list<string>
      */
