@@ -123,6 +123,23 @@ final class PreviewDashboard extends Component
         $this->expandedBatchId = $this->expandedBatchId === $id ? '' : $id;
     }
 
+    /**
+     * Mirror of QueueInsightsDashboard::openBatch — opens the batch modal
+     * from a chip click in any item modal/row, closing whichever item modal
+     * was open so only the batch modal remains visible.
+     */
+    public function openBatch(string $id): void
+    {
+        if ($id === '') {
+            return;
+        }
+
+        $this->selectedPayloadId = null;
+        $this->selectedFailedId = null;
+        $this->selectedPendingUuid = null;
+        $this->expandedBatchId = $id;
+    }
+
     public function closeBatch(): void
     {
         $this->expandedBatchId = '';
