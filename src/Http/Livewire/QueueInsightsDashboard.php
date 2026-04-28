@@ -4,18 +4,15 @@ declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Http\Livewire;
 
-use Carbon\CarbonInterface;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
-use InvalidArgumentException;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
@@ -23,9 +20,9 @@ use SanderMuller\QueueInsights\Dashboard\ClassRowsBuilder;
 use SanderMuller\QueueInsights\Dashboard\FilterOptionsBuilder;
 use SanderMuller\QueueInsights\Dashboard\HeadlineStatsBuilder;
 use SanderMuller\QueueInsights\Dashboard\ModalResolver;
+use SanderMuller\QueueInsights\Dashboard\QueueRowsBuilder;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\BatchReader;
-use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
@@ -537,10 +534,11 @@ final class QueueInsightsDashboard extends Component
         ClassRowsBuilder $classRowsBuilder,
         FilterOptionsBuilder $filterOptionsBuilder,
         HeadlineStatsBuilder $headlineStatsBuilder,
+        QueueRowsBuilder $queueRowsBuilder,
     ): View {
         $captureMode = Config::string('capture.payloads', 'off');
 
-        $queues = $this->buildQueueRows($svc);
+        $queues = $queueRowsBuilder->build($this->expandedQueueKey);
         $classes = $classRowsBuilder->build();
 
         $failedFilters = $this->buildFailedFilters();
@@ -685,103 +683,5 @@ final class QueueInsightsDashboard extends Component
             'selectedPendingUuid' => $this->selectedPendingUuid,
             'hasOpenModal' => $hasOpenModal,
         ]);
-    }
-
-    /**
-     * @return list<array<string, mixed>>
-     */
-    private function buildQueueRows(QueueInsights $svc): array
-    {
-        $rows = [];
-
-        foreach ($svc->configuredQueues() as $entry) {
-            $connection = $entry['connection'];
-            $queue = $entry['queue'];
-
-            try {
-                $canonical = CanonicalQueueKey::from($queue);
-            } catch (InvalidArgumentException) {
-                // Invalid entry — skip rather than crash the whole render.
-                // Boot-time ConfigValidator catches these at boot; this guards
-                // against runtime `config()->set()` reconfigs bypassing it.
-                continue;
-            }
-
-            $lastAt = $svc->lastSnapshotAt($connection, $canonical);
-            $stale = ! $lastAt instanceof CarbonInterface || $lastAt->diffInSeconds(Date::now()) > 120;
-
-            $driverRaw = config("queue.connections.{$connection}.driver", '—');
-
-            $waitPercentiles = $svc->queueWaitPercentiles($connection, $canonical);
-
-            $depth = $svc->liveDepth($connection, $canonical);
-            $delayed = $svc->liveDelayed($connection, $canonical);
-
-            $rows[] = $this->attachInspectorFields(
-                [
-                    'connection' => $connection,
-                    'queue' => $queue,
-                    'canonical' => $canonical,
-                    'driver' => is_string($driverRaw) ? $driverRaw : '—',
-                    'depth' => $depth,
-                    'inflight' => $svc->liveInFlight($connection, $canonical),
-                    'delayed' => $delayed,
-                    'last_at' => $lastAt,
-                    'stale' => $stale,
-                    'error' => $svc->snapshotError($connection, $canonical),
-                    'wait_p50_ms' => $waitPercentiles['p50'],
-                    'wait_p95_ms' => $waitPercentiles['p95'],
-                ],
-                $svc,
-                $connection,
-                $canonical,
-                $depth,
-                $delayed,
-            );
-        }
-
-        return $rows;
-    }
-
-    /**
-     * Attach pending-inspector fields to a queue row. Always includes counts
-     * + drift gap (cheap — one ZCARD per queue). Includes the actual pending
-     * and delayed job lists ONLY when this row's inspector is expanded —
-     * otherwise we'd run 2 ZRANGEBYSCOREs + 50× HGETALLs per visible queue
-     * on every 10s poll.
-     *
-     * @param  array<string, mixed>  $row
-     * @return array<string, mixed>
-     */
-    private function attachInspectorFields(array $row, QueueInsights $svc, string $connection, string $canonical, int $depth, ?int $delayed): array
-    {
-        if (! Config::bool('pending.enabled', true)) {
-            return $row + [
-                'inspector_key' => "{$connection}:{$canonical}",
-                'inspector_open' => false,
-                'inspector_disabled' => true,
-                'tracked_count' => 0,
-                'pending_gap' => 0,
-                'pending_jobs' => [],
-                'delayed_jobs' => [],
-            ];
-        }
-
-        $key = "{$connection}:{$canonical}";
-        $isOpen = $this->expandedQueueKey === $key;
-
-        $tracked = $svc->pendingTrackedCount($connection, $canonical);
-        $actual = $depth + ($delayed ?? 0);
-        $gap = abs($tracked - $actual);
-
-        return $row + [
-            'inspector_key' => $key,
-            'inspector_open' => $isOpen,
-            'inspector_disabled' => false,
-            'tracked_count' => $tracked,
-            'pending_gap' => $gap,
-            'pending_jobs' => $isOpen ? $svc->pendingJobs($connection, $canonical) : [],
-            'delayed_jobs' => $isOpen ? $svc->delayedJobs($connection, $canonical) : [],
-        ];
     }
 }
