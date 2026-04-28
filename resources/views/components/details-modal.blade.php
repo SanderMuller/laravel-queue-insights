@@ -75,7 +75,7 @@
         else if (view === 'chain') { view = 'job'; }
         else { $wire.closePayload(); }
      "
-     class="fixed inset-0 flex items-center justify-center bg-gray-950/40 p-4"
+     class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closePayload">
     <div x-trap.noscroll="true"
          class="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-xl bg-white shadow-xl ring-1 ring-gray-950/5 [--padding:--spacing(6)]"
@@ -140,13 +140,13 @@
                         <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $payload['class'] ?? '—' }}</dd>
                     </dl>
                     <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                        <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                            <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Connection</dt>
-                            <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $payload['connection'] ?? '—' }}</dd>
+                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                            <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Connection</dt>
+                            <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $payload['connection'] ?? '—' }}</dd>
                         </dl>
-                        <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                            <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Queue</dt>
-                            <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $payload['queue'] ?? '—' }}</dd>
+                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                            <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Queue</dt>
+                            <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $payload['queue'] ?? '—' }}</dd>
                         </dl>
                         @php
                             $payloadBatchId = is_string($payload['batch_id'] ?? null) && $payload['batch_id'] !== ''
@@ -422,13 +422,13 @@
                                 <div class="min-w-0 flex-1">
                                     <p class="break-all font-mono text-sm text-gray-900">{{ $job['class'] }}</p>
                                     <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-                                        <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                            <dt class="bg-gray-950/[0.04] px-1.5 py-0.5 font-medium text-gray-500">Connection</dt>
-                                            <dd class="bg-white px-1.5 py-0.5 font-mono text-gray-700">{{ $job['connection'] ?? '—' }}</dd>
+                                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                            <dt class="bg-gray-50 px-1.5 py-0.5 font-medium text-gray-500">Connection</dt>
+                                            <dd class="bg-gray-50 px-1.5 py-0.5 font-mono text-gray-700">{{ $job['connection'] ?? '—' }}</dd>
                                         </dl>
-                                        <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                            <dt class="bg-gray-950/[0.04] px-1.5 py-0.5 font-medium text-gray-500">Queue</dt>
-                                            <dd class="bg-white px-1.5 py-0.5 font-mono text-gray-700">{{ $job['queue'] ?? '—' }}</dd>
+                                        <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                            <dt class="bg-gray-50 px-1.5 py-0.5 font-medium text-gray-500">Queue</dt>
+                                            <dd class="bg-gray-50 px-1.5 py-0.5 font-mono text-gray-700">{{ $job['queue'] ?? '—' }}</dd>
                                         </dl>
                                         @if ($i === 0)
                                             <span class="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>
@@ -469,13 +469,13 @@
                                 <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $job['class'] }}</dd>
                             </dl>
                             <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                                <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                    <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Connection</dt>
-                                    <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $job['connection'] ?? '—' }}</dd>
+                                <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                    <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Connection</dt>
+                                    <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $job['connection'] ?? '—' }}</dd>
                                 </dl>
-                                <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                    <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Queue</dt>
-                                    <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $job['queue'] ?? '—' }}</dd>
+                                <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                    <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Queue</dt>
+                                    <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $job['queue'] ?? '—' }}</dd>
                                 </dl>
                             </div>
                         </div>

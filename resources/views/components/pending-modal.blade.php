@@ -54,7 +54,7 @@
      aria-labelledby="qi-pending-modal-title"
      x-data
      x-on:keydown.escape.window="$wire.closePending()"
-     class="fixed inset-0 flex items-center justify-center bg-gray-950/40 p-4"
+     class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closePending">
     <div x-trap.noscroll="true"
          class="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-xl bg-white shadow-xl ring-1 ring-gray-950/5"
@@ -130,13 +130,13 @@
                             <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $class ?? '—' }}</dd>
                         </dl>
                         <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                            <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Connection</dt>
-                                <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $connection ?? '—' }}</dd>
+                            <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Connection</dt>
+                                <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $connection ?? '—' }}</dd>
                             </dl>
-                            <dl class="inline-flex items-center overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
-                                <dt class="bg-gray-950/[0.04] px-2 py-0.5 font-medium text-gray-500">Queue</dt>
-                                <dd class="bg-white px-2 py-0.5 font-mono text-gray-800">{{ $queue ?? '—' }}</dd>
+                            <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10">
+                                <dt class="bg-gray-50 px-2 py-0.5 font-medium text-gray-500">Queue</dt>
+                                <dd class="bg-gray-50 px-2 py-0.5 font-mono text-gray-800">{{ $queue ?? '—' }}</dd>
                             </dl>
                             @if ($batchId !== null)
                                 @include('queue-insights::partials.batch-chip', ['batchId' => $batchId])
