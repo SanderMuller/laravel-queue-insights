@@ -66,8 +66,12 @@ it('returns delayed jobs (available_at > now) soonest-first', function (): void 
 });
 
 it('separates pending vs delayed by available_at <= now boundary', function (): void {
-    $now = Date::now()
-        ->getTimestamp();
+    // Pin time so the `d1 = now + 1` delayed boundary case can't tip into the
+    // pending bucket if a second-rollover happens between the test capturing
+    // `$now` and `QueueInsights::pendingJobs()` re-reading `Date::now()`. CI
+    // matrix flake on prefer-stable cells when the runner is hot.
+    Date::setTestNow(Date::now());
+    $now = Date::now()->getTimestamp();
     seedPending('p1', 'redis', 'work', 'App\\P', $now - 10);
     seedPending('p2', 'redis', 'work', 'App\\P', $now);          // exactly now → pending
     seedPending('d1', 'redis', 'work', 'App\\D', $now, $now + 1); // 1s in the future → delayed
@@ -76,6 +80,8 @@ it('separates pending vs delayed by available_at <= now boundary', function (): 
 
     expect(array_column($svc->pendingJobs('redis', 'work'), 'uuid'))->toBe(['p1', 'p2'])
         ->and(array_column($svc->delayedJobs('redis', 'work'), 'uuid'))->toBe(['d1']);
+
+    Date::setTestNow();
 });
 
 it('skips zset entries whose hash is missing (race-condition guard)', function (): void {
