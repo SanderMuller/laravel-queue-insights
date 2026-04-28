@@ -22,6 +22,29 @@ use Illuminate\Support\Facades\Redis;
 final class WaitTimeMetrics
 {
     /**
+     * Format a wait/runtime millisecond reading as a compact human-readable
+     * string: under 1s → `142ms`, under 1m → `1.4s`, otherwise `2.3m`.
+     * Null reads as the em-dash placeholder so view sites can blindly call
+     * the formatter without per-site null handling.
+     */
+    public static function format(?int $ms): string
+    {
+        if ($ms === null) {
+            return '—';
+        }
+
+        if ($ms < 1000) {
+            return number_format($ms) . 'ms';
+        }
+
+        if ($ms < 60_000) {
+            return number_format($ms / 1000, 1) . 's';
+        }
+
+        return number_format($ms / 60_000, 1) . 'm';
+    }
+
+    /**
      * @return array{p50: ?int, p95: ?int}
      */
     public static function percentiles(string $connection, string $queue): array

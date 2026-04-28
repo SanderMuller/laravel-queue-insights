@@ -9,54 +9,6 @@
 
         <x-queue-insights::flash-banner/>
 
-        @php
-            $totalDepth = array_sum(array_map(fn ($q): int => is_numeric($q['depth']) ? (int) $q['depth'] : 0, $queues));
-            $totalInFlight = array_sum(array_map(fn ($q): int => is_numeric($q['inflight'] ?? null) ? (int) $q['inflight'] : 0, $queues));
-            $atRisk = array_values(array_filter($queues, fn ($q) => $q['error'] || $q['stale']));
-            $healthy = array_values(array_filter($queues, fn ($q) => ! $q['error'] && ! $q['stale']));
-            $sortedQueues = array_merge($atRisk, $healthy);
-
-            // Top-N deepest queues — pad the Overview "Queues" card preview
-            // when the at-risk list alone doesn't fill it.
-            $deepest = $queues;
-            usort($deepest, function ($a, $b) {
-                $ad = is_numeric($a['depth']) ? (int) $a['depth'] : 0;
-                $bd = is_numeric($b['depth']) ? (int) $b['depth'] : 0;
-                return $bd <=> $ad;
-            });
-
-            $queuePreview = $atRisk;
-            if (count($queuePreview) < 5) {
-                foreach ($deepest as $q) {
-                    $dup = false;
-                    foreach ($queuePreview as $a) {
-                        if ($a['queue'] === $q['queue'] && $a['connection'] === $q['connection']) { $dup = true; break; }
-                    }
-                    if (! $dup) $queuePreview[] = $q;
-                    if (count($queuePreview) >= 5) break;
-                }
-            }
-            $queuePreview = array_slice($queuePreview, 0, 5);
-
-            // Pending preview — in-flight first (tagged so the dot pulses),
-            // then pending-now, then delayed. Capped at 5.
-            $pendingPreview = [];
-            foreach ($inFlightRows as $r) { $pendingPreview[] = $r + ['_isInFlight' => true]; }
-            foreach ($pendingRows as $r) { $pendingPreview[] = $r; }
-            foreach ($delayedRows as $r) { $pendingPreview[] = $r; }
-            $pendingPreview = array_slice($pendingPreview, 0, 5);
-
-            $fmtMs = static function (?int $ms): string {
-                if ($ms === null) return '—';
-                if ($ms < 1000) return number_format($ms).'ms';
-                if ($ms < 60_000) return number_format($ms / 1000, 1).'s';
-                return number_format($ms / 60_000, 1).'m';
-            };
-
-            $activeBatchCount = $batchesEnabled ? count(array_filter($batches, fn ($b) => ! ($b['finished_at'] instanceof \Carbon\CarbonInterface) && ! ($b['cancelled_at'] instanceof \Carbon\CarbonInterface))) : 0;
-            $hasPendingAny = ($pendingEnabled ?? false) && (count($inFlightRows) + count($pendingRows) + count($delayedRows)) > 0;
-        @endphp
-
         {{-- Persistent hero — sparkline (full card) alongside a 6-KPI panel.
             Always visible across tabs so the throughput trend is the last
             thing to fall off-screen. The sparkline component renders its

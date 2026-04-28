@@ -25,7 +25,9 @@ use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use SanderMuller\QueueInsights\Support\QueueAggregates;
 use SanderMuller\QueueInsights\Support\RowEnricher;
+use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
 #[Layout('queue-insights::layouts.app')]
@@ -701,8 +703,17 @@ final class QueueInsightsDashboard extends Component
         $failedPage = min(max(1, $this->failedPage), $failedTotalPages);
         $failedRowsPaged = array_slice($failedAll, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
 
+        $aggregates = QueueAggregates::aggregate($queues);
+
         return ViewFactory::make('queue-insights::dashboard', [
             'queues' => $queues,
+            'totalDepth' => $aggregates['total_depth'],
+            'totalInFlight' => $aggregates['total_inflight'],
+            'atRisk' => $aggregates['at_risk'],
+            'healthy' => $aggregates['healthy'],
+            'queuePreview' => QueueAggregates::queuePreview($aggregates['at_risk'], $aggregates['deepest']),
+            'pendingPreview' => QueueAggregates::pendingPreview($inFlightRows, $pendingRows, $delayedRows),
+            'fmtMs' => WaitTimeMetrics::format(...),
             'classes' => $classes,
             'pendingRows' => $pendingRows,
             'delayedRows' => $delayedRows,

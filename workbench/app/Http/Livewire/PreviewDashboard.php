@@ -9,7 +9,9 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\View as ViewFactory;
 use Livewire\Attributes\Layout;
 use Livewire\Component;
+use SanderMuller\QueueInsights\Support\QueueAggregates;
 use SanderMuller\QueueInsights\Support\RowEnricher;
+use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 
 #[Layout('queue-insights::layouts.app')]
 final class PreviewDashboard extends Component
@@ -691,8 +693,21 @@ final class PreviewDashboard extends Component
         $failedPage = min(max(1, $this->failedPage), $failedTotalPages);
         $failedRowsPaged = array_slice($failedRows, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
 
+        $inFlightRows = $this->seedInFlightRows($now);
+        $pendingRows = $this->seedPendingRows($now);
+        $delayedRows = $this->seedDelayedRows($now);
+
+        $aggregates = QueueAggregates::aggregate($queues);
+
         return [
             'queues' => $queues,
+            'totalDepth' => $aggregates['total_depth'],
+            'totalInFlight' => $aggregates['total_inflight'],
+            'atRisk' => $aggregates['at_risk'],
+            'healthy' => $aggregates['healthy'],
+            'queuePreview' => QueueAggregates::queuePreview($aggregates['at_risk'], $aggregates['deepest']),
+            'pendingPreview' => QueueAggregates::pendingPreview($inFlightRows, $pendingRows, $delayedRows),
+            'fmtMs' => WaitTimeMetrics::format(...),
             'classes' => $classes,
             'filterConnectionOptions' => $connections,
             'filterQueueOptions' => $queueNames,
@@ -748,13 +763,13 @@ final class PreviewDashboard extends Component
                 || $this->expandedBatchId !== '',
             // Pending-jobs section uses the same empty-state seeding strategy
             // — the real component fans this out across configured queues.
-            'pendingRows' => $this->seedPendingRows($now),
+            'pendingRows' => $pendingRows,
             'selectedPendingUuid' => $this->selectedPendingUuid,
             'selectedPending' => $this->resolvePreviewSelectedPending(
-                array_merge($this->seedInFlightRows($now), $this->seedPendingRows($now), $this->seedDelayedRows($now)),
+                array_merge($inFlightRows, $pendingRows, $delayedRows),
             ),
-            'delayedRows' => $this->seedDelayedRows($now),
-            'inFlightRows' => $this->seedInFlightRows($now),
+            'delayedRows' => $delayedRows,
+            'inFlightRows' => $inFlightRows,
             'pendingEnabled' => true,
         ];
     }
