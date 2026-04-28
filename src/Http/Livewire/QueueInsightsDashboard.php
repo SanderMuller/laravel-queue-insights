@@ -83,6 +83,23 @@ final class QueueInsightsDashboard extends Component
     public string $completedFilterTo = '';
 
     /*
+     * Pagination — completed + failed lists. URL-shareable (`cp`/`fp`) so a
+     * deep-linked page survives refresh. Per-page is fixed at 25 to keep the
+     * tab content above-fold-friendly; ramp up if the host app reports it
+     * feels too small. Page is clamped to the available range at render time
+     * so bookmarking page 5 of a list that's since shrunk to 2 pages still
+     * lands on page 2 instead of an empty view.
+     */
+
+    private const PER_PAGE = 25;
+
+    #[Url(as: 'cp', except: 1)]
+    public int $completedPage = 1;
+
+    #[Url(as: 'fp', except: 1)]
+    public int $failedPage = 1;
+
+    /*
      * Pending-jobs inspector — single-queue expand state. Format:
      * "{connection}:{canonical-queue}". Empty string = nothing expanded.
      * URL-shareable so an operator can paste the dashboard URL and land
@@ -197,6 +214,31 @@ final class QueueInsightsDashboard extends Component
         $this->filterClass = '';
         $this->filterFrom = '';
         $this->filterTo = '';
+        $this->failedPage = 1;
+    }
+
+    public function gotoCompletedPage(int $page): void
+    {
+        $this->completedPage = max(1, $page);
+    }
+
+    public function gotoFailedPage(int $page): void
+    {
+        $this->failedPage = max(1, $page);
+    }
+
+    /**
+     * Reset pagination when a filter changes — bookmarked page numbers stop
+     * making sense the moment the underlying set shifts. Caught for any
+     * Livewire-tracked filter by name prefix instead of one hook per prop.
+     */
+    public function updated(string $name): void
+    {
+        if (str_starts_with($name, 'completedFilter') || $name === 'selectedClass') {
+            $this->completedPage = 1;
+        } elseif (str_starts_with($name, 'filter')) {
+            $this->failedPage = 1;
+        }
     }
 
     public function toggleQueueInspector(string $key): void
@@ -231,6 +273,7 @@ final class QueueInsightsDashboard extends Component
         $this->completedFilterQueue = '';
         $this->completedFilterFrom = '';
         $this->completedFilterTo = '';
+        $this->completedPage = 1;
     }
 
     private function buildCompletedFilter(): CompletedRowFilter
@@ -643,6 +686,22 @@ final class QueueInsightsDashboard extends Component
             || ($pendingEnabled && $this->selectedPendingUuid !== null)
             || (Config::bool('batches.enabled', true) && $this->expandedBatchId !== '');
 
+        // Server-side pagination — slice the post-filter list to the active
+        // page so the tab pane never renders more than PER_PAGE rows. Page
+        // is clamped to the actual range so a bookmarked deep page on a list
+        // that's since shrunk gracefully lands on the last available page.
+        $completedAll = $this->buildCompletedFilter()->apply(RowEnricher::completed($recentCompleted));
+        $completedTotal = count($completedAll);
+        $completedTotalPages = max(1, (int) ceil($completedTotal / self::PER_PAGE));
+        $completedPage = min(max(1, $this->completedPage), $completedTotalPages);
+        $completedRowsPaged = array_slice($completedAll, ($completedPage - 1) * self::PER_PAGE, self::PER_PAGE);
+
+        $failedAll = RowEnricher::failed($recentFailed);
+        $failedTotal = count($failedAll);
+        $failedTotalPages = max(1, (int) ceil($failedTotal / self::PER_PAGE));
+        $failedPage = min(max(1, $this->failedPage), $failedTotalPages);
+        $failedRowsPaged = array_slice($failedAll, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
+
         return ViewFactory::make('queue-insights::dashboard', [
             'queues' => $queues,
             'classes' => $classes,
@@ -654,9 +713,17 @@ final class QueueInsightsDashboard extends Component
             'filterQueueOptions' => $filterOptions['queues'],
             'filterClassOptions' => $filterOptions['classes'],
             'captureMode' => $captureMode,
-            'completedRows' => $this->buildCompletedFilter()->apply(RowEnricher::completed($recentCompleted)),
+            'completedRows' => $completedRowsPaged,
+            'completedTotal' => $completedTotal,
+            'completedPage' => $completedPage,
+            'completedTotalPages' => $completedTotalPages,
+            'completedPerPage' => self::PER_PAGE,
             'completedFiltersActive' => $this->completedFiltersActive(),
-            'failedRows' => RowEnricher::failed($recentFailed),
+            'failedRows' => $failedRowsPaged,
+            'failedTotal' => $failedTotal,
+            'failedPage' => $failedPage,
+            'failedTotalPages' => $failedTotalPages,
+            'failedPerPage' => self::PER_PAGE,
             'selectedClass' => $this->selectedClass,
             'selectedPayload' => $selectedPayload,
             'selectedFailed' => $selectedFailed,

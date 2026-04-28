@@ -46,6 +46,36 @@ final class PreviewDashboard extends Component
 
     public ?string $selectedPendingUuid = null;
 
+    /*
+     * Pagination — completed + failed lists. Mirrors the production component
+     * so the preview exercises the same view contract. Per-page locked at 25.
+     */
+
+    private const PER_PAGE = 25;
+
+    public int $completedPage = 1;
+
+    public int $failedPage = 1;
+
+    public function gotoCompletedPage(int $page): void
+    {
+        $this->completedPage = max(1, $page);
+    }
+
+    public function gotoFailedPage(int $page): void
+    {
+        $this->failedPage = max(1, $page);
+    }
+
+    public function updated(string $name): void
+    {
+        if (str_starts_with($name, 'completedFilter') || $name === 'selectedClass') {
+            $this->completedPage = 1;
+        } elseif (str_starts_with($name, 'filter')) {
+            $this->failedPage = 1;
+        }
+    }
+
     public function openPayload(string $id): void
     {
         $this->selectedPayloadId = $id;
@@ -111,6 +141,7 @@ final class PreviewDashboard extends Component
     public function clearFailedFilters(): void
     {
         $this->reset(['filterConnection', 'filterQueue', 'filterClass', 'filterFrom', 'filterTo']);
+        $this->failedPage = 1;
     }
 
     /**
@@ -324,6 +355,7 @@ final class PreviewDashboard extends Component
     {
         $this->selectedClass = null;
         $this->reset(['completedFilterConnection', 'completedFilterQueue', 'completedFilterFrom', 'completedFilterTo']);
+        $this->completedPage = 1;
     }
 
     public function clearSelectedClass(): void
@@ -526,6 +558,41 @@ final class PreviewDashboard extends Component
             ['_id' => '01HK0M5', 'class' => 'App\\Jobs\\SendWelcomeEmail', 'short_id' => '01HK0M5', 'connection' => 'redis', 'queue' => 'default', 'duration_ms' => 295, 'attempts' => 1, 'processed_at' => $now->copy()->subMinutes(5)->toIso8601String()],
         ];
 
+        // Pad with deterministic generated rows so the preview exercises
+        // multi-page pagination (PER_PAGE = 25 → 3 pages on this seed).
+        $completedClassPool = [
+            'App\\Jobs\\SendWelcomeEmail',
+            'App\\Jobs\\GenerateReport',
+            'App\\Jobs\\ProcessImport',
+            'App\\Jobs\\SyncStripeCustomer',
+            'App\\Jobs\\IndexImportArtifacts',
+            'App\\Jobs\\NotifyImportFinished',
+            'App\\Jobs\\BackfillStats',
+            'App\\Jobs\\WeeklyDigest',
+            'App\\Jobs\\AuditCustomerSync',
+            'App\\Jobs\\GenerateInvoicePdf',
+        ];
+        $completedQueuePool = [
+            ['redis', 'default'],
+            ['redis', 'mail'],
+            ['redis', 'high'],
+            ['sqs', 'reports'],
+        ];
+        for ($i = 6; $i <= 65; $i++) {
+            $cls = $completedClassPool[$i % count($completedClassPool)];
+            $q = $completedQueuePool[$i % count($completedQueuePool)];
+            $completedRows[] = [
+                '_id' => '01HK0M' . str_pad((string) $i, 3, '0', STR_PAD_LEFT),
+                'class' => $cls,
+                'short_id' => '01HK0M' . str_pad((string) $i, 3, '0', STR_PAD_LEFT),
+                'connection' => $q[0],
+                'queue' => $q[1],
+                'duration_ms' => 200 + (($i * 37) % 5000),
+                'attempts' => $i % 13 === 0 ? 2 : 1,
+                'processed_at' => $now->copy()->subMinutes($i)->toIso8601String(),
+            ];
+        }
+
         $chainProcessImport = [
             'next_class' => 'App\\Jobs\\NotifyImportFinished',
             'remaining' => 3,
@@ -539,6 +606,35 @@ final class PreviewDashboard extends Component
             ['id' => 3, 'display_name' => 'App\\Jobs\\ProcessImport', 'exception_class' => 'InvalidArgumentException', 'exception_message' => 'Malformed CSV row 482', 'short_uuid' => 'c1d809', 'connection' => 'redis', 'queue' => 'mail', 'failed_at' => $now->copy()->subHour()->toIso8601String(), 'attempts' => 1, 'max_tries' => 1, 'chain' => $chainProcessImport],
             ['id' => null, 'display_name' => 'App\\Jobs\\LegacyOrphan', 'exception_class' => null, 'exception_message' => null, 'short_uuid' => null, 'connection' => 'redis', 'queue' => 'default', 'failed_at' => $now->copy()->subHours(3)->toIso8601String(), 'attempts' => null, 'max_tries' => null],
         ];
+
+        // Pad failed list to ~45 rows (≈ 2 pages at PER_PAGE=25) so the
+        // preview exercises pagination on the failed tab too.
+        $failedExceptionPool = [
+            ['RuntimeException', 'Database connection timeout'],
+            ['Swift_TransportException', 'SMTP server refused connection'],
+            ['InvalidArgumentException', 'Malformed payload'],
+            ['ConnectException', 'External API unreachable'],
+            ['QueryException', 'Deadlock detected on retry'],
+            ['JsonException', 'Invalid JSON in job payload'],
+            ['ModelNotFoundException', 'Source record vanished mid-job'],
+        ];
+        for ($i = 10; $i <= 50; $i++) {
+            $cls = $completedClassPool[$i % count($completedClassPool)];
+            $exc = $failedExceptionPool[$i % count($failedExceptionPool)];
+            $q = $completedQueuePool[$i % count($completedQueuePool)];
+            $failedRows[] = [
+                'id' => $i,
+                'display_name' => $cls,
+                'exception_class' => $exc[0],
+                'exception_message' => $exc[1],
+                'short_uuid' => substr(md5((string) $i), 0, 6),
+                'connection' => $q[0],
+                'queue' => $q[1],
+                'failed_at' => $now->copy()->subMinutes($i * 2 + 5)->toIso8601String(),
+                'attempts' => 1 + ($i % 3),
+                'max_tries' => 3,
+            ];
+        }
 
         $classes = [
             ['class' => 'App\\Jobs\\SendWelcomeEmail', 'processed_24h' => 1842, 'failed_24h' => 4, 'avg_ms' => 312, 'p95_ms' => 820, 'max_ms' => 2400, 'last_run_at' => $now->copy()->subSeconds(20)],
@@ -565,6 +661,19 @@ final class PreviewDashboard extends Component
             return $row;
         }, $completedRows);
 
+        // Slice for the active page so the preview matches production's
+        // contract — the view receives a page-sized slice plus metadata for
+        // the controls. Modal resolution uses the full unsliced lists above.
+        $completedTotal = count($enrichedCompletedRows);
+        $completedTotalPages = max(1, (int) ceil($completedTotal / self::PER_PAGE));
+        $completedPage = min(max(1, $this->completedPage), $completedTotalPages);
+        $enrichedCompletedRowsPaged = array_slice($enrichedCompletedRows, ($completedPage - 1) * self::PER_PAGE, self::PER_PAGE);
+
+        $failedTotal = count($failedRows);
+        $failedTotalPages = max(1, (int) ceil($failedTotal / self::PER_PAGE));
+        $failedPage = min(max(1, $this->failedPage), $failedTotalPages);
+        $failedRowsPaged = array_slice($failedRows, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
+
         return [
             'queues' => $queues,
             'classes' => $classes,
@@ -572,8 +681,16 @@ final class PreviewDashboard extends Component
             'filterQueueOptions' => $queueNames,
             'filterClassOptions' => $classNames,
             'captureMode' => 'eager',
-            'completedRows' => $enrichedCompletedRows,
-            'failedRows' => $failedRows,
+            'completedRows' => $enrichedCompletedRowsPaged,
+            'completedTotal' => $completedTotal,
+            'completedPage' => $completedPage,
+            'completedTotalPages' => $completedTotalPages,
+            'completedPerPage' => self::PER_PAGE,
+            'failedRows' => $failedRowsPaged,
+            'failedTotal' => $failedTotal,
+            'failedPage' => $failedPage,
+            'failedTotalPages' => $failedTotalPages,
+            'failedPerPage' => self::PER_PAGE,
             'selectedClass' => $this->selectedClass,
             'selectedPayload' => $this->resolvePreviewSelectedPayload($completedRows),
             'selectedFailed' => $this->resolvePreviewSelectedFailed($failedRows),
