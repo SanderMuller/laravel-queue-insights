@@ -79,19 +79,19 @@ parameters:
         -
             identifier: staticMethod.internalClass
             paths:
-                - tests/Unit/Dashboard/ModalResolverTest.php
+                - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
             reportUnmatched: false
         -
             identifier: return.internalClass
             paths:
-                - tests/Unit/Dashboard/ModalResolverTest.php
+                - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
             reportUnmatched: false
         -
             identifier: new.internalClass
             paths:
-                - tests/Unit/Dashboard/ModalResolverTest.php
+                - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
             reportUnmatched: false
         # PHPUnit's AssertionFailedError / ExpectationFailedException are marked @internal
