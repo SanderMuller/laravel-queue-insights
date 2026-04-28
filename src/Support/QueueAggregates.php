@@ -13,6 +13,8 @@ namespace SanderMuller\QueueInsights\Support;
  *
  * Lifted out of `dashboard.blade.php`'s 47-line `@php` block so the
  * derivations are unit-testable and the view becomes a thin shell.
+ *
+ * @internal
  */
 final class QueueAggregates
 {

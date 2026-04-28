@@ -2,19 +2,24 @@
 
 declare(strict_types=1);
 
+use Mockery\LegacyMockInterface;
+use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Dashboard\ModalResolver;
 use SanderMuller\QueueInsights\QueueInsights;
 
-// `QueueInsights` is final; Mockery can't substitute it. The pure-scan
-// resolver paths never call into the service, so a real instance is
-// fine for unit coverage. The service-backed fallback paths in
-// `selectedPending` (`findPendingByUuid`) and `selectedBatch`
-// (`BatchReader::detailRow`) are covered by feature tests:
-//   - tests/Feature/Http/PendingModalTest.php
-//   - tests/Feature/Http/BatchesSectionTest.php
-function modalResolver(): ModalResolver
+// `QueueInsights` is `final readonly` in production. `dg/bypass-finals`
+// strips `final` at autoload time inside the test process so Mockery
+// can substitute it; see tests/Pest.php for the boot. PHPStan still
+// reads the source as final and rejects intersection types like
+// `QueueInsights & MockInterface`, so we route mocks through the
+// Laravel container — `app()->instance()` accepts a `mixed` concrete
+// under the QueueInsights binding, sidestepping the type check.
+function modalResolver((LegacyMockInterface&MockInterface)|null $svc = null): ModalResolver
 {
-    return new ModalResolver(new QueueInsights());
+    $svc ??= Mockery::mock(QueueInsights::class);
+    app()->instance(QueueInsights::class, $svc);
+
+    return resolve(ModalResolver::class);
 }
 
 it('selectedPayload returns null when no id is selected', function (): void {
@@ -63,13 +68,31 @@ it('selectedPending returns null when no uuid is selected', function (): void {
     expect(modalResolver()->selectedPending(null, []))->toBeNull();
 });
 
-it('selectedPending hits the loaded rows without falling back to the service', function (): void {
+it('selectedPending hits the loaded rows without touching the service', function (): void {
+    $svc = Mockery::mock(QueueInsights::class);
+    $svc->shouldNotReceive('findPendingByUuid');
+
     $rows = [
         ['uuid' => 'u-1', 'class' => 'A'],
         ['uuid' => 'u-2', 'class' => 'B'],
     ];
 
-    expect(modalResolver()->selectedPending('u-2', $rows))->toBe($rows[1]);
+    expect(modalResolver($svc)->selectedPending('u-2', $rows))->toBe($rows[1]);
+});
+
+it('selectedPending falls back to the service when the uuid is not in the loaded rows', function (): void {
+    $svc = Mockery::mock(QueueInsights::class);
+    $hit = ['uuid' => 'deep-link', 'class' => 'C'];
+    $svc->shouldReceive('findPendingByUuid')->with('deep-link')->once()->andReturn($hit);
+
+    expect(modalResolver($svc)->selectedPending('deep-link', []))->toBe($hit);
+});
+
+it('selectedPending returns null when both the loaded rows and the service miss', function (): void {
+    $svc = Mockery::mock(QueueInsights::class);
+    $svc->shouldReceive('findPendingByUuid')->with('aged-out')->once()->andReturnNull();
+
+    expect(modalResolver($svc)->selectedPending('aged-out', []))->toBeNull();
 });
 
 it('selectedBatch returns null when no batch is expanded', function (): void {

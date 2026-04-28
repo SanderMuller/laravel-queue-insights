@@ -72,6 +72,28 @@ parameters:
             identifier: method.internalClass
             path: tests/
             reportUnmatched: false
+
+        # Package `@internal` classes legitimately have unit tests. Scope
+        # these suppressions to the specific test files so the rest of the
+        # test tree still enforces the @internal boundary.
+        -
+            identifier: staticMethod.internalClass
+            paths:
+                - tests/Unit/Dashboard/ModalResolverTest.php
+                - tests/Unit/QueueAggregatesTest.php
+            reportUnmatched: false
+        -
+            identifier: return.internalClass
+            paths:
+                - tests/Unit/Dashboard/ModalResolverTest.php
+                - tests/Unit/QueueAggregatesTest.php
+            reportUnmatched: false
+        -
+            identifier: new.internalClass
+            paths:
+                - tests/Unit/Dashboard/ModalResolverTest.php
+                - tests/Unit/QueueAggregatesTest.php
+            reportUnmatched: false
         # PHPUnit's AssertionFailedError / ExpectationFailedException are marked @internal
         # but legitimately referenced from tests when asserting on assertion failures
         -

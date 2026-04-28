@@ -14,6 +14,8 @@ use SanderMuller\QueueInsights\Support\BatchReader;
  * `selectedPending` falls back to a per-uuid Redis lookup,
  * `selectedBatch` falls back to `BatchReader::detailRow()`. These
  * fallbacks are existing behaviour with explicit feature-test coverage.
+ *
+ * @internal
  */
 final readonly class ModalResolver
 {
