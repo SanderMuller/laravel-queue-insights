@@ -12,6 +12,7 @@
     $namespace = $lastBackslash !== false ? substr((string) $fqcn, 0, $lastBackslash + 1) : '';
     $shortName = $lastBackslash !== false ? substr((string) $fqcn, $lastBackslash + 1) : (string) $fqcn;
     $clickable = $f['id'] !== null;
+    $srName = $fqcn . (! empty($f['exception_class']) ? ' (' . $f['exception_class'] . ')' : '');
 
     /** @var array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string}|null $chain */
     $chain = is_array($f['chain'] ?? null) ? $f['chain'] : null;
@@ -23,20 +24,12 @@
         $chainExtra = max(0, $chain['remaining'] - 1);
     }
 @endphp
-<li @class([
-        'grid grid-cols-12 items-center gap-4 px-4 py-2.5',
-        'cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
-    ])
-    @if ($clickable)
-        role="button"
-        tabindex="0"
-        aria-label="Open failed job details"
-        wire:click="openFailed({{ $f['id'] }})"
-        x-on:keydown.enter.prevent="$wire.openFailed({{ $f['id'] }})"
-        x-on:keydown.space.prevent="$wire.openFailed({{ $f['id'] }})"
-    @endif>
-    <span class="sr-only">Details — {{ $fqcn }}@if (! empty($f['exception_class'])) ({{ $f['exception_class'] }})@endif</span>
-
+<x-queue-insights::list-row
+    :clickable="$clickable"
+    wire-action="openFailed"
+    :wire-arg="$f['id']"
+    aria-label="Open failed job details"
+    :sr-name="$srName">
     <div class="col-span-1">
         <span class="inline-flex size-7 items-center justify-center rounded-full bg-red-50 text-red-600 ring-1 ring-inset ring-red-600/20" aria-hidden="true">
             <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor">
@@ -94,4 +87,4 @@
             <span class="text-xs text-gray-300">—</span>
         @endif
     </div>
-</li>
+</x-queue-insights::list-row>

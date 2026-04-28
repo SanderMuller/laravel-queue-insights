@@ -27,18 +27,11 @@
         default => 'pending',
     };
 @endphp
-<li @class([
-        'grid grid-cols-12 items-center gap-4 px-4 py-2.5',
-        'cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
-    ])
-    @if ($clickable)
-        role="button"
-        tabindex="0"
-        aria-label="Open {{ $stateLabel }} job details"
-        wire:click="openPending(@js($row['uuid']))"
-        x-on:keydown.enter.prevent="$wire.openPending(@js($row['uuid']))"
-        x-on:keydown.space.prevent="$wire.openPending(@js($row['uuid']))"
-    @endif>
+<x-queue-insights::list-row
+    :clickable="$clickable"
+    wire-action="openPending"
+    :wire-arg="$row['uuid'] ?? null"
+    :aria-label="'Open ' . $stateLabel . ' job details'">
     <div class="col-span-5 min-w-0">
         <p class="flex items-center gap-1.5 truncate font-mono text-sm">
             <span class="truncate">@if ($namespace !== '')<span class="text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900">{{ $shortName }}</span></span>
@@ -82,4 +75,4 @@
             </p>
         @endif
     </div>
-</li>
+</x-queue-insights::list-row>

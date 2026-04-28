@@ -28,14 +28,11 @@
         $chainExtra = max(0, $chain['remaining'] - 1);
     }
 @endphp
-<li class="grid grid-cols-12 items-center gap-4 px-4 py-2.5 cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500"
-    role="button"
-    tabindex="0"
+<x-queue-insights::list-row
+    wire-action="openPayload"
+    :wire-arg="$row['_id']"
     aria-label="Open job details"
-    wire:click="openPayload(@js($row['_id']))"
-    x-on:keydown.enter.prevent="$wire.openPayload(@js($row['_id']))"
-    x-on:keydown.space.prevent="$wire.openPayload(@js($row['_id']))">
-    <span class="sr-only">Details — {{ $fqcn }}</span>
+    :sr-name="$fqcn">
     <div class="col-span-4 min-w-0">
         {{-- Tight inline: zero whitespace between namespace and leaf so the
             mono-font space gap doesn't appear between them. --}}
@@ -77,4 +74,4 @@
             <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
         </svg>
     </div>
-</li>
+</x-queue-insights::list-row>

@@ -35,13 +35,11 @@
         $statusChip = null;
     }
 @endphp
-<li class="grid grid-cols-12 items-center gap-4 px-4 py-3 cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500"
-    role="button"
-    tabindex="0"
-    aria-label="Open batch details for {{ $label }}"
-    wire:click="toggleBatchInspector(@js($id))"
-    x-on:keydown.enter.prevent="$wire.toggleBatchInspector(@js($id))"
-    x-on:keydown.space.prevent="$wire.toggleBatchInspector(@js($id))">
+<x-queue-insights::list-row
+    wire-action="toggleBatchInspector"
+    :wire-arg="$id"
+    :aria-label="'Open batch details for ' . $label"
+    density="compact">
     <div class="col-span-5 min-w-0">
         <p class="truncate text-sm font-medium text-gray-900">{{ $label }}</p>
         <p class="truncate font-mono text-xs text-gray-400">{{ $id }}</p>
@@ -77,4 +75,4 @@
             <span class="basis-full text-right text-xs text-gray-400" title="{{ $createdAt->toIso8601String() }}">created {{ $createdAt->diffForHumans() }}</span>
         @endif
     </div>
-</li>
+</x-queue-insights::list-row>
