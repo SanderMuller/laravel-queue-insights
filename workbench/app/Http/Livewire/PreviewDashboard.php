@@ -51,7 +51,7 @@ final class PreviewDashboard extends Component
      * so the preview exercises the same view contract. Per-page locked at 25.
      */
 
-    private const PER_PAGE = 25;
+    private const int PER_PAGE = 25;
 
     public int $completedPage = 1;
 

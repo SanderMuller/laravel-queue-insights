@@ -13,7 +13,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
 use InvalidArgumentException;
@@ -91,7 +90,7 @@ final class QueueInsightsDashboard extends Component
      * lands on page 2 instead of an empty view.
      */
 
-    private const PER_PAGE = 25;
+    private const int PER_PAGE = 25;
 
     #[Url(as: 'cp', except: 1)]
     public int $completedPage = 1;

@@ -86,7 +86,7 @@ final class RecordingConsoleKernel implements KernelContract
         // No-op.
     }
 
-    public function setArtisan(?Application $artisan): void
+    public function setArtisan(?Application $_artisan): void
     {
         // No-op.
     }
