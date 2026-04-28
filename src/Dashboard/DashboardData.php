@@ -10,6 +10,7 @@ use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
 use SanderMuller\QueueInsights\Support\RowEnricher;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
@@ -33,6 +34,14 @@ final readonly class DashboardData
     public const int PER_PAGE = 25;
 
     /**
+     * Underlying fetch ceiling for the Completed + Failed tabs. Pages
+     * are sliced from this set, so this caps how deep the user can
+     * paginate ("recent {RECENT_FETCH_LIMIT} jobs" — older history is
+     * not paginated by design).
+     */
+    public const int RECENT_FETCH_LIMIT = self::PER_PAGE * 10;
+
+    /**
      * The exact set of keys `build()` returns. Used by
      * `PreviewDashboardSmokeTest` to assert the workbench preview's
      * seedData() matches the production view contract — drift caught at
@@ -46,6 +55,8 @@ final readonly class DashboardData
         'healthy',
         'queuePreview',
         'pendingPreview',
+        'completedPreview',
+        'failedPreview',
         'fmtMs',
         'classes',
         'pendingRows',
@@ -107,8 +118,8 @@ final readonly class DashboardData
 
         $failedFilters = $component->buildFailedFilters();
 
-        $recentCompleted = $this->svc->recentCompleted(50, $component->selectedClass);
-        $recentFailed = $this->svc->recentFailed(50, $failedFilters);
+        $recentCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, $component->selectedClass);
+        $recentFailed = $this->svc->recentFailed(self::RECENT_FETCH_LIMIT, $failedFilters);
         $throughput = $this->svc->hourlyThroughput();
 
         $selectedPayload = $this->modals->selectedPayload($component->selectedPayloadId, $recentCompleted);
@@ -150,7 +161,7 @@ final readonly class DashboardData
         $bulkRetryCount = null;
         if ($canRetry && ! $failedFilters->isEmpty()) {
             try {
-                $bulkRetryCount = count($component->collectFilteredFailedUuids($failedFilters));
+                $bulkRetryCount = count(FailedJobUuidCollector::collect($failedFilters));
             } catch (Throwable) {
                 $bulkRetryCount = null;
             }
@@ -198,6 +209,13 @@ final readonly class DashboardData
         $failedPage = min(max(1, $component->failedPage), $failedTotalPages);
         $failedRowsPaged = array_slice($failedAll, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
 
+        // Overview-card previews — top-5 of the FULL filtered list (not the
+        // paginated slice). Otherwise navigating to page 2 of Completed or
+        // Failed and back to Overview would surface page-2 rows in the
+        // "Recent" cards instead of the actual most-recent entries.
+        $completedPreview = array_slice($completedAll, 0, 5);
+        $failedPreview = array_slice($failedAll, 0, 5);
+
         $aggregates = QueueAggregates::aggregate($queues);
 
         return [
@@ -208,6 +226,8 @@ final readonly class DashboardData
             'healthy' => $aggregates['healthy'],
             'queuePreview' => QueueAggregates::queuePreview($aggregates['at_risk'], $aggregates['deepest']),
             'pendingPreview' => QueueAggregates::pendingPreview($inFlightRows, $pendingRows, $delayedRows),
+            'completedPreview' => $completedPreview,
+            'failedPreview' => $failedPreview,
             'fmtMs' => WaitTimeMetrics::format(...),
             'classes' => $classes,
             'pendingRows' => $pendingRows,

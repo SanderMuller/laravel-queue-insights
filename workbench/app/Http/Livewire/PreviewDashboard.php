@@ -702,6 +702,9 @@ final class PreviewDashboard extends Component
         $failedPage = min(max(1, $this->failedPage), $failedTotalPages);
         $failedRowsPaged = array_slice($failedRows, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
 
+        $completedPreview = array_slice($enrichedCompletedRows, 0, 5);
+        $failedPreview = array_slice($failedRows, 0, 5);
+
         $inFlightRows = $this->seedInFlightRows($now);
         $pendingRows = $this->seedPendingRows($now);
         $delayedRows = $this->seedDelayedRows($now);
@@ -716,6 +719,8 @@ final class PreviewDashboard extends Component
             'healthy' => $aggregates['healthy'],
             'queuePreview' => QueueAggregates::queuePreview($aggregates['at_risk'], $aggregates['deepest']),
             'pendingPreview' => QueueAggregates::pendingPreview($inFlightRows, $pendingRows, $delayedRows),
+            'completedPreview' => $completedPreview,
+            'failedPreview' => $failedPreview,
             'fmtMs' => WaitTimeMetrics::format(...),
             'classes' => $classes,
             'filterConnectionOptions' => $connections,

@@ -9,7 +9,13 @@
      *   $queuePreview                       — top-N queues for the Queues card
      *   $pendingEnabled, $hasPendingAny, $inFlightRows, $pendingRows, $delayedRows
      *   $pendingPreview                     — top-N pending rows for the Pending card
-     *   $completedRows, $completedTotal, $failedRows, $failedTotal
+     *   $completedPreview, $failedPreview   — top-5 of the unsliced post-filter
+     *                                          recent lists. Distinct from
+     *                                          `$completedRows`/`$failedRows`
+     *                                          which are paginated slices and
+     *                                          would shift after the user
+     *                                          navigates pages.
+     *   $completedTotal, $failedTotal
      *   $stats, $totalDepth, $totalInFlight
      */
 @endphp
@@ -95,11 +101,11 @@
             </div>
             <span class="text-[10px] font-medium text-emerald-700">{{ number_format($stats['jobs_past_hour']) }}/hr</span>
         </div>
-        @if(count($completedRows) === 0)
+        @if(count($completedPreview ?? []) === 0)
             <p class="py-2 text-xs text-gray-500">No completed jobs yet.</p>
         @else
             <ul role="list" class="divide-y divide-gray-950/5">
-                @foreach(array_slice($completedRows, 0, 5) as $row)
+                @foreach($completedPreview as $row)
                     @include('queue-insights::partials.card-mini-row', ['type' => 'completed', 'item' => $row])
                 @endforeach
             </ul>
@@ -129,11 +135,11 @@
                 <span class="text-[10px] font-medium text-emerald-700">none past hr</span>
             @endif
         </div>
-        @if(count($failedRows) === 0)
+        @if(count($failedPreview ?? []) === 0)
             <p class="py-2 text-xs text-gray-500">No failed jobs.</p>
         @else
             <ul role="list" class="divide-y divide-gray-950/5">
-                @foreach(array_slice($failedRows, 0, 5) as $f)
+                @foreach($failedPreview as $f)
                     @include('queue-insights::partials.card-mini-row', ['type' => 'failed', 'item' => $f])
                 @endforeach
             </ul>

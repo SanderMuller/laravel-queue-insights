@@ -7,7 +7,6 @@ namespace SanderMuller\QueueInsights\Http\Livewire;
 use Illuminate\Contracts\View\View;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
@@ -17,8 +16,8 @@ use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
-use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use Throwable;
 
 #[Layout('queue-insights::layouts.app')]
@@ -371,7 +370,7 @@ final class QueueInsightsDashboard extends Component
         }
 
         try {
-            $uuids = $this->collectFilteredFailedUuids($filters);
+            $uuids = FailedJobUuidCollector::collect($filters);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: retryFailedBulk query threw', [
                 'exception' => $throwable::class,
@@ -426,35 +425,6 @@ final class QueueInsightsDashboard extends Component
             ]);
             Session::flash('qi.retry.error', 'Bulk retry failed — check logs.');
         }
-    }
-
-    /**
-     * Pluck uuids matching the current filters, capped at 101 rows so
-     * the count check can distinguish "exactly 100" from "more than 100".
-     * Public so `Dashboard\DashboardData::build()` can compute the bulk-
-     * retry UI eligibility count from the same query.
-     *
-     * @internal
-     *
-     * @return list<string>
-     */
-    public function collectFilteredFailedUuids(FailedJobFilters $filters): array
-    {
-        $query = QueueInsights::applyFailedJobFilters(
-            DB::table('failed_jobs')->orderByDesc('id')->limit(101),
-            $filters,
-        );
-
-        $rows = $query->pluck('uuid')->all();
-
-        $out = [];
-        foreach ($rows as $value) {
-            if (is_string($value) && $value !== '') {
-                $out[] = $value;
-            }
-        }
-
-        return $out;
     }
 
     private function hitRetryRateLimit(): bool
