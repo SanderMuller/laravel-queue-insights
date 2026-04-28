@@ -19,6 +19,7 @@ use InvalidArgumentException;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use SanderMuller\QueueInsights\Dashboard\ModalResolver;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
@@ -603,7 +604,7 @@ final class QueueInsightsDashboard extends Component
         return mb_substr($clean, 0, 80);
     }
 
-    public function render(QueueInsights $svc): View
+    public function render(QueueInsights $svc, ModalResolver $modals): View
     {
         $captureMode = Config::string('capture.payloads', 'off');
 
@@ -616,8 +617,8 @@ final class QueueInsightsDashboard extends Component
         $recentFailed = $svc->recentFailed(50, $failedFilters);
         $throughput = $svc->hourlyThroughput();
 
-        $selectedPayload = $this->resolveSelectedPayload($recentCompleted);
-        $selectedFailed = $this->resolveSelectedFailed($recentFailed);
+        $selectedPayload = $modals->selectedPayload($this->selectedPayloadId, $recentCompleted);
+        $selectedFailed = $modals->selectedFailed($this->selectedFailedId, $recentFailed);
 
         // Decorate the selected rows with the per-job wait sample. Modals
         // render `Wait: —` when this is null (legacy job pre-dating the
@@ -670,12 +671,12 @@ final class QueueInsightsDashboard extends Component
         $delayedRows = $pendingEnabled ? $svc->allDelayedJobs(50) : [];
         $inFlightRows = $pendingEnabled ? $svc->allInFlightJobs(50) : [];
 
-        $selectedPending = $this->resolveSelectedPending(
+        $selectedPending = $modals->selectedPending(
+            $this->selectedPendingUuid,
             array_merge($inFlightRows, $pendingRows, $delayedRows),
-            $svc,
         );
 
-        $selectedBatch = $this->resolveSelectedBatch($batches);
+        $selectedBatch = $modals->selectedBatch($this->expandedBatchId, $batches);
 
         // Drive `inert` from the same booleans that actually mount the
         // modals — codex review #1. Routing it off raw selection ids
@@ -752,65 +753,6 @@ final class QueueInsightsDashboard extends Component
             'selectedPendingUuid' => $this->selectedPendingUuid,
             'hasOpenModal' => $hasOpenModal,
         ]);
-    }
-
-    /**
-     * Resolve the open batch row from the section data so the batch modal can
-     * mount it. Searches the visible Batches section first (already loaded
-     * for the page), then falls back to a direct `BatchReader::detailRow()`
-     * lookup so a batch chip whose target sits OUTSIDE the recent-batches
-     * window (`batches.max_per_query`) still resolves — without the fallback
-     * the modal would land on the misleading "Batch no longer tracked"
-     * empty state even though `Bus::findBatch()` succeeds.
-     *
-     * Returns null only when the BatchRepository row genuinely aged out.
-     *
-     * @param  list<array<string, mixed>>  $batches
-     * @return array<string, mixed>|null
-     */
-    private function resolveSelectedBatch(array $batches): ?array
-    {
-        if ($this->expandedBatchId === '') {
-            return null;
-        }
-
-        foreach ($batches as $row) {
-            if (($row['id'] ?? null) === $this->expandedBatchId) {
-                return $row;
-            }
-        }
-
-        return BatchReader::detailRow($this->expandedBatchId);
-    }
-
-    /**
-     * Look up the currently-open pending row by uuid. Searches the rows we
-     * already fetched for the section first, then falls back to a direct
-     * `pending:{uuid}` hash lookup so a batched job sitting outside the top-50
-     * aggregates (or any uuid arrived at via a deep-linked URL) still mounts
-     * with real data — not the misleading "no longer pending" empty state
-     * that comes from `null` here.
-     *
-     * Returns null only when the uuid genuinely isn't tracked anymore (worker
-     * grabbed it mid-modal, TTL fired, or pending tracking was disabled at
-     * queue time).
-     *
-     * @param  list<array<string, mixed>>  $allRows  pending + delayed + in-flight combined
-     * @return array<string, mixed>|null
-     */
-    private function resolveSelectedPending(array $allRows, QueueInsights $svc): ?array
-    {
-        if ($this->selectedPendingUuid === null) {
-            return null;
-        }
-
-        foreach ($allRows as $row) {
-            if (($row['uuid'] ?? null) === $this->selectedPendingUuid) {
-                return $row;
-            }
-        }
-
-        return $svc->findPendingByUuid($this->selectedPendingUuid);
     }
 
     /**
@@ -932,43 +874,5 @@ final class QueueInsightsDashboard extends Component
         }
 
         return $rows;
-    }
-
-    /**
-     * @param  list<array<string, string>>  $recentCompleted
-     * @return array<string, string>|null
-     */
-    private function resolveSelectedPayload(array $recentCompleted): ?array
-    {
-        if ($this->selectedPayloadId === null) {
-            return null;
-        }
-
-        foreach ($recentCompleted as $entry) {
-            if (($entry['_id'] ?? null) === $this->selectedPayloadId) {
-                return $entry;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * @param  list<array<array-key, mixed>>  $recentFailed
-     * @return array<array-key, mixed>|null
-     */
-    private function resolveSelectedFailed(array $recentFailed): ?array
-    {
-        if ($this->selectedFailedId === null) {
-            return null;
-        }
-
-        foreach ($recentFailed as $row) {
-            if (is_numeric($row['id'] ?? null) && (int) $row['id'] === $this->selectedFailedId) {
-                return $row;
-            }
-        }
-
-        return null;
     }
 }
