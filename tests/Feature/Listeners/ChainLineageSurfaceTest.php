@@ -180,8 +180,17 @@ it('parent-lineage-row partial renders nothing when parent_uuid is null', functi
         'copyId' => 'qi-test-parent-uuid',
     ])->render();
 
-    expect(trim($html))
-        ->toBeEmpty();
+    // The partial may leak `Deprecated:` notices into the rendered output
+    // on prefer-lowest matrix cells where transitive dev tools (Ray /
+    // Workbench) ship PHP-8.4-deprecated APIs. Strip those before asserting
+    // — the only thing this test cares about is that no parent-lineage
+    // markup is emitted.
+    $cleaned = preg_replace('/^Deprecated:.*$/m', '', $html) ?? $html;
+
+    expect(trim($cleaned))
+        ->toBeEmpty()
+        ->and($html)->not->toContain('parent-lineage')
+        ->and($html)->not->toContain('Open →');
 });
 
 it('failed-modal markdown export includes Parent line with class when both are set', function (): void {
