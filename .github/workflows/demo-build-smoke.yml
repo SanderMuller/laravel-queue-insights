@@ -1,0 +1,97 @@
+name: demo-build-smoke
+
+# Runs the Laravel Cloud build script in a clean checkout to catch
+# script-level regressions before they trip on a real deploy. This is
+# a SMOKE GUARD, not a true drift guard — GitHub Actions can't replicate
+# Cloud's repo-root detection or platform-specific build hooks. Real
+# integration is the deploy-on-push to Cloud.
+
+on:
+  pull_request:
+    paths:
+      - 'demo/**'
+      - 'workbench/**'
+      - 'src/**'
+      - 'config/**'
+      - '.laravel-cloud/**'
+      - '.github/workflows/demo-build-smoke.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo-build-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  demo-build-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      - name: Run Cloud build script
+        run: bash .laravel-cloud/build.sh
+
+      - name: Verify path-repo + workbench autoload rewrites
+        run: |
+          set -euo pipefail
+          # The build script promotes demo/ to root; the rewritten
+          # composer.json is now at ./composer.json. Both rewrites must
+          # have happened or composer install will fail.
+          grep -q '"url": "./package"' composer.json || {
+            echo "FAIL: path-repo url not rewritten to ./package" >&2
+            exit 1
+          }
+          grep -q '"Workbench\\\\App\\\\": "./package/workbench/app/"' composer.json || {
+            echo "FAIL: Workbench autoload not rewritten to ./package/workbench/app/" >&2
+            exit 1
+          }
+
+      - name: Composer install (no-dev, optimised autoload)
+        run: composer install --no-dev --no-interaction --optimize-autoloader
+
+      - name: Bootstrap minimal env so artisan can boot
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          php artisan key:generate --quiet
+          # `route:list` doesn't actually hit the database, but the
+          # default sqlite driver fails to register without a writable
+          # path — touch the file so the connection resolves.
+          mkdir -p database && touch database/database.sqlite
+
+      - name: Verify dashboard route is mounted
+        run: |
+          set -euo pipefail
+          # `route:list` boots the application and lists registered
+          # routes — fails if any provider blew up at boot, the workbench
+          # provider didn't autoload, or the package's `/queue-insights`
+          # route didn't register (the latter being the regression that
+          # motivated dropping DeferrableProvider).
+          php artisan route:list --json > /tmp/routes.json
+          php -r '
+            $routes = json_decode(file_get_contents("/tmp/routes.json"), true);
+            $names = array_filter(array_column($routes, "name"));
+            $required = ["queue-insights.dashboard", "queue-insights.connection"];
+            foreach ($required as $r) {
+              if (!in_array($r, $names, true)) {
+                fwrite(STDERR, "FAIL: route $r not registered\n");
+                exit(1);
+              }
+            }
+            $uris = array_column($routes, "uri");
+            if (!in_array("/", $uris, true)) {
+              fwrite(STDERR, "FAIL: workbench-mounted `/` route not present\n");
+              exit(1);
+            }
+            echo "OK: dashboard routes mounted\n";
+          '
