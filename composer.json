@@ -3,7 +3,7 @@
     "description": "Self-hosted, driver-agnostic queue observability for Laravel. Per-class throughput, durations, failures, and live depth/in-flight/delayed metrics with a Livewire dashboard.",
     "keywords": ["laravel", "queue", "observability", "sqs", "horizon", "metrics", "dashboard"],
     "homepage": "https://github.com/SanderMuller/laravel-queue-insights",
-    "type": "project",
+    "type": "library",
     "license": "MIT",
     "authors": [
         {
