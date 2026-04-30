@@ -114,7 +114,7 @@ it('fires again after the cooldown expires', function (): void {
     Artisan::call('queue-insights:snapshot');
 
     // Simulate cooldown expiry by deleting the cooldown key.
-    Redis::connection('default')->command('del', [KeyPrefix::make('alert:cooldown:sqsq:work')]);
+    Redis::connection('default')->command('del', [KeyPrefix::make('alert:cooldown:depth:sqsq:work')]);
 
     Artisan::call('queue-insights:snapshot');
 
@@ -135,4 +135,61 @@ it('does not alert when alerts.enabled = false', function (): void {
     Artisan::call('queue-insights:snapshot');
 
     Event::assertNotDispatched(QueueDepthExceeded::class);
+});
+
+it('picks the highest matching severity when multiple thresholds match', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => depthDriver(6000));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', [
+        ['connection' => 'sqsq', 'queue' => 'work', 'depth' => 1000, 'severity' => 'warning'],
+        ['connection' => 'sqsq', 'queue' => 'work', 'depth' => 5000, 'severity' => 'critical'],
+    ]);
+
+    Event::fake([QueueDepthExceeded::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertDispatchedTimes(QueueDepthExceeded::class, 1);
+    Event::assertDispatched(QueueDepthExceeded::class, fn (QueueDepthExceeded $e): bool => $e->depth === 6000
+        && $e->threshold === 5000
+        && $e->severity === 'critical');
+});
+
+it('picks warning when only the warning threshold matches', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => depthDriver(2000));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', [
+        ['connection' => 'sqsq', 'queue' => 'work', 'depth' => 1000, 'severity' => 'warning'],
+        ['connection' => 'sqsq', 'queue' => 'work', 'depth' => 5000, 'severity' => 'critical'],
+    ]);
+
+    Event::fake([QueueDepthExceeded::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertDispatched(QueueDepthExceeded::class, fn (QueueDepthExceeded $e): bool => $e->threshold === 1000
+        && $e->severity === 'warning');
+});
+
+it('legacy alerts.thresholds wins over alerts.rules.depth.thresholds', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => depthDriver(2500));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    // Legacy: 2000. New: 5000 (would not match at depth 2500).
+    config()->set('queue-insights.alerts.thresholds', [
+        ['connection' => 'sqsq', 'queue' => 'work', 'depth' => 2000],
+    ]);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', [
+        ['connection' => 'sqsq', 'queue' => 'work', 'depth' => 5000, 'severity' => 'critical'],
+    ]);
+
+    Event::fake([QueueDepthExceeded::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    // Legacy entry (no severity) defaults to 'warning' on the wire event.
+    Event::assertDispatched(QueueDepthExceeded::class, fn (QueueDepthExceeded $e): bool => $e->threshold === 2000
+        && $e->severity === 'warning');
 });
