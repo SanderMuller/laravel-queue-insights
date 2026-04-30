@@ -54,6 +54,7 @@
     "exclude": [
         ".cache",
         ".github",
+        "demo",
         "vendor"
     ]
 }
