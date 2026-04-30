@@ -256,4 +256,19 @@ return [
         'max_per_query' => 100,
         'ttl_seconds' => 604800,
     ],
+
+    /*
+     | Settings for the `queue-insights:work` multi-connection supervisor.
+     |
+     | shutdown_grace_seconds bounds the window a child has to drain after
+     | the parent forwards SIGTERM/SIGINT/SIGQUIT (or a non-zero sibling
+     | exit triggers teardown). Survivors past the window get SIGKILL.
+     |
+     | Must be strictly greater than the largest child --timeout plus
+     | driver-poll latency (SQS long-poll = 20s, redis BLPOP up to 5s).
+     | Default 120 covers --timeout=60 + 20s long poll + headroom.
+     */
+    'work' => [
+        'shutdown_grace_seconds' => 120,
+    ],
 ];

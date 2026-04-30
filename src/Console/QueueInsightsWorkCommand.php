@@ -135,11 +135,18 @@ final class QueueInsightsWorkCommand extends Command
     }
 
     /**
-     * Spawn every process, stream prefixed output, and propagate exit
-     * codes per §2.4. First non-zero child triggers `SIGTERM` to the
-     * remaining live children; the parent exit code is the **first**
-     * non-zero child's. Phase 3 layers the grace + `SIGKILL` window on
-     * top of this loop.
+     * Spawn every process, stream prefixed output, propagate exit codes
+     * per §2.4, and forward `SIGTERM`/`SIGINT`/`SIGQUIT` to live children
+     * with a grace + `SIGKILL` escalation per §2.3.
+     *
+     * - First non-zero child triggers `SIGTERM` to the remaining live
+     *   children; the parent exit code is the **first** non-zero child's.
+     * - External signal triggers the same teardown path; the parent
+     *   exit code becomes `128 + signum` (Bash convention) when no
+     *   child failure preceded the signal.
+     * - After `shutdown_grace_seconds` elapses with survivors still
+     *   running, send `SIGKILL` and write a warning line listing the
+     *   killed connections.
      *
      * @param  array<string, Process>  $processes
      */
@@ -155,6 +162,44 @@ final class QueueInsightsWorkCommand extends Command
         $exits = [];
         $firstFailure = null;
         $teardownIssued = false;
+        $teardownStartedAt = null;
+        $signalReceived = null;
+        $killEscalated = false;
+
+        // Async signal delivery — without this, handlers only fire at
+        // pcntl_signal_dispatch() points, and the supervisor would
+        // ignore SIGTERM until the next 100ms poll tick. Combined with
+        // the per-iteration `usleep`, this gives sub-100ms forwarding
+        // latency on operator-initiated shutdown.
+        pcntl_async_signals(true);
+
+        $signalHandler = function (int $sig) use (&$signalReceived, &$processes, &$exits, &$teardownIssued, &$teardownStartedAt): void {
+            // Idempotent — second + third forwarded SIGTERM ticks while
+            // children are draining must not reset the grace timer.
+            if ($signalReceived !== null) {
+                return;
+            }
+
+            $signalReceived = $sig;
+            $teardownIssued = true;
+            $teardownStartedAt = microtime(true);
+
+            foreach ($processes as $connection => $process) {
+                if (array_key_exists($connection, $exits)) {
+                    continue;
+                }
+
+                if ($process->isRunning()) {
+                    $process->signal($sig);
+                }
+            }
+        };
+
+        pcntl_signal(SIGTERM, $signalHandler);
+        pcntl_signal(SIGINT, $signalHandler);
+        pcntl_signal(SIGQUIT, $signalHandler);
+
+        $graceSeconds = Config::int('work.shutdown_grace_seconds', 120);
 
         while (count($exits) < count($processes)) {
             foreach ($processes as $connection => $process) {
@@ -166,9 +211,6 @@ final class QueueInsightsWorkCommand extends Command
                     continue;
                 }
 
-                // Final blocking wait drains any remaining pipe bytes
-                // through the streaming callback so the prefixer's
-                // carry buffer holds the true tail before flush.
                 $process->wait();
 
                 $code = $process->getExitCode() ?? 0;
@@ -184,6 +226,7 @@ final class QueueInsightsWorkCommand extends Command
 
             if ($firstFailure !== null && ! $teardownIssued) {
                 $teardownIssued = true;
+                $teardownStartedAt = microtime(true);
                 foreach ($processes as $connection => $process) {
                     if (array_key_exists($connection, $exits)) {
                         continue;
@@ -193,12 +236,50 @@ final class QueueInsightsWorkCommand extends Command
                 }
             }
 
+            if ($teardownIssued && ! $killEscalated && $teardownStartedAt !== null) {
+                if (microtime(true) - $teardownStartedAt > $graceSeconds) {
+                    $killed = [];
+                    foreach ($processes as $connection => $process) {
+                        if (array_key_exists($connection, $exits)) {
+                            continue;
+                        }
+
+                        if ($process->isRunning()) {
+                            $process->signal(SIGKILL);
+                            $killed[] = $connection;
+                        }
+                    }
+
+                    if ($killed !== []) {
+                        fwrite($this->streams->stderr(), sprintf(
+                            "queue-insights:work: grace window (%ds) expired, sent SIGKILL to: %s\n",
+                            $graceSeconds,
+                            implode(', ', $killed),
+                        ));
+                    }
+
+                    $killEscalated = true;
+                }
+            }
+
             if (count($exits) < count($processes)) {
                 usleep(100_000);
             }
         }
 
-        return $firstFailure ?? self::SUCCESS;
+        if ($firstFailure !== null) {
+            return $firstFailure;
+        }
+
+        if ($signalReceived !== null) {
+            // Bash convention: 128 + signal number for signal-initiated
+            // exits. Lets parent process managers (systemd, etc.)
+            // distinguish "operator asked us to stop" from "supervisor
+            // crashed" without an extra log scrape.
+            return 128 + $signalReceived;
+        }
+
+        return self::SUCCESS;
     }
 
     /**

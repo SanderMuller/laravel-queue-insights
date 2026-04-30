@@ -18,13 +18,20 @@ declare(strict_types=1);
  *   STUB_SLEEP    int     — seconds to sleep before exit (default 0)
  *   STUB_TRAP     "1"     — install SIGTERM handler that prints
  *                           `caught:SIGTERM` to stdout and exits 143
+ *   STUB_IGNORE_TERM "1"  — set SIGTERM to SIG_IGN so only SIGKILL ends
+ *                           the process (used by grace-expiry tests)
  */
-if (getenv('STUB_TRAP') === '1' && extension_loaded('pcntl')) {
+if (extension_loaded('pcntl')) {
     pcntl_async_signals(true);
-    pcntl_signal(SIGTERM, function (): void {
-        fwrite(STDOUT, "caught:SIGTERM\n");
-        exit(143);
-    });
+
+    if (getenv('STUB_TRAP') === '1') {
+        pcntl_signal(SIGTERM, function (): void {
+            fwrite(STDOUT, "caught:SIGTERM\n");
+            exit(143);
+        });
+    } elseif (getenv('STUB_IGNORE_TERM') === '1') {
+        pcntl_signal(SIGTERM, SIG_IGN);
+    }
 }
 
 $out = getenv('STUB_OUT');

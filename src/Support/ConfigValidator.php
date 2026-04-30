@@ -159,11 +159,28 @@ final class ConfigValidator
     }
 
     /**
-     * Validate the chain_lineage block. Type-checks the toggle, the redis
-     * connection override (when set), and the two TTLs.
+     * Validate the work block. Type-checks `shutdown_grace_seconds` as a
+     * positive integer. Hard exception on misconfiguration matches the
+     * rest of the validator surface — silent default-fallback would mask
+     * a typo that ultimately decides whether an unresponsive child gets
+     * SIGKILL'd at all.
      *
-     * @param  array<array-key, mixed>  $chainLineage
+     * @param  array<array-key, mixed>  $work
      */
+    public static function validateWork(array $work): void
+    {
+        if (! array_key_exists('shutdown_grace_seconds', $work)) {
+            return;
+        }
+
+        $value = $work['shutdown_grace_seconds'];
+        if (! is_int($value) || $value < 1) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.work.shutdown_grace_seconds must be a positive integer.'
+            );
+        }
+    }
+
     public static function validateChainLineage(array $chainLineage): void
     {
         if (isset($chainLineage['enabled']) && ! is_bool($chainLineage['enabled'])) {

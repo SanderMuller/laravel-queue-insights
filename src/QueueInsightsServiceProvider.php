@@ -140,6 +140,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         ConfigValidator::validateCapture($section($cfg, 'capture'));
         ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
+        ConfigValidator::validateWork($section($cfg, 'work'));
 
         $this->registerListeners();
         $this->registerSchedule();
