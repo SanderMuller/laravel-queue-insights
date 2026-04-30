@@ -9,6 +9,10 @@
 
 Self-hosted queue observability for Laravel. A Horizon-style dashboard that doesn't lock you into the Redis queue driver.
 
+## Live demo
+
+[**queue-insights-demo-main-wgcmqf.laravel.cloud**](https://queue-insights-demo-main-wgcmqf.laravel.cloud) — public preview hosted on Laravel Cloud, seeded with realistic fixtures (eight queues, alerts firing, batched + chained jobs, recent completed/failed lists). The deploy uses the same `workbench/app/Support/PreviewSeeder.php` that powers `vendor/bin/testbench serve` locally, so what you see is the package rendering against real Redis reads — not a static screenshot.
+
 ## Features
 
 - Live depth, in-flight, and delayed counts per queue. Works on SQS, Redis, and database queues.
