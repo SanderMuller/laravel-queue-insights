@@ -11,7 +11,7 @@ Implements a specification file phase-by-phase, tracking progress directly in th
 ## When to Use This Skill
 
 Use this skill when:
-- Implementing a feature described in a `specs/*.md` file
+- Implementing a feature described in a `internal/specs/*.md` file
 - The user asks to "implement this spec" or "start the next phase"
 - Continuing work on a partially implemented spec
 

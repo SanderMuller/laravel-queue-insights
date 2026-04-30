@@ -78,7 +78,7 @@
         </div>
 
         <div class="p-4">
-            @if ($row === null)
+            @if($row === null)
                 <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center">
                     <p class="text-sm font-medium text-gray-900">Batch no longer tracked</p>
                     <p class="mt-1 text-xs text-gray-500">
@@ -96,7 +96,7 @@
                         </dl>
                         <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                             <x-queue-insights::meta-pill label="ID" :value="$id"/>
-                            @if ($statusChip)
+                            @if($statusChip)
                                 <span class="rounded-md px-1.5 py-0.5 font-medium ring-1 ring-inset {{ $statusChip['cls'] }}">
                                     {{ $statusChip['label'] }}
                                 </span>
@@ -128,15 +128,15 @@
                     </dl>
 
                     {{-- Timeline --}}
-                    @if ($createdAt instanceof \Carbon\CarbonInterface || $finishedAt instanceof \Carbon\CarbonInterface)
+                    @if($createdAt instanceof \Carbon\CarbonInterface || $finishedAt instanceof \Carbon\CarbonInterface)
                         <dl class="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-950/5 pt-3 text-xs text-gray-500">
-                            @if ($createdAt instanceof \Carbon\CarbonInterface)
+                            @if($createdAt instanceof \Carbon\CarbonInterface)
                                 <div class="flex items-baseline gap-1.5">
                                     <dt class="text-gray-400">created</dt>
                                     <dd title="{{ $createdAt->toIso8601String() }}">{{ $createdAt->diffForHumans() }}</dd>
                                 </div>
                             @endif
-                            @if ($finishedAt instanceof \Carbon\CarbonInterface)
+                            @if($finishedAt instanceof \Carbon\CarbonInterface)
                                 <div class="flex items-baseline gap-1.5">
                                     <dt class="text-gray-400">{{ $isCancelled ? 'cancelled' : 'finished' }}</dt>
                                     <dd title="{{ $finishedAt->toIso8601String() }}">{{ $finishedAt->diffForHumans() }}</dd>
@@ -152,13 +152,13 @@
                     server round-trip via the open* methods. --}}
                 <section>
                     <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Items ({{ count($items) }})</p>
-                    @if (count($items) === 0)
+                    @if(count($items) === 0)
                         <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center text-xs text-gray-500">
                             No tracked items for this batch yet — the per-uuid list expires {{ (int) (\SanderMuller\QueueInsights\Support\Config::int('batches.ttl_seconds', 604800) / 86400) }}d after enqueue.
                         </div>
                     @else
                         <ul role="list" class="overflow-hidden rounded-xl divide-y divide-gray-950/5 ring-1 ring-gray-950/5">
-                            @foreach ($items as $i => $item)
+                            @foreach($items as $i => $item)
                                 @php
                                     $status = $item['status'];
                                     $klass = $item['class'] ?? null;
@@ -190,11 +190,11 @@
                                         'flex items-start gap-3 bg-white p-3 text-xs',
                                         'cursor-pointer hover:bg-gray-50' => $itemAction !== null,
                                     ])
-                                    @if ($itemAction !== null && $itemAction['method'] === 'openPayload')
+                                    @if($itemAction !== null && $itemAction['method'] === 'openPayload')
                                         wire:click="openPayload(@js($itemAction['arg']))"
-                                    @elseif ($itemAction !== null && $itemAction['method'] === 'openFailed')
+                                    @elseif($itemAction !== null && $itemAction['method'] === 'openFailed')
                                         wire:click="openFailed({{ (int) $itemAction['arg'] }})"
-                                    @elseif ($itemAction !== null && $itemAction['method'] === 'openPending')
+                                    @elseif($itemAction !== null && $itemAction['method'] === 'openPending')
                                         wire:click="openPending(@js($itemAction['arg']))"
                                     @endif>
                                     <span aria-hidden="true" class="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-950/[0.04] text-[11px] font-semibold tabular-nums text-gray-600 ring-1 ring-inset ring-gray-950/10">{{ $i + 1 }}</span>
@@ -202,7 +202,7 @@
                                         <p class="flex items-center gap-1.5">
                                             <span class="{{ $iconCls }} font-mono">{{ $icon }}</span>
                                             <span class="truncate font-mono font-medium text-gray-900">{{ $klassLabel }}</span>
-                                            @if ($status === 'in_flight')
+                                            @if($status === 'in_flight')
                                                 <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 px-1 py-px font-sans text-[10px] font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
                                                     <span aria-hidden="true" class="inline-block size-1 animate-pulse rounded-full bg-amber-500"></span>
                                                     running
@@ -211,12 +211,12 @@
                                         </p>
                                         <div class="mt-1 flex flex-wrap items-center gap-x-2 text-gray-400">
                                             <span class="font-mono">…{{ $shortUuid }}</span>
-                                            @if (is_int($ts))
+                                            @if(is_int($ts))
                                                 <span title="{{ \Illuminate\Support\Facades\Date::createFromTimestamp($ts)->toIso8601String() }}">{{ \Illuminate\Support\Facades\Date::createFromTimestamp($ts)->diffForHumans() }}</span>
                                             @endif
                                         </div>
                                     </div>
-                                    @if ($itemAction !== null)
+                                    @if($itemAction !== null)
                                         <svg class="mt-1 size-3 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                             <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
                                         </svg>

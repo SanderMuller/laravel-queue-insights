@@ -64,14 +64,14 @@
     </dl>
 
     <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-xs">
-        @if ($statusChip)
+        @if($statusChip)
             <span class="rounded {{ $statusChip['cls'] }} px-1.5 py-0.5 font-medium ring-1 ring-inset">
                 {{ $statusChip['label'] }}
             </span>
         @endif
-        @if ($finishedAt instanceof \Carbon\CarbonInterface)
+        @if($finishedAt instanceof \Carbon\CarbonInterface)
             <span class="basis-full text-right text-xs text-gray-400" title="{{ $finishedAt->toIso8601String() }}">finished {{ $finishedAt->diffForHumans() }}</span>
-        @elseif ($createdAt instanceof \Carbon\CarbonInterface)
+        @elseif($createdAt instanceof \Carbon\CarbonInterface)
             <span class="basis-full text-right text-xs text-gray-400" title="{{ $createdAt->toIso8601String() }}">created {{ $createdAt->diffForHumans() }}</span>
         @endif
     </div>

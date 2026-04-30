@@ -59,7 +59,7 @@
             @endif
             <span class="rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-gray-700">{{ $q['driver'] }}</span>
 
-            @if ($hasInspector)
+            @if($hasInspector)
                 <button type="button"
                         wire:click="toggleQueueInspector(@js($q['inspector_key']))"
                         class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-gray-500 ring-1 ring-inset ring-gray-950/10 hover:bg-gray-950/5 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
@@ -68,7 +68,7 @@
                         <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
                     </svg>
                     <span class="tabular-nums">{{ number_format($q['tracked_count']) }} queued</span>
-                    @if ($gapBadge)
+                    @if($gapBadge)
                         <span class="ml-1 rounded bg-red-50 px-1 py-px font-medium text-red-700">+{{ number_format($gap) }} gap</span>
                     @endif
                 </button>
@@ -89,28 +89,28 @@
         </div>
     </div>
 
-    @if (! empty($q['inspector_open']))
+    @if(! empty($q['inspector_open']))
         <div class="border-t border-gray-950/5 bg-gray-50/70 px-4 py-3">
-            @if ($gapBadge)
+            @if($gapBadge)
                 <p class="mb-2 text-xs text-red-700">
                     <strong>Tracking gap.</strong> {{ number_format($gap) }} job{{ $gap === 1 ? '' : 's' }} on the queue {{ $gap === 1 ? 'is' : 'are' }} not in our pending tracking — the lists below are a sample, not a complete enumeration. Trust the queue counters (above) for totals.
                 </p>
             @endif
 
-            @if (empty($q['pending_jobs']) && empty($q['delayed_jobs']))
+            @if(empty($q['pending_jobs']) && empty($q['delayed_jobs']))
                 <p class="text-xs text-gray-500">No pending or delayed jobs tracked for this queue.</p>
             @else
-                @if (! empty($q['pending_jobs']))
+                @if(! empty($q['pending_jobs']))
                     <h4 class="mb-1 text-xs font-medium text-gray-500">Pending ({{ count($q['pending_jobs']) }})</h4>
                     <ul role="list" class="mb-3 divide-y divide-gray-950/5 overflow-hidden rounded bg-white ring-1 ring-gray-950/5">
-                        @foreach ($q['pending_jobs'] as $job)
+                        @foreach($q['pending_jobs'] as $job)
                             @php
                                 $queuedAt = (int) ($job['queued_at'] ?? 0);
                             @endphp
                             <li class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
                                 <span class="flex min-w-0 items-center gap-1.5">
                                     <span class="truncate font-mono text-gray-900">{{ $job['class'] ?? '—' }}</span>
-                                    @if (! empty($job['batch_id']))
+                                    @if(! empty($job['batch_id']))
                                         @include('queue-insights::partials.batch-chip', ['batchId' => $job['batch_id']])
                                     @endif
                                 </span>
@@ -122,17 +122,17 @@
                     </ul>
                 @endif
 
-                @if (! empty($q['delayed_jobs']))
+                @if(! empty($q['delayed_jobs']))
                     <h4 class="mb-1 text-xs font-medium text-gray-500">Delayed ({{ count($q['delayed_jobs']) }})</h4>
                     <ul role="list" class="divide-y divide-gray-950/5 overflow-hidden rounded bg-white ring-1 ring-gray-950/5">
-                        @foreach ($q['delayed_jobs'] as $job)
+                        @foreach($q['delayed_jobs'] as $job)
                             @php
                                 $availableAt = (int) ($job['available_at'] ?? 0);
                             @endphp
                             <li class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
                                 <span class="flex min-w-0 items-center gap-1.5">
                                     <span class="truncate font-mono text-gray-900">{{ $job['class'] ?? '—' }}</span>
-                                    @if (! empty($job['batch_id']))
+                                    @if(! empty($job['batch_id']))
                                         @include('queue-insights::partials.batch-chip', ['batchId' => $job['batch_id']])
                                     @endif
                                 </span>

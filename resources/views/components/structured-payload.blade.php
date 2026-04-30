@@ -29,7 +29,7 @@
     ];
 @endphp
 
-@if (is_array($body))
+@if(is_array($body))
     @php
         $configKeys = ['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout'];
         $executionKeys = ['attempts', 'delay', 'createdAt', 'pushedAt'];
@@ -90,14 +90,14 @@
     @endphp
     <div class="space-y-3">
         {{-- Job config --}}
-        @if (count($presentConfig) > 0)
+        @if(count($presentConfig) > 0)
             <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
                 <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Job config</p>
                 <dl class="divide-y divide-gray-950/5">
-                    @foreach ($presentConfig as $k)
+                    @foreach($presentConfig as $k)
                         <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs">
                             <dt class="font-mono font-medium text-gray-600">
-                                @if (isset($fieldHelp[$k]))
+                                @if(isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
@@ -111,25 +111,25 @@
         @endif
 
         {{-- Execution state --}}
-        @if (count($presentExecution) > 0)
+        @if(count($presentExecution) > 0)
             <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
                 <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Execution</p>
                 <dl class="divide-y divide-gray-950/5">
-                    @foreach ($presentExecution as $k)
+                    @foreach($presentExecution as $k)
                         @php
                             $v = $body[$k];
                             $ts = in_array($k, ['createdAt', 'pushedAt'], true) ? $renderTimestamp($v) : null;
                         @endphp
                         <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs">
                             <dt class="font-mono font-medium text-gray-600">
-                                @if (isset($fieldHelp[$k]))
+                                @if(isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
                                 @endif
                             </dt>
                             <dd class="break-all font-mono {{ $v === null ? 'text-gray-400' : 'text-gray-900' }}">
-                                @if ($ts !== null)
+                                @if($ts !== null)
                                     <span>{{ $ts['human'] }}</span>
                                     <span class="ml-1 text-[10px] text-gray-400" title="{{ $ts['abs'] }}">({{ $v }})</span>
                                 @else
@@ -143,11 +143,11 @@
         @endif
 
         {{-- Tags --}}
-        @if (count($tags) > 0)
+        @if(count($tags) > 0)
             <div class="rounded-lg bg-white px-4 py-3 ring-1 ring-gray-950/5">
                 <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Tags</p>
                 <ul role="list" class="flex flex-wrap gap-1.5">
-                    @foreach ($tags as $tag)
+                    @foreach($tags as $tag)
                         <li class="rounded bg-gray-950/5 px-2 py-0.5 font-mono text-[11px] text-gray-700 ring-1 ring-inset ring-gray-950/5">{{ is_scalar($tag) ? (string) $tag : (string) json_encode($tag, JSON_UNESCAPED_SLASHES) }}</li>
                     @endforeach
                 </ul>
@@ -157,7 +157,7 @@
         {{-- Job instance — explanatory note when the serialized blob was truncated by
             an older sanitizer config (max_field_bytes hit). New stream entries written
             after the sanitizer fix preserve serialized blobs intact. --}}
-        @if ($instanceTruncated && $instanceData === null)
+        @if($instanceTruncated && $instanceData === null)
             <div class="rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-900 ring-1 ring-inset ring-amber-600/20">
                 <p class="font-medium">Job instance unavailable</p>
                 <p class="mt-1 text-amber-800">The serialized command was truncated when this entry was captured (older sanitizer config). New entries will surface the full instance data.</p>
@@ -166,11 +166,11 @@
 
         {{-- Job instance data — extracted properties from the serialized command.
             Visible by default since this is usually what you actually want to see. --}}
-        @if ($instanceData !== null && count($instanceData['properties']) > 0)
+        @if($instanceData !== null && count($instanceData['properties']) > 0)
             <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
                 <div class="flex items-center justify-between border-b border-gray-950/5 px-4 py-2">
                     <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Job instance</p>
-                    @if ($instanceData['class'] !== null)
+                    @if($instanceData['class'] !== null)
                         <p class="break-all font-mono text-[11px] text-gray-500">{{ $instanceData['class'] }}</p>
                     @endif
                 </div>
@@ -179,7 +179,7 @@
         @endif
 
         {{-- Raw serialized command — collapsed by default. Only useful for low-level debug. --}}
-        @if (is_string($dataCommand) && $dataCommand !== '')
+        @if(is_string($dataCommand) && $dataCommand !== '')
             <div class="rounded-lg bg-white ring-1 ring-gray-950/5" x-data="{ expanded: false }">
                 <div class="flex items-center justify-between border-b border-gray-950/5 px-4 py-2">
                     <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Serialized command</p>
@@ -191,7 +191,7 @@
                     </button>
                 </div>
                 <div class="px-4 py-2 text-xs">
-                    @if ($dataCommandName)
+                    @if($dataCommandName)
                         <p class="font-mono text-gray-600">{{ $dataCommandName }}</p>
                     @endif
                     <p class="mt-0.5 text-[10px] text-gray-500 tabular-nums">PHP-serialized object, {{ number_format(strlen($dataCommand)) }} bytes</p>
@@ -204,30 +204,30 @@
             render through the recursive `nested-data` component — same drill-
             into-tree UX Sentry uses for "Additional Data". Scalars stay
             inline with truncate-and-expand for long strings. --}}
-        @if (count($otherKeys) > 0)
+        @if(count($otherKeys) > 0)
             <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
                 <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Other fields</p>
                 <dl class="divide-y divide-gray-950/5">
-                    @foreach ($otherKeys as $k)
+                    @foreach($otherKeys as $k)
                         @php
                             $v = $body[$k];
                             $isContainer = is_array($v) && $v !== [];
                             $rendered = $isContainer ? '' : (is_scalar($v) ? (string) $v : (string) json_encode($v, JSON_UNESCAPED_SLASHES));
                             $truncated = ! $isContainer && strlen($rendered) > 200;
                         @endphp
-                        <div class="@if (! $isContainer) grid grid-cols-[max-content_1fr] gap-x-4 @endif px-4 py-2 text-xs"
-                             @if ($truncated) x-data="{ expanded: false }" @endif>
+                        <div class="@if(! $isContainer) grid grid-cols-[max-content_1fr] gap-x-4 @endif px-4 py-2 text-xs"
+                             @if($truncated) x-data="{ expanded: false }" @endif>
                             <dt class="font-mono font-medium text-gray-600 {{ $isContainer ? 'mb-1 block' : '' }}">
-                                @if (isset($fieldHelp[$k]))
+                                @if(isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
                                 @endif
                             </dt>
                             <dd class="{{ $isContainer ? '-mx-4 mt-1 border-t border-gray-950/5 bg-gray-950/[0.02]' : 'break-all font-mono ' . ($v === null ? 'text-gray-400' : 'text-gray-900') }}">
-                                @if ($isContainer)
+                                @if($isContainer)
                                     <x-queue-insights::nested-data :data="$v"/>
-                                @elseif ($truncated)
+                                @elseif($truncated)
                                     <span x-show="! expanded">{{ substr($rendered, 0, 200) }}…</span>
                                     <span x-show="expanded" x-cloak>{{ $rendered }}</span>
                                     <button type="button" @click="expanded = ! expanded"
@@ -245,7 +245,7 @@
             </div>
         @endif
     </div>
-@elseif (is_string($body) && $body !== '')
+@elseif(is_string($body) && $body !== '')
     <div class="rounded-lg bg-white p-4 ring-1 ring-gray-950/5">
         <p class="mb-2 text-xs text-gray-500">Raw body (not JSON-decodable):</p>
         <pre class="whitespace-pre-wrap break-all font-mono text-xs text-gray-900">{{ $body }}</pre>

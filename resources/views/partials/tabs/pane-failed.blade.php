@@ -74,7 +74,7 @@
             <div class="col-span-1"></div>
         </div>
         <ul role="list" class="divide-y divide-gray-950/5">
-            @foreach ($failedRows as $f)
+            @foreach($failedRows as $f)
                 @include('queue-insights::partials.failed-list-row', ['f' => $f])
             @endforeach
         </ul>

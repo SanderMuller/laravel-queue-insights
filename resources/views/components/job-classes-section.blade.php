@@ -79,7 +79,7 @@
                                     {{-- Job: class FQCN + (optional) fail-rate subtitle --}}
                                     <td class="max-w-md py-3 pr-3 align-top">
                                         <p class="truncate font-mono text-xs font-medium text-gray-900">{{ $c['class'] }}</p>
-                                        @if ($failed > 0)
+                                        @if($failed > 0)
                                             <p class="mt-0.5 text-[10px] font-medium tabular-nums text-red-600">{{ number_format($failRate, 1) }}% fail rate</p>
                                         @endif
                                     </td>
@@ -94,15 +94,15 @@
                                             {{ $avgMs !== null ? number_format((float) $avgMs, 0) . ' ms' : '—' }}
                                             <span class="ml-1 text-[10px] font-normal text-gray-400">avg</span>
                                         </p>
-                                        @if ($p95Ms !== null || $maxMs !== null)
+                                        @if($p95Ms !== null || $maxMs !== null)
                                             <p class="mt-0.5 text-[10px] tabular-nums text-gray-500">
-                                                @if ($p95Ms !== null)
+                                                @if($p95Ms !== null)
                                                     <span class="font-medium text-gray-700">{{ number_format((int) $p95Ms) }}</span><span class="text-gray-400"> p95</span>
                                                 @endif
-                                                @if ($p95Ms !== null && $maxMs !== null)
+                                                @if($p95Ms !== null && $maxMs !== null)
                                                     <span class="mx-0.5 text-gray-300">·</span>
                                                 @endif
-                                                @if ($maxMs !== null)
+                                                @if($maxMs !== null)
                                                     <span class="font-medium text-gray-700">{{ number_format((int) $maxMs) }}</span><span class="text-gray-400"> max</span>
                                                 @endif
                                             </p>
@@ -110,8 +110,8 @@
                                     </td>
                                     {{-- Last run: humanized + absolute subtitle --}}
                                     <td class="px-3 py-3 align-top">
-                                        <p class="whitespace-nowrap text-xs text-gray-700" @if ($lastRunIso) title="{{ $lastRunIso }}" @endif>{{ $lastRunAt?->diffForHumans() ?? '—' }}</p>
-                                        @if ($lastRunIso)
+                                        <p class="whitespace-nowrap text-xs text-gray-700" @if($lastRunIso) title="{{ $lastRunIso }}" @endif>{{ $lastRunAt?->diffForHumans() ?? '—' }}</p>
+                                        @if($lastRunIso)
                                             <p class="mt-0.5 font-mono text-[10px] text-gray-400">{{ $lastRunIso }}</p>
                                         @endif
                                     </td>

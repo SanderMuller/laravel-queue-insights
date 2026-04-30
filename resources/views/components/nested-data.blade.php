@@ -32,14 +32,14 @@
     };
 @endphp
 
-@if (is_array($data))
-    @if ($data === [])
+@if(is_array($data))
+    @if($data === [])
         <span class="font-mono text-gray-400">[]</span>
-    @elseif ($depth >= $maxDepth)
+    @elseif($depth >= $maxDepth)
         <span class="font-mono text-gray-400">{...} (max depth)</span>
     @else
         <dl class="divide-y divide-gray-950/5">
-            @foreach ($data as $k => $v)
+            @foreach($data as $k => $v)
                 @php
                     $isContainer = is_array($v) && $v !== [];
                     $rendered = $isContainer ? '' : $renderInline($v);
@@ -51,10 +51,10 @@
                         : '';
                 @endphp
                 <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs"
-                     @if ($isContainer || $truncated) x-data="{ expanded: false }" @endif>
+                     @if($isContainer || $truncated) x-data="{ expanded: false }" @endif>
                     <dt class="font-mono font-medium text-gray-600">{{ $k }}</dt>
                     <dd class="min-w-0 break-all font-mono {{ $v === null ? 'text-gray-400' : ($isContainer ? 'text-purple-700' : 'text-gray-900') }}">
-                        @if ($isContainer)
+                        @if($isContainer)
                             <button type="button"
                                     @click="expanded = ! expanded"
                                     class="inline-flex items-center gap-1.5 rounded bg-gray-950/5 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
@@ -75,7 +75,7 @@
                                     <x-queue-insights::nested-data :data="$v" :depth="$depth + 1"/>
                                 </div>
                             </template>
-                        @elseif ($truncated)
+                        @elseif($truncated)
                             <span x-show="! expanded">{{ substr($rendered, 0, 200) }}…</span>
                             <span x-show="expanded" x-cloak>{{ $rendered }}</span>
                             <button type="button" @click="expanded = ! expanded"

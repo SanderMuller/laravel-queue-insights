@@ -111,6 +111,260 @@ diff already shows.
 
 ---
 
+# Alerting — internals + extension points
+
+This is the AI-facing reference for the alerting subsystem. End-user docs live in `README.md` and `internal/specs/alerting.md`. This file is what you read **before** changing the alerting code.
+
+## Detector catalogue (source of truth)
+
+| Rule | File | Scope | Fires when | Reads |
+|---|---|---|---|---|
+| `depth` | `src/Alerts/Detectors/DepthDetector.php` | per-queue | `live:depth` ≥ a configured threshold (highest matching severity wins) | `live:depth:{c}:{q}` (90 s TTL) |
+| `stalled` | `src/Alerts/Detectors/StalledDetector.php` | per-queue | depth ≥ `min_depth` AND `ZCOUNT wait:{c}:{q} now-idle_seconds +inf == 0` | `live:depth:{c}:{q}`, `wait:{c}:{q}` zset |
+| `oldest_pending` | `src/Alerts/Detectors/OldestPendingDetector.php` | per-queue | oldest `available_at <= now` ≥ `seconds` | `pending-zset:{c}:{q}`, `pending:{uuid}` hash |
+| `stuck_inflight` | `src/Alerts/Detectors/StuckInFlightDetector.php` | per-queue | oldest `started_at` ≥ `seconds` | `inflight-zset:{c}:{q}`, `pending:{uuid}` hash |
+| `failure_rate` | `src/Alerts/Detectors/FailureRateDetector.php` | per-class | `failed/(processed+failed) ≥ ratio` AND total ≥ `min_jobs` (current hour bucket only) | `processed:{class}:{YmdH}`, `failed:{class}:{YmdH}` |
+| `slow_p95` | `src/Alerts/Detectors/SlowP95Detector.php` | per-class | `lrange duration:samples:{class}` p95 ≥ `class_threshold_ms[$class]` | `duration:samples:{class}` list |
+| `snapshot_errored` | `src/Alerts/Detectors/SnapshotErroredDetector.php` | per-queue | `EXISTS snapshot:error:{c}:{q}` (10-min TTL written by snapshot command's catch branch) | `snapshot:error:{c}:{q}` |
+| `backlog_growing` | `src/Alerts/Detectors/BacklogGrowingDetector.php` | per-queue | least-squares depth slope ≥ `min_slope_per_minute` over the recent samples zset (opt-in, warms up after `min_samples`) | `samples:depth:{c}:{q}` zset (member `"{ts}:{depth}"`, score ts; cap 30; 2 h TTL) |
+| `snapshot_command_dead` | `src/Alerts/SnapshotWatchdog.php` | global, **dashboard only** | no `live:depth:*` keys present for any configured queue | `live:depth:{c}:{q}` |
+
+Each `*Detector::detect()` returns `?Issue` and is **pure** w.r.t. side effects — no cooldown, no events, no notifications. Cooldown + dispatch sit in `IssueDispatcher`. The dashboard reads via `ActiveIssuesProvider` (per-request memoise + 5 s Redis cache `alert:cache:active-issues`).
+
+## Signal sources (write paths to verify before touching detector reads)
+
+| Detector reads | Written by |
+|---|---|
+| `live:depth:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::writeMetric` (`SETEX`, 90 s) |
+| `wait:{c}:{q}` zset | `Listeners\RecordJobProcessing` line 87+ — **must** canonicalise queue key (`CanonicalQueueKey::from`); see Phase 2 finding in `internal/specs/alerting.md` |
+| `pending-zset:{c}:{q}` | `Listeners\RecordJobQueued::writePendingTracking` (canonical key) |
+| `pending:{uuid}` hash | same listener; fields `connection,queue,class,queued_at,available_at,batch_id,state,started_at` |
+| `inflight-zset:{c}:{q}` | `Listeners\RecordJobProcessing::markInFlight` via Lua `markInFlight()` script (canonical key) |
+| `processed:{class}:{YmdH}` / `failed:{class}:{YmdH}` | `Listeners\RecordJobProcessed` / `RecordJobFailed` |
+| `duration:samples:{class}` | `Listeners\RecordJobProcessed` (RPUSH, capped at 500) |
+| `snapshot:error:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::recordError` (catch branch only, 600 s TTL) |
+| `samples:depth:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::writeDepthSample` (`ZADD` + cap-30 `ZREMRANGEBYRANK` + 7200 s `EXPIRE`; member `"{ts}:{depth}"`) |
+| `qi:classes` zset | `Listeners\RecordJobProcessed` (last-seen score, pruned 30 d by snapshot command) |
+
+When adding a new detector, the writer must already exist or you ship it in the same change. Do **not** invent a new key family for v1 of any rule — reuse the existing tables. New key families are a v2-grade migration (see §6 backlog-growing in the spec).
+
+## Detect-vs-dispatch split
+
+```
+QueueInsightsSnapshotCommand
+    ├── for each (connection, queue) pair:
+    │   ├── snapshot driver → write metrics
+    │   └── IssueDispatcher::dispatchForSnapshot(c, q, depth)
+    │       └── IssueDetector::detectForSnapshot(c, q, depth)
+    │           └── runs queue-scoped detectors (DepthDetector::detectWithDepth, ...)
+    ├── catch path: IssueDispatcher::dispatchSnapshotError(c, q)
+    └── after the loop: IssueDispatcher::dispatchClassScoped()
+        └── IssueDetector::detectClassScoped($class) for each $class in qi:classes
+
+QueueInsightsDashboard::render
+    └── DashboardData::build
+        ├── ActiveIssuesProvider::get  → IssueDetector::detectAll  (no cooldown, no notify)
+        ├── SnapshotWatchdog::isSnapshotCommandDead
+        └── AlertRulesPanelBuilder::build
+```
+
+Snapshot command path **always runs the detector fresh** so cooldown decisions reflect truth. Dashboard path **always reads the cache** (5 s TTL + per-request memoise) to bound thunder-herd across concurrent tabs.
+
+## Cooldown — namespaced by rule
+
+Key shape:
+
+- queue-scoped: `alert:cooldown:{rule}:{c}:{q}`
+- class-scoped: `alert:cooldown:{rule}:class:{class}`
+
+Constructed by `Issue::cooldownKeySuffix()`. One rule's cooldown does NOT suppress another rule's alert on the same queue — keys are namespaced. Cooldown applies to **outbound notifications only**; the dashboard always reflects live state.
+
+`Cooldown::acquire()` uses `SET key val EX ttl NX` via `RedisEval::exec` so the phpredis-vs-Predis option-shape divergence stays in one place.
+
+## Notification routing — Spatie idiom
+
+Built on `Illuminate\Notifications\Notification`. Key classes: `Alerts\Notifications\QueueAlertNotification` (via/toMail/toSlack), `Alerts\Notifications\QueueInsightsNotifiable` (routeNotificationFor*, `getKey()='queue-insights'`), `Alerts\Notifications\Channels\{LogChannel,SlackWebhookChannel}`. Both notification + notifiable are bound (not singleton) so hosts override via container. Optional channels live in `composer.json` `suggest`, never `require`.
+
+Rationale + Phase 4 pivot history: `internal/specs/alerting.md` §Phase 4.
+
+## Adding a custom detector
+
+Most operator-driven asks are new detectors. Pattern:
+
+1. Create `src/Alerts/Detectors/MyDetector.php` exposing `detect(string $connection, string $canonicalQueue): ?Issue` (queue-scoped) or `detect(string $class): ?Issue` (class-scoped).
+2. Add the rule key + config defaults to `config/queue-insights.php` under `alerts.rules.*`.
+3. Add validation to `Support\ConfigValidator::validateAlerts()` — every shipped rule has its own `validate{Rule}Rule()` method already; copy that template.
+4. Inject the detector into `Alerts\IssueDetector` (constructor + `detectQueueScoped()` or `detectClassScoped()`).
+5. Add a typed event class under `src/Events/` and wire it into `IssueDispatcher::fireEvent()` match expression.
+6. Tests — feature test under `tests/Feature/AlertingDetectorsTest.php` (queue-scoped) or `AlertingClassDetectorsTest.php` (class-scoped) seeding fixture Redis state, plus a config-validator unit test.
+
+For a non-Issue side effect (e.g. write a metric to Prometheus when an alert fires), prefer listening to the typed event in the host app rather than extending the dispatcher — keeps the dispatcher's blast radius bounded.
+
+## Config migration — `mergeConfigFrom` shallow-merge caveat
+
+`ServiceProvider::mergeConfigFrom` is a **shallow** merge. Consumers who published `config/queue-insights.php` before the `alerts.rules` migration will NOT pick up the new nested defaults — their published file's `alerts` array wins entirely. Three states the boot path handles:
+
+1. New install (no published config) → package defaults apply.
+2. Pre-existing published config with legacy `alerts.thresholds`, no `alerts.rules` key → **legacy wins**, deprecation logged on boot.
+3. Pre-existing published config with both → **legacy wins**, deprecation logged.
+
+Why legacy wins: hosts setting both are likely mid-migration with legacy still load-bearing; silently ignoring it risks losing prod alerts. Loud deprecation + legacy-wins is safer.
+
+## What NOT to do
+
+- Don't read the cache from the snapshot command. Cooldown decisions need fresh detector output every tick.
+- Don't add a runtime config-mutation surface (admin UI / API to toggle rules). The active-rules panel is **read-only** by design — config is the source of truth, version-controlled, reviewable.
+- Don't bypass `Cooldown::acquire()` for "important" alerts. The cooldown key is per-(rule, target) — if you want louder paging for a critical issue, set a shorter `cooldown_seconds` or wire an external pager (PagerDuty channel) that handles its own escalation.
+- Don't extend `Issue` with rule-specific fields. The `context: array<string, mixed>` slot exists to keep the DTO stable across detectors. Strongly-typed events (`QueueStalled`, `OldestPendingAging`, …) are where rule-specific shape lives for host listeners.
+- Don't make any detector depend on a new Redis key family without a migration plan. `backlog_growing` (Phase 7) is the only rule shipping its own samples zset (`samples:depth:{c}:{q}`) — and it ships the writer alongside the detector in the same change, never read-only.
+
+# Backward chain lineage — internals + edit points
+
+AI-facing reference for the `chain_lineage` subsystem. End-user docs live in
+`README.md` (the `### Chained jobs` section); the design rationale lives in
+`internal/specs/backward-chain-lineage.md`. Read this **before** touching any
+of the listeners or support classes listed below.
+
+## What it does
+
+Surfaces **who dispatched this job** for any link in a `Bus::chain([...])`.
+The forward direction (where the chain is going) was already captured per-row;
+this subsystem captures the backward direction so the failed-job markdown
+export and the modal can answer "which job ran *before* this failure" without
+inspecting application code.
+
+## Pipeline (do NOT reorder these listeners)
+
+```
+JobProcessing(parent) ──► push qi:chain-claim:{conn}:{queue}:{nextClass}:{fp} (LPUSH)
+                          [happens BEFORE $job->fire(), which dispatches the child]
+                          [Phase 0 ordering test locks this assumption]
+
+JobQueued(child)      ──► RPOP qi:chain-claim:{conn}:{queue}:{ownClass}:{tailFp}
+                          on hit  ► SETEX qi:lineage:{child-uuid} = parent-uuid
+
+JobProcessing(child)  ──► HSET pending:{uuid} parent_uuid (in-flight modal)
+
+JobProcessed(child)   ──► XADD completed-stream entry includes parent_uuid field
+                          DEL  qi:lineage:{child-uuid}     (durable copy lives on the row)
+
+JobFailed(child)      ──► (no copy — qi:lineage:{uuid} survives at 7d TTL,
+                          RowEnricher::failed reads it directly per page)
+
+JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
+                                (uuid → class index; hydrates parent_uuid → label)
+```
+
+## Key catalogue
+
+| Key | Writer | Reader | TTL | Purpose |
+|---|---|---|---|---|
+| `qi:chain-claim:{conn}:{queue}:{nextClass}:{tailFp}` | `RecordJobProcessing` (LPUSH via Lua) | `RecordJobQueued` (RPOP) | `chain_lineage.claim_ttl_seconds` (60 s) | Per-shape FIFO list of parent UUIDs awaiting attribution |
+| `qi:lineage:{child-uuid}` | `RecordJobQueued` on claim hit | `RowEnricher::failed`, `RecordJobProcessing` (copy to pending), `RecordJobProcessed` (copy to stream then `forgetLineage`) | `chain_lineage.lineage_ttl_seconds` (7 d) | Interim child→parent pointer; durable for failed-row reads |
+| `qi:class:{uuid}` | `RecordJobProcessed`, `RecordJobFailed` | `ParentClassResolver::resolve(Many)` | `chain_lineage.lineage_ttl_seconds` (7 d) | uuid → class label; used to render `Parent: {uuid} (Class)` |
+| `parent_uuid` field on the completed-stream XADD | `RecordJobProcessed` (copies from `qi:lineage:{uuid}`) | `RowEnricher::completed` | stream retention | Hot-path read with no Redis hit |
+
+## Touchpoints — files that own this subsystem
+
+- `src/Listeners/RecordJobProcessing.php`
+  - `pushChainClaim()` — write side. Decodes parent payload via
+    `SerializedCommandReader::extractChainContext`, builds the key, LPUSHes the
+    parent UUID through `LuaScripts::pushChainClaim()` (atomic LPUSH+EXPIRE).
+  - `copyLineageToPending()` — child's read side. Reads `qi:lineage:{uuid}`,
+    HSETs `parent_uuid` onto the pending hash. Skipped when pending tracking
+    is disabled.
+- `src/Listeners/RecordJobQueued.php`
+  - `resolveChainLineage()` — RPOPs unconditionally on every `JobQueued`.
+    Phase 0 finding #3 confirms `chainConnection`/`chainQueue` are stripped
+    by `SerializesModels::__serialize`, so they cannot be used as a "chained
+    child" gate. Root jobs miss harmlessly. Cross-shape collision is the
+    only false-positive surface — bounded by `(connection, queue, class,
+    tail-classes)` shape equality.
+  - `extractTailClasses()` — fail-closed; first malformed `chained` entry
+    returns null and skips the lookup, so the read-side never collides on a
+    partially-parsed parent fingerprint.
+- `src/Listeners/RecordJobProcessed.php`
+  - `resolveParentUuid()` — copies `qi:lineage:{uuid}` into the stream entry
+    and forgets the interim hash. Idempotent: stream entry is appended once.
+  - `qi:class:{uuid}` SETEX block — writes the parent-class index used by
+    `ParentClassResolver`.
+- `src/Listeners/RecordJobFailed.php`
+  - `qi:class:{uuid}` SETEX block. Deliberately does NOT touch
+    `qi:lineage:{uuid}` — the interim hash's 7-day TTL matches failed-row
+    retention and `RowEnricher::failed` reads it directly via batched MGET.
+- `src/Support/ChainLineageClaim.php` — pure key + fingerprint builder.
+  No I/O. `fingerprint([])` is the last-link case (sha1 of `'[]'`).
+- `src/Support/ChainLineageStore.php` — Redis wrapper. Uses
+  `chain_lineage.redis_connection` (override) or falls back to
+  `redis_connection`.
+- `src/Support/ParentClassResolver.php` — uuid → class lookup. `resolveMany`
+  batches via MGET so paged failed/completed lists hydrate in one round-trip.
+- `src/Support/RowEnricher.php`
+  - `completed()` — reads `parent_uuid` straight off the stream entry, then
+    hydrates `parent_class` via batched `ParentClassResolver::resolveMany`.
+  - `failed()` — `lineageMany()` MGETs `qi:lineage:{uuid}` for every row,
+    then resolves classes the same way.
+- `resources/views/partials/parent-lineage-row.blade.php` — the `↰ From`
+  block. Caller passes a unique `copyId` (DOM id is collision-prone across
+  modals).
+- `resources/views/components/details-modal.blade.php` and
+  `resources/views/components/failed-modal.blade.php` — both `@include` the
+  partial above the existing `Chain` block. The failed-modal markdown
+  export builder gains the `**Parent:** \`uuid\` (class)` line.
+- `src/Support/ConfigValidator.php::validateChainLineage` — wired into the
+  service provider's boot path. Type-checks the toggle, the redis_connection
+  override (when non-null), and both TTLs.
+- `src/Support/Lua/PushChainClaim.lua` — atomic LPUSH+EXPIRE. The
+  `LuaScripts::pushChainClaim()` accessor caches the file content per process.
+
+## Behavioural rules — DO NOT VIOLATE
+
+1. **The write side runs at `JobProcessing`, NOT `JobProcessed`.** The child's
+   `JobQueued` fires synchronously inside the parent's `fire()` window —
+   pushing the ticket at `JobProcessed` is too late. Phase 0 ordering test
+   locks this; if it ever fails after a Laravel upgrade, the design must
+   move (probably to `JobQueueing` on the parent) before this feature can
+   ship on that version.
+2. **Never overwrite a non-null `parent_uuid` with null on the durable
+   record.** The retry path can re-fire `JobQueued` with a payload that
+   yields no chain extraction; `resolveChainLineage` returns early in that
+   case so the existing `qi:lineage:{uuid}` is preserved.
+3. **List semantics, not single-key SETEX.** Two parents with identical
+   shape concurrently in flight would otherwise overwrite each other's
+   ticket. LPUSH+RPOP bounds the worst case to "FIFO order across
+   identical-shape concurrent chains" — still ambiguous but no overwrite.
+4. **Encrypted parents are silently no-op.** `extractChainContext` returns
+   null for `ShouldBeEncrypted` payloads; both write and read sides skip.
+   Document this if a host's chains rely on encryption.
+5. **`chainConnection`/`chainQueue` are NOT the lineage signal.** Phase 0
+   finding #3: `SerializesModels::__serialize` strips properties whose
+   value equals their declared default. For default `Bus::chain()` usage
+   both fields are null, both are stripped, both are unusable. The read
+   side's gate is "always RPOP".
+6. **`qi:class:{uuid}` is best-effort.** The class label drops past
+   `lineage_ttl_seconds`. Don't add a fallback that scans the completed
+   stream — the side-key is the contract; aged-out parents render as
+   "uuid only".
+
+## Config surface
+
+```php
+'chain_lineage' => [
+    'enabled' => env('QUEUE_INSIGHTS_CHAIN_LINEAGE', true),
+    'redis_connection' => env('QUEUE_INSIGHTS_CHAIN_LINEAGE_REDIS'),
+    'claim_ttl_seconds' => 60,
+    'lineage_ttl_seconds' => 604800,
+],
+```
+
+When `enabled = false` every entry point in this subsystem short-circuits at
+the listener level — zero Redis writes, zero overhead. Verified by the
+`feature flag off short-circuits before any cache write` test.
+
+## Non-goals
+
+Click-through to parent modal, cross-worker exact attribution, cycle traversal protection. See `internal/specs/backward-chain-lineage.md` for residuals + Phase 4 follow-ups.
+
 # Release Automation
 
 ## CHANGELOG.md is updated automatically — do NOT edit by hand for releases

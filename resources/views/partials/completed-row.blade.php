@@ -36,20 +36,20 @@
     <div class="col-span-4 min-w-0">
         {{-- Tight inline: zero whitespace between namespace and leaf so the
             mono-font space gap doesn't appear between them. --}}
-        <p class="truncate font-mono text-sm">@if ($namespace !== '')<span class="text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900">{{ $shortName }}</span></p>
+        <p class="truncate font-mono text-sm">@if($namespace !== '')<span class="text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900">{{ $shortName }}</span></p>
         <p class="mt-0.5 flex items-center gap-1.5">
-            @if (! empty($row['short_id']))
+            @if(! empty($row['short_id']))
                 <span class="font-mono text-xs text-gray-400">#{{ $row['short_id'] }}</span>
             @endif
-            @if (! empty($row['batch_id']))
+            @if(! empty($row['batch_id']))
                 @include('queue-insights::partials.batch-chip', ['batchId' => $row['batch_id']])
             @endif
-            @if ($chain !== null)
+            @if($chain !== null)
                 <span class="inline-flex items-center gap-1 rounded-md bg-gray-950/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-gray-600 ring-1 ring-inset ring-gray-950/10"
                       title="Next: {{ $chain['next_class'] }} ({{ $chain['remaining'] }} chained)">
                     <span aria-hidden="true">↳</span>
                     <span>{{ $chainNextLast }}</span>
-                    @if ($chainExtra > 0)
+                    @if($chainExtra > 0)
                         <span class="text-gray-400">(+{{ $chainExtra }})</span>
                     @endif
                 </span>
@@ -62,12 +62,12 @@
     </div>
     <div class="col-span-2 text-right">
         <p class="text-sm font-medium tabular-nums text-gray-900">{{ $runtimeShort }}</p>
-        @if ($attempts !== null && $attempts > 1)
+        @if($attempts !== null && $attempts > 1)
             <p class="mt-0.5 text-xs font-medium tabular-nums text-amber-700">{{ $attempts }} tries</p>
         @endif
     </div>
     <div class="col-span-2 text-right">
-        <p class="whitespace-nowrap text-xs text-gray-700" @if ($processedAt) title="{{ $processedAt }}" @endif>{{ $atHuman ?? '—' }}</p>
+        <p class="whitespace-nowrap text-xs text-gray-700" @if($processedAt) title="{{ $processedAt }}" @endif>{{ $atHuman ?? '—' }}</p>
     </div>
     <div class="col-span-1 text-right">
         <svg class="ml-auto inline-block size-3 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
