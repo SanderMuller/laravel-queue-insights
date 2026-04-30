@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Support\DeferrableProvider;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\QueueInsightsServiceProvider;
 
@@ -43,4 +44,18 @@ it('registers the queue-insights config namespace', function (): void {
     expect(config('queue-insights'))->toBeArray()
         ->and(config('queue-insights.capture.payloads'))->toBe('off')
         ->and(config('queue-insights.retention.completed_stream_max'))->toBe(10000);
+});
+
+it('is not a deferred provider', function (): void {
+    // Deferred providers only run register() + boot() when one of their
+    // provides() services is resolved. This provider also loads routes,
+    // registers Livewire components, subscribes queue listeners, and
+    // schedules the snapshot command — all of which must fire on every
+    // request. Hosts that auto-discover the package but never resolve a
+    // provided service would otherwise see a silent no-op (404 on the
+    // dashboard, listeners never wired). Locking the eager registration
+    // here prevents a regression to DeferrableProvider.
+    $provider = new QueueInsightsServiceProvider(app());
+
+    expect($provider)->not->toBeInstanceOf(DeferrableProvider::class);
 });
