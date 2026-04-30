@@ -1,11 +1,10 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Support\DeferrableProvider;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -15,9 +14,18 @@ use Illuminate\Support\ServiceProvider;
 use Livewire\Component as LivewireComponent;
 use Livewire\Livewire;
 use Override;
+use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
+use SanderMuller\QueueInsights\Alerts\Cooldown;
+use SanderMuller\QueueInsights\Alerts\Detectors\DepthDetector;
+use SanderMuller\QueueInsights\Alerts\IssueDetector;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
+use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
+use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
 use SanderMuller\QueueInsights\Console\QueueInsightsSnapshotCommand;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
 use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
+use SanderMuller\QueueInsights\Enums\CaptureMode;
+use SanderMuller\QueueInsights\Http\Livewire\AlertRulesPanel;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
@@ -28,7 +36,7 @@ use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
 
-final class QueueInsightsServiceProvider extends ServiceProvider
+final class QueueInsightsServiceProvider extends ServiceProvider implements DeferrableProvider
 {
     #[Override]
     public function register(): void
@@ -40,10 +48,26 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         $this->app->singleton(QueueInsights::class);
         $this->app->singleton(QueueSnapshotDriverFactory::class);
+        $this->app->singleton(DepthDetector::class);
+        $this->app->singleton(Cooldown::class);
+        $this->app->singleton(IssueDetector::class);
+        $this->app->singleton(IssueDispatcher::class);
+        $this->app->singleton(SnapshotWatchdog::class);
+        // ActiveIssuesProvider keeps a per-request memoise on the instance —
+        // bind (not singleton) so each Livewire render gets a fresh
+        // instance and the memoise doesn't leak across requests under
+        // Octane / persistent processes. Cross-request bound is still the
+        // 5s Redis cache (`alert:cache:active-issues`).
+        $this->app->bind(ActiveIssuesProvider::class);
 
-        $this->app->bind(PayloadSanitizer::class, fn (): PayloadSanitizer => match (Config::string('capture.payloads', 'off')) {
-            'metadata' => new MetadataOnlySanitizer(),
-            'full' => new KeyRedactingSanitizer(
+        // Notifiable is bound (not singleton) so each notify() call gets a
+        // clean instance — Laravel's Notifiable trait carries per-instance
+        // pending state we don't want to leak across alerts.
+        $this->app->bind(QueueInsightsNotifiable::class);
+
+        $this->app->bind(PayloadSanitizer::class, fn (): PayloadSanitizer => match (Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off)) {
+            CaptureMode::Metadata => new MetadataOnlySanitizer(),
+            CaptureMode::Full => new KeyRedactingSanitizer(
                 array_values(array_filter(
                     Config::array('capture.redact_keys'),
                     is_string(...),
@@ -51,7 +75,12 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 Config::int('capture.max_field_bytes', 2048),
                 Config::int('capture.max_payload_bytes', 16384),
             ),
-            default => new MetadataOnlySanitizer(),
+            // The `Off` mode never reaches here in production — listeners
+            // gate on `CaptureMode::Off->writesPayloadFields() === false`
+            // before resolving the sanitizer. Bind a metadata-only
+            // fallback so a misordered host that resolves it anyway gets
+            // safe behaviour rather than a TypeError.
+            CaptureMode::Off => new MetadataOnlySanitizer(),
         });
     }
 
@@ -73,13 +102,37 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         $this->loadViewsFrom(__DIR__ . '/../resources/views', 'queue-insights');
 
-        if (! Config::bool('enabled', true)) {
+        // Fetch the merged queue-insights config once so the gate + every
+        // validator + the warn pass each work off a single repository read,
+        // not 8+ separate `Config::*` facade hops.
+        $cfg = config('queue-insights');
+        $cfg = is_array($cfg) ? $cfg : [];
+
+        if (($cfg['enabled'] ?? true) === false) {
             return;
         }
 
-        ConfigValidator::validateSnapshots(Config::array('snapshots'));
-        ConfigValidator::validatePending(Config::array('pending'));
-        ConfigValidator::validateBatches(Config::array('batches'));
+        $section = static function (array $cfg, string $key): array {
+            $value = $cfg[$key] ?? null;
+
+            return is_array($value) ? $value : [];
+        };
+
+        ConfigValidator::validateSnapshots($section($cfg, 'snapshots'));
+        ConfigValidator::validatePending($section($cfg, 'pending'));
+        ConfigValidator::validateBatches($section($cfg, 'batches'));
+
+        $alerts = $section($cfg, 'alerts');
+        // The alerts validator pulls in the 424-LOC AlertsConfigValidator
+        // class. When alerts are disabled (the default) the detector chain
+        // never runs, so misconfig in `alerts.*` cannot surface — skip the
+        // boot-time validation and the autoload it would trigger.
+        if (($alerts['enabled'] ?? false) === true) {
+            ConfigValidator::validateAlerts($alerts);
+        }
+        ConfigValidator::validateCapture($section($cfg, 'capture'));
+        ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
+        $this->warnDataDependentRulesWhenPendingDisabled();
 
         $this->registerListeners();
         $this->registerSchedule();
@@ -99,6 +152,10 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         }
 
         Livewire::component('queue-insights-dashboard', QueueInsightsDashboard::class);
+        // The alert-rules panel is a `#[Lazy]` child component — registering
+        // it here keeps the parent dashboard's initial render free of the
+        // panel's builder + 98-line blade pass.
+        Livewire::component('queue-insights-alert-rules-panel', AlertRulesPanel::class);
 
         $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
     }
@@ -114,6 +171,56 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 ->everyMinute()
                 ->withoutOverlapping();
         });
+    }
+
+    public function provides(): array
+    {
+        return [
+            QueueInsights::class,
+            QueueSnapshotDriverFactory::class,
+            DepthDetector::class,
+            Cooldown::class,
+            IssueDetector::class,
+            IssueDispatcher::class,
+            SnapshotWatchdog::class,
+            ActiveIssuesProvider::class,
+            QueueInsightsNotifiable::class,
+            PayloadSanitizer::class,
+        ];
+    }
+
+    /**
+     * Warn at boot when the host has alert rules enabled that depend on the
+     * pending-tracking hashes/zsets while `pending.enabled = false`. The
+     * detectors short-circuit at runtime, so the rule is effectively
+     * auto-disabled — this message is the migration hint.
+     */
+    private function warnDataDependentRulesWhenPendingDisabled(): void
+    {
+        if (Config::bool('pending.enabled', true)) {
+            return;
+        }
+
+        if (! Config::bool('alerts.enabled', false)) {
+            return;
+        }
+
+        $dataDependent = ['oldest_pending', 'stuck_inflight'];
+        $tripped = [];
+        foreach ($dataDependent as $rule) {
+            if (Config::bool("alerts.rules.{$rule}.enabled", true)) {
+                $tripped[] = $rule;
+            }
+        }
+
+        if ($tripped === []) {
+            return;
+        }
+
+        Log::warning(sprintf(
+            'queue-insights: alert rules [%s] depend on pending-tracking data which is disabled (pending.enabled=false). Rules will not fire — disable them in alerts.rules or enable pending tracking.',
+            implode(', ', $tripped),
+        ));
     }
 
     private function registerListeners(): void

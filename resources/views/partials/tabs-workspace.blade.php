@@ -26,7 +26,7 @@
 <div x-data="{ tab: 'overview' }"
      x-init="
         const apply = () => {
-            const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed)$/);
+            const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|alerts)$/);
             if (m) tab = m[1];
         };
         apply();
@@ -49,6 +49,7 @@
             @endif
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'completed', 'label' => 'Completed', 'badge' => $completedTotal ?? count($completedRows)])
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'failed', 'label' => 'Failed', 'badge' => $failedTotal ?? count($failedRows)])
+            @include('queue-insights::partials.tabs.tab-button', ['name' => 'alerts', 'label' => 'Alert rules', 'badge' => null])
         </nav>
     </div>
 
@@ -73,5 +74,8 @@
     </div>
     <div x-show="tab==='failed'" x-cloak>
         @include('queue-insights::partials.tabs.pane-failed')
+    </div>
+    <div x-show="tab==='alerts'" x-cloak>
+        <livewire:queue-insights-alert-rules-panel />
     </div>
 </div>

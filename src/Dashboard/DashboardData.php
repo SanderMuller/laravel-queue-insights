@@ -5,14 +5,20 @@ declare(strict_types=1);
 namespace SanderMuller\QueueInsights\Dashboard;
 
 use Illuminate\Support\Facades\Gate;
+use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
+use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
+use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\BatchReader;
+use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
+use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
 use SanderMuller\QueueInsights\Support\RowEnricher;
+use SanderMuller\QueueInsights\Support\UuidResolver;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
@@ -48,6 +54,8 @@ final readonly class DashboardData
      * test time rather than in a host's Blade template.
      */
     public const array EXPECTED_KEYS = [
+        'activeIssues',
+        'snapshotCommandDead',
         'queues',
         'totalDepth',
         'totalInFlight',
@@ -95,6 +103,7 @@ final readonly class DashboardData
         'selectedPending',
         'selectedPendingUuid',
         'hasOpenModal',
+        'chainBackTop',
     ];
 
     public function __construct(
@@ -104,6 +113,8 @@ final readonly class DashboardData
         private FilterOptionsBuilder $filterOptionsBuilder,
         private HeadlineStatsBuilder $headlineStatsBuilder,
         private QueueRowsBuilder $queueRowsBuilder,
+        private ActiveIssuesProvider $activeIssues,
+        private SnapshotWatchdog $watchdog,
     ) {}
 
     /**
@@ -111,7 +122,10 @@ final readonly class DashboardData
      */
     public function build(QueueInsightsDashboard $component): array
     {
-        $captureMode = Config::string('capture.payloads', 'off');
+        // Pass the enum directly — the modal partial accepts both the
+        // enum (production path) and a raw string (legacy host overrides)
+        // and normalises before its comparisons.
+        $captureMode = Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off);
 
         $queues = $this->queueRowsBuilder->build($component->expandedQueueKey);
         $classes = $this->classRowsBuilder->build();
@@ -143,6 +157,15 @@ final readonly class DashboardData
                 $payloadBatchIds = BatchReader::batchIdsForUuids([$payloadUuid]);
                 $selectedPayload['batch_id'] = $payloadBatchIds[$payloadUuid] ?? null;
             }
+
+            // Backward-chain lineage: the stream entry already carries
+            // `parent_uuid` (stamped by RecordJobProcessed). Resolve the
+            // parent's class label here so the modal's `↰ From` row can
+            // render `(Class)` alongside the uuid. Selection happens
+            // before RowEnricher::completed runs on the table list, so we
+            // hydrate the modal's single row directly.
+            $selectedPayload['parent_class'] = $this->resolveParentClassFor($selectedPayload['parent_uuid'] ?? null);
+            $selectedPayload['parent_target'] = $this->resolveParentTargetFor($selectedPayload['parent_uuid'] ?? null);
         }
 
         if ($selectedFailed !== null) {
@@ -150,6 +173,15 @@ final readonly class DashboardData
             $selectedFailed['wait_ms'] = is_string($failedUuid)
                 ? $this->svc->jobWaitMs($failedUuid)
                 : null;
+
+            // Backward-chain lineage on failed rows. Unlike the completed
+            // path, the failed_jobs row has no parent_uuid column — read
+            // the interim `qi:lineage:{uuid}` hash directly, then resolve
+            // the parent class from the same uuid → class side-key.
+            [$parentUuid, $parentClass] = $this->resolveFailedLineage($failedUuid);
+            $selectedFailed['parent_uuid'] = $parentUuid;
+            $selectedFailed['parent_class'] = $parentClass;
+            $selectedFailed['parent_target'] = $this->resolveParentTargetFor($parentUuid);
         }
 
         // Bulk-retry UI eligibility (server-side enforcement still applies in
@@ -181,6 +213,17 @@ final readonly class DashboardData
             array_merge($inFlightRows, $pendingRows, $delayedRows),
         );
 
+        if ($selectedPending !== null) {
+            // Hydrate parent_class on the in-flight / pending modal.
+            // `RecordJobProcessing::copyLineageToPending` stamps
+            // parent_uuid onto the pending hash, and PendingJobsReader
+            // now surfaces it on the row, but the class label has to be
+            // resolved from the `qi:class:{uuid}` side-key — same path
+            // the completed + failed modals take.
+            $selectedPending['parent_class'] = $this->resolveParentClassFor($selectedPending['parent_uuid'] ?? null);
+            $selectedPending['parent_target'] = $this->resolveParentTargetFor($selectedPending['parent_uuid'] ?? null);
+        }
+
         $selectedBatch = $this->modals->selectedBatch($component->expandedBatchId, $batches);
 
         // Drive `inert` from the same booleans that actually mount the
@@ -188,10 +231,17 @@ final readonly class DashboardData
         // froze the dashboard when an id was set but the modal never
         // mounted (config flip, aged-out row, ?batch= URL with batches
         // disabled).
+        // All four conditions key off the resolved selection objects, NOT
+        // the component's raw id state. A bookmarked `?batch=` URL with the
+        // batch already aged out (or batches disabled), or a stale
+        // pendingUuid pointing at a job that's already drained, leaves the
+        // raw id set but `selectedPending`/`selectedBatch` null. If we
+        // gated `inert` on the raw ids the dashboard would freeze with no
+        // modal mounted (codex review).
         $hasOpenModal = $selectedPayload !== null
             || $selectedFailed !== null
-            || ($pendingEnabled && $component->selectedPendingUuid !== null)
-            || (Config::bool('batches.enabled', true) && $component->expandedBatchId !== '');
+            || $selectedPending !== null
+            || $selectedBatch !== null;
 
         // Server-side pagination — slice the post-filter list to the active
         // page so the tab pane never renders more than PER_PAGE rows. Page
@@ -219,6 +269,8 @@ final readonly class DashboardData
         $aggregates = QueueAggregates::aggregate($queues);
 
         return [
+            'activeIssues' => $this->activeIssues->get(),
+            'snapshotCommandDead' => $this->watchdog->isSnapshotCommandDead(),
             'queues' => $queues,
             'totalDepth' => $aggregates['total_depth'],
             'totalInFlight' => $aggregates['total_inflight'],
@@ -266,6 +318,14 @@ final readonly class DashboardData
             'selectedPending' => $selectedPending,
             'selectedPendingUuid' => $component->selectedPendingUuid,
             'hasOpenModal' => $hasOpenModal,
+            // Top of the chain-navigation back stack — `{class}` label
+            // for the "Back to {class}" button in each item modal. Null
+            // when the user opened the current modal directly (no
+            // chain step to back to). `end()` returns false on empty
+            // arrays; coerce to null so the partial sees a clean type.
+            'chainBackTop' => $component->chainBackStack === []
+                ? null
+                : $component->chainBackStack[array_key_last($component->chainBackStack)],
         ];
     }
 
@@ -286,5 +346,74 @@ final readonly class DashboardData
             || $component->completedFilterQueue !== ''
             || $component->completedFilterFrom !== ''
             || $component->completedFilterTo !== '';
+    }
+
+    /**
+     * Hydrate parent_class for a single completed-modal row. The completed
+     * stream entry already carries `parent_uuid`; we only need the class
+     * label here. Returns null when chain lineage is disabled, the
+     * parent_uuid is missing, or the parent has aged out of the
+     * `qi:class:{uuid}` window.
+     */
+    private function resolveParentClassFor(mixed $parentUuid): ?string
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return null;
+        }
+
+        if (! is_string($parentUuid) || $parentUuid === '') {
+            return null;
+        }
+
+        return ParentClassResolver::resolve($parentUuid);
+    }
+
+    /**
+     * Hydrate the click-through target for the chain-lineage `↰ From`
+     * row. Returns a `{type, id}` tuple the modal partial wires onto a
+     * `wire:click="openByUuid(...)"` button when present, or null when
+     * the parent has aged out of every retention window (the partial
+     * falls back to plain text + copy in that case).
+     *
+     * @return array{type: string, id: int|string}|null
+     */
+    private function resolveParentTargetFor(mixed $parentUuid): ?array
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return null;
+        }
+
+        if (! is_string($parentUuid) || $parentUuid === '') {
+            return null;
+        }
+
+        return UuidResolver::resolve($parentUuid);
+    }
+
+    /**
+     * Hydrate (parent_uuid, parent_class) for a single failed-modal row.
+     * Failed_jobs has no parent_uuid column, so we read the interim
+     * `qi:lineage:{uuid}` directly. Both fields are null when chain
+     * lineage is off, the child uuid is missing, or the lineage hash has
+     * already aged out.
+     *
+     * @return array{0: ?string, 1: ?string}
+     */
+    private function resolveFailedLineage(mixed $childUuid): array
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return [null, null];
+        }
+
+        if (! is_string($childUuid) || $childUuid === '') {
+            return [null, null];
+        }
+
+        $parentUuid = (new ChainLineageStore())->readLineage($childUuid);
+        if ($parentUuid === null) {
+            return [null, null];
+        }
+
+        return [$parentUuid, ParentClassResolver::resolve($parentUuid)];
     }
 }
