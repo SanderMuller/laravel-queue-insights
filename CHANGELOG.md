@@ -2,6 +2,107 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0 - 2026-04-30
+
+### What's new
+
+#### Alerting subsystem
+
+Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Eight detectors run every snapshot tick against live Redis state:
+
+| Rule | Scope | Fires when |
+|---|---|---|
+| `depth` | per-queue | `live:depth` ≥ a configured threshold (highest matching severity wins) |
+| `stalled` | per-queue | depth ≥ `min_depth` AND no worker pickups in `idle_seconds` |
+| `oldest_pending` | per-queue | the oldest runnable pending job has been waiting `seconds` (skips not-yet-due delayed jobs) |
+| `stuck_inflight` | per-queue | the longest-running in-flight job has been executing `seconds` |
+| `failure_rate` | per-class | `failed/(processed+failed)` ≥ `ratio` over the current hour bucket AND total ≥ `min_jobs` |
+| `slow_p95` | per-class | per-class p95 duration ≥ `class_threshold_ms[$class]` (opt-in per class) |
+| `snapshot_errored` | per-queue | the snapshot driver threw on the most recent tick (auto-clears on success / 10-min TTL) |
+| `backlog_growing` | per-queue | least-squares depth slope over the recent samples ≥ `min_slope_per_minute` (opt-in, warms up after `min_samples`) |
+
+A dashboard-only `snapshot_command_dead` watchdog renders a top-level red banner when `live:depth` keys are absent for every configured queue — i.e. the snapshot command itself has gone silent for ≥ 90 s.
+
+**Cooldown is per-(rule, target).** Keys are namespaced as `alert:cooldown:{rule}:{c}:{q}` and `alert:cooldown:{rule}:class:{class}`, so one rule's cooldown never suppresses another rule's alert on the same queue. Cooldown gates outbound notifications only — the dashboard always reflects live state.
+
+**Three built-in notification channels** route through Laravel's first-party `Illuminate\Notifications` stack — exactly as Spatie's alerting packages and Horizon do — so you can extend with any `laravel-notification-channels/*` package without forking the dispatcher:
+
+- **`log`** — zero-dep, on by default; one structured log line per issue.
+- **`slack`** — Block Kit `Http::post` to a Slack-compatible incoming webhook (Slack, Mattermost, Rocket.Chat); falls back to plain `text` if Block Kit is rejected.
+- **`mail`** — first-party mail channel; subject prefix `[Queue Insights] {severity}: {rule} on {target}`.
+
+`slack` and `mail` feature-detect `Illuminate\Http\Client\Factory` and `mail.manager` respectively — if the binding is missing they're silently skipped, so the `mail` and `guzzle` packages stay opt-in via `composer suggest`.
+
+**Typed events fire regardless of channel config**, so hosts can wire any custom routing via `Event::listen(...)`:
+
+- `QueueDepthExceeded` (existing — gained a trailing nullable `?string $severity`)
+- `QueueStalled`, `OldestPendingAging`, `StuckInFlight`, `SnapshotErrored`
+- `JobClassFailureRateExceeded`, `JobClassP95Exceeded`
+- `BacklogGrowing`
+
+**Active-rules panel.** The dashboard footer renders a read-only summary of `alerts.rules` + `alerts.channels` so operators can verify what's monitored without SSH'ing into the server. Config is the source of truth; there is no runtime mutation surface by design. The panel is now a `#[Lazy]` Livewire child component, so the parent dashboard's initial render skips the panel builder + 98-line blade until the operator actually opens the tab — shaving roughly 25–30 ms off cold first-page latency.
+
+#### Backward chain lineage — `↰ From {parent}`
+
+Completed and failed modals (and the failed-job markdown export) gain a backward lineage row next to the existing `↳ Next` chip. Capture works by dropping a short-lived **claim ticket** into Redis as the parent enters processing, keyed by `(connection, queue, next-class, tail-fingerprint)`; the next link's `JobQueued` listener pops a ticket and stamps `parent_uuid` onto the child's lineage hash. Both writers and readers short-circuit when `chain_lineage.enabled = false`, so cost is zero for hosts that opt out.
+
+- Disable via `QUEUE_INSIGHTS_CHAIN_LINEAGE=false` (or `chain_lineage.enabled = false`).
+- Encrypted parents (`ShouldBeEncrypted`) are silently skipped on both sides — the serialized command body is opaque base64, so neither the parent's chain context nor the child's tail can be decoded.
+- Cross-worker collision tolerance: two parents with identical chain shape (same connection/queue/next-class/remaining-tail) running concurrently on different workers can attribute their children to each other in dispatch order rather than dispatch identity. Within a single worker chain dispatch is synchronous, so attribution is exact.
+- Class label is best-effort. `qi:class:{uuid}` (TTL = `chain_lineage.lineage_ttl_seconds`, default 7 d) is the side-channel that hydrates a parent UUID to a class name. Past that horizon the UUID still renders, just without `(ClassName)`.
+- Click-through to the parent's modal is **in** for v1: clicking the `↰ From` row opens the parent's modal via the `openByUuid` action, which dispatches to `openPayload` / `openFailed` / `openPending` based on where the parent currently lives. A "Back to {class}" button on the parent modal pops the chain stack so navigation back to the original modal is a single click.
+
+`queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job still carries the correct `chain` field. Backward lineage is keyed by uuid and survives the retry too: the existing `qi:lineage:{uuid}` is never overwritten with null.
+
+#### Deferred service provider + cold-boot wiring tweaks
+
+The package's `QueueInsightsServiceProvider` now implements `DeferrableProvider` and advertises its bound services via `provides()`, so the singleton/bind chain is paid lazily when the first consumer resolves. Combined with the lazy alert-rules panel, hosts that boot the package but never render the dashboard during the request pay roughly nothing.
+
+Also:
+
+- `boot()` fetches the merged config block once and walks it locally instead of issuing six separate facade hops.
+- `validateAlerts` only runs when `alerts.enabled === true`, so the 424-LOC `AlertsConfigValidator` no longer autoloads on the cold-boot path of hosts that don't use alerting.
+
+#### Migration: `alerts.thresholds` → `alerts.rules.depth.thresholds`
+
+Pre-0.6 hosts that published `config/queue-insights.php` keep working — the legacy `alerts.thresholds` list still wins over the new `alerts.rules.depth.thresholds` (so prod alerts never silently drop), and a one-off boot warning logs the deprecation. Migrate when convenient:
+
+```diff
+ 'alerts' => [
+     'enabled' => true,
+     'cooldown_seconds' => 900,
+-    'thresholds' => [
+-        ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000],
+-    ],
++    'rules' => [
++        'depth' => [
++            'enabled' => true,
++            'thresholds' => [
++                ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000, 'severity' => 'warning'],
++            ],
++        ],
++    ],
+ ],
+
+```
+Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published the config before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
+
+#### Custom payload sanitizer signature
+
+No change. The `Contracts\PayloadSanitizer` surface is unchanged in this release.
+
+### New publishable assets
+
+Hosts that published the views (`php artisan vendor:publish --tag=queue-insights-views`) should re-publish to pick up:
+
+- `partials/alerts-strip.blade.php` — top-of-dashboard issue strip.
+- `partials/snapshot-watchdog-banner.blade.php` — red banner when the snapshot command is silent.
+- `partials/parent-lineage-row.blade.php` — `↰ From` block on the modal.
+- `partials/chain-back-button.blade.php` — back navigation button when the user opened a parent via `↰ From`.
+- `livewire/alert-rules-panel.blade.php`, `livewire/alert-rules-panel-placeholder.blade.php` — the lazy alert-rules tab + its skeleton.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.5.0...0.6.0
+
 ## 0.5.0 - 2026-04-28
 
 Minor release. Two user-visible UX changes — a tabbed dashboard with an Overview pane and server-side pagination on Completed/Failed — plus an internal cleanup sprint that decomposes the Livewire dashboard component into focused, testable support classes.
@@ -38,6 +139,7 @@ The metadata pill (`Connection: redis`, `Queue: default`, `ID: <uuid>`) used to 
 ```blade
 <x-queue-insights::meta-pill label="Connection" :value="$payload['connection'] ?? null"/>
 <x-queue-insights::meta-pill label="Queue" :value="$payload['queue'] ?? null" size="sm"/>
+
 
 ```
 A second new component, `<x-queue-insights::list-row>`, owns the four main row partials' `role="button"` + `tabindex` + keyboard handler scaffold — one place to fix click + a11y wiring instead of four.
@@ -78,6 +180,7 @@ public function render(DashboardData $data): View
     return ViewFactory::make('queue-insights::dashboard', $data->build($this));
 }
 
+
 ```
 ### Internal — view decomposition
 
@@ -97,6 +200,7 @@ resources/views/partials/
     ├── pane-completed.blade.php
     ├── pane-failed.blade.php
     └── tab-button.blade.php
+
 
 ```
 `dashboard.blade.php` is now a 44-line shell: flash banner, hero, tabs-workspace, modal mounts. The 47-line `@php` derivation block at the top of `dashboard.blade.php` is gone — `$queuePreview`, `$pendingPreview`, `$totalDepth`, `$totalInFlight`, `$atRisk`, `$healthy`, `$fmtMs` are computed in the component layer.
@@ -237,6 +341,7 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
 
 
 
+
 ```
 ### Storage cost
 
@@ -309,6 +414,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -497,6 +603,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
