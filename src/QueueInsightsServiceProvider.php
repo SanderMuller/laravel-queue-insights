@@ -4,7 +4,6 @@ namespace SanderMuller\QueueInsights;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Events\Dispatcher;
-use Illuminate\Contracts\Support\DeferrableProvider;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -21,7 +20,12 @@ use SanderMuller\QueueInsights\Alerts\IssueDetector;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
 use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
+use SanderMuller\QueueInsights\Console\DefaultWorkerOutputStreams;
+use SanderMuller\QueueInsights\Console\DefaultWorkerProcessFactory;
 use SanderMuller\QueueInsights\Console\QueueInsightsSnapshotCommand;
+use SanderMuller\QueueInsights\Console\QueueInsightsWorkCommand;
+use SanderMuller\QueueInsights\Console\WorkerOutputStreams;
+use SanderMuller\QueueInsights\Console\WorkerProcessFactory;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
 use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
 use SanderMuller\QueueInsights\Enums\CaptureMode;
@@ -36,7 +40,7 @@ use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
 
-final class QueueInsightsServiceProvider extends ServiceProvider implements DeferrableProvider
+final class QueueInsightsServiceProvider extends ServiceProvider
 {
     #[Override]
     public function register(): void
@@ -48,6 +52,8 @@ final class QueueInsightsServiceProvider extends ServiceProvider implements Defe
 
         $this->app->singleton(QueueInsights::class);
         $this->app->singleton(QueueSnapshotDriverFactory::class);
+        $this->app->bind(WorkerProcessFactory::class, DefaultWorkerProcessFactory::class);
+        $this->app->bind(WorkerOutputStreams::class, DefaultWorkerOutputStreams::class);
         $this->app->singleton(DepthDetector::class);
         $this->app->singleton(Cooldown::class);
         $this->app->singleton(IssueDetector::class);
@@ -97,6 +103,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider implements Defe
 
             $this->commands([
                 QueueInsightsSnapshotCommand::class,
+                QueueInsightsWorkCommand::class,
             ]);
         }
 
@@ -171,26 +178,6 @@ final class QueueInsightsServiceProvider extends ServiceProvider implements Defe
                 ->everyMinute()
                 ->withoutOverlapping();
         });
-    }
-
-    /**
-     * @return class-string[]
-     */
-    #[Override]
-    public function provides(): array
-    {
-        return [
-            QueueInsights::class,
-            QueueSnapshotDriverFactory::class,
-            DepthDetector::class,
-            Cooldown::class,
-            IssueDetector::class,
-            IssueDispatcher::class,
-            SnapshotWatchdog::class,
-            ActiveIssuesProvider::class,
-            QueueInsightsNotifiable::class,
-            PayloadSanitizer::class,
-        ];
     }
 
     private function registerListeners(): void
