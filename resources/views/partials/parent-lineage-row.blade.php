@@ -1,25 +1,14 @@
-@props([
-    /** Parent UUID. Falsy → partial renders nothing. */
-    'parentUuid' => null,
-    /** Best-effort parent class label. Null when the parent has aged out of retention. */
-    'parentClass' => null,
-    /** Stable DOM id used by the inline copy-button. Caller must provide a unique value per modal. */
-    'copyId' => 'qi-parent-uuid',
-    /**
-     * Resolved click-through target — `{type: 'completed'|'failed'|'pending', id: ...}`
-     * from `UuidResolver::resolve()`, or null when the parent has aged
-     * out of every retention window. Null falls back to plain-text uuid
-     * + copy button (no navigation).
-     */
-    'parentTarget' => null,
-    /**
-     * Class name of the CURRENT job (i.e. the job whose modal contains
-     * this partial). Pushed onto the chain back stack so the parent
-     * modal's "Back to {class}" button can label itself.
-     */
-    'fromClass' => null,
-])
-
+@php
+    // Defaults for variables when this partial is included via @include
+    // or rendered through view(). @props is component-specific and emits
+    // residue under the L11.0/L12.0 Blade compilers, so we use plain
+    // defaults instead.
+    $parentUuid ??= null;
+    $parentClass ??= null;
+    $copyId ??= 'qi-parent-uuid';
+    $parentTarget ??= null;
+    $fromClass ??= null;
+@endphp
 @if(is_string($parentUuid) && $parentUuid !== '')
     @php
         $hasTarget = is_array($parentTarget) && isset($parentTarget['type'], $parentTarget['id']);

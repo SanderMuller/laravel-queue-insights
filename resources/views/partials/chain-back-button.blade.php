@@ -1,13 +1,11 @@
-@props([
-    /**
-     * Top frame of `QueueInsightsDashboard::$chainBackStack`. Shape:
-     * `{type: string, id: int|string, class: ?string}`. Null → partial
-     * renders nothing (user landed on this modal directly, no chain
-     * step to back to).
-     */
-    'frame' => null,
-])
-
+@php
+    // Top frame of `QueueInsightsDashboard::$chainBackStack`. Shape:
+    // `{type: string, id: int|string, class: ?string}`. Null → partial
+    // renders nothing (user landed on this modal directly, no chain
+    // step to back to). @props is component-specific and emits residue
+    // under the L11.0/L12.0 Blade compilers, so we use plain defaults.
+    $frame ??= null;
+@endphp
 @if(is_array($frame) && isset($frame['type']))
     @php
         $label = is_string($frame['class'] ?? null) && $frame['class'] !== ''
