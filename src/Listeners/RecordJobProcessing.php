@@ -9,10 +9,13 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
+use SanderMuller\QueueInsights\Support\ChainLineageClaim;
+use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
 
 final class RecordJobProcessing
@@ -34,6 +37,18 @@ final class RecordJobProcessing
             // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
             // `SET key val EX ttl` has divergent arg shapes across drivers.
             $now = microtime(true);
+
+            // Push the chain-lineage claim ticket FIRST so it's visible by
+            // the time `$job->fire()` runs `dispatchNextJobInChain` and the
+            // child's `JobQueued` fires (Phase 0 ordering proof). Wrapped
+            // in its own try/catch so a redis hiccup on the lineage path
+            // never breaks the wait-time / pending-tracking writes below.
+            $this->pushChainClaim($event, $uuid);
+
+            // Copy any interim lineage pointer onto the pending hash so the
+            // in-flight modal can surface `↰ From {uuid}` while the job is
+            // still running — before the durable stream row exists.
+            $this->copyLineageToPending($redis, $uuid);
 
             // Pending → in-flight transition runs before the wait-time path so
             // it isn't accidentally skipped by an early return below (missing
@@ -84,7 +99,12 @@ final class RecordJobProcessing
             // and MGET `wait:{uuid}` to recover wait_ms.
             // Naive `score = wait_ms` would have made trim drop the fastest
             // jobs and skew p50/p95 toward outliers — codex review.
-            $waitKey = KeyPrefix::make("wait:{$connection}:{$queue}");
+            // Canonicalise the queue value before composing the zset key so a
+            // queue URL (SQS) is written under the same key the dashboard
+            // reads it under (WaitTimeMetrics is called with the canonical
+            // queue from QueueRowsBuilder). Mirrors markInFlight() above.
+            $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
+            $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
 
             $redis->command('zadd', [$waitKey, $now, $uuid]);
             $redis->command('zremrangebyrank', [$waitKey, 0, -1001]);
@@ -139,5 +159,98 @@ final class RecordJobProcessing
             (string) $startedAt,
             (string) Config::int('pending.ttl_seconds', 86400),
         );
+    }
+
+    /**
+     * Copy `qi:lineage:{uuid}` into the pending hash so the in-flight modal
+     * can render the parent_uuid before the job completes (and before the
+     * durable stream row exists). Idempotent: HSET overwrites the existing
+     * pending-hash field with the same value, no harm on retry. Skipped when
+     * pending tracking is disabled or the interim hash is empty.
+     */
+    private function copyLineageToPending(RedisConnection $redis, string $uuid): void
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return;
+        }
+
+        if (! Config::bool('pending.enabled', true)) {
+            return;
+        }
+
+        $parent = (new ChainLineageStore())->readLineage($uuid);
+        if ($parent === null) {
+            return;
+        }
+
+        $redis->command('hset', [
+            KeyPrefix::make("pending:{$uuid}"),
+            'parent_uuid',
+            $parent,
+        ]);
+    }
+
+    /**
+     * Decode the parent's serialized command for chain context. If the parent
+     * is the head of a chain (`chained` non-empty), push a claim ticket onto
+     * the per-(connection, queue, next-class, tail-fingerprint) FIFO list
+     * so the next link's `JobQueued` listener can RPOP it and stamp
+     * parent_uuid.
+     *
+     * No-op when:
+     *   - chain lineage is disabled
+     *   - the payload is encrypted (extractChainContext returns null)
+     *   - the parent has no chained tail (last link / non-chain dispatch)
+     */
+    private function pushChainClaim(JobProcessing $event, string $uuid): void
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return;
+        }
+
+        try {
+            $payload = $event->job->payload();
+            $command = is_array($payload['data'] ?? null)
+                ? ($payload['data']['command'] ?? null)
+                : null;
+
+            if (! is_string($command) || $command === '') {
+                return;
+            }
+
+            $context = SerializedCommandReader::extractChainContext($command);
+            if ($context === null) {
+                return;
+            }
+
+            $tailClasses = [];
+            foreach (array_slice($context['jobs'], 1) as $job) {
+                $tailClasses[] = $job['class'];
+            }
+
+            $connection = $context['chain_connection']
+                ?? (string) $event->connectionName;
+            $queueRaw = $context['chain_queue']
+                ?? (string) ($event->job->getQueue() ?? 'default');
+
+            // Canonicalize the queue value before composing the key so SQS
+            // (where producers stamp queue URLs and workers report logical
+            // names) and other URL-vs-name divergences land on the same
+            // key shape on both push and pop sides.
+            $queueKey = $queueRaw === '' ? 'default' : CanonicalQueueKey::from($queueRaw);
+
+            $key = ChainLineageClaim::key($connection, $queueKey, $context['next_class'], $tailClasses);
+
+            (new ChainLineageStore())->pushClaim(
+                $key,
+                $uuid,
+                Config::int('chain_lineage.claim_ttl_seconds', 60),
+            );
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: pushChainClaim failed', [
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+        }
     }
 }

@@ -235,6 +235,7 @@ final class PendingJobsReader
         $batchId = $hash['batch_id'] ?? null;
         $state = $hash['state'] ?? null;
         $startedAt = $hash['started_at'] ?? null;
+        $parentUuid = $hash['parent_uuid'] ?? null;
 
         return [
             'uuid' => $uuid,
@@ -246,6 +247,7 @@ final class PendingJobsReader
             'batch_id' => is_string($batchId) && $batchId !== '' ? $batchId : null,
             'state' => is_string($state) && $state !== '' ? $state : null,
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
+            'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
         ];
     }
 
@@ -368,6 +370,7 @@ final class PendingJobsReader
         $batchId = $hash['batch_id'] ?? null;
         $state = $hash['state'] ?? null;
         $startedAt = $hash['started_at'] ?? null;
+        $parentUuid = $hash['parent_uuid'] ?? null;
 
         return [
             'uuid' => $uuid,
@@ -377,6 +380,7 @@ final class PendingJobsReader
             'batch_id' => is_string($batchId) && $batchId !== '' ? $batchId : null,
             'state' => is_string($state) && $state !== '' ? $state : null,
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
+            'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
         ];
     }
 

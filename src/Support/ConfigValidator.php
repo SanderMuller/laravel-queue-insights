@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SanderMuller\QueueInsights\Support;
 
 use InvalidArgumentException;
+use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 
 final class ConfigValidator
@@ -113,6 +114,84 @@ final class ConfigValidator
             if (! is_int($value) || $value < 1) {
                 throw new QueueInsightsConfigException(
                     "queue-insights.batches.{$key} must be a positive integer."
+                );
+            }
+        }
+    }
+
+    /**
+     * Validate the alerts block. Type-checks the cooldown, every per-rule
+     * shape, every threshold entry, and channel feature toggles. Delegates
+     * to `AlertsConfigValidator` so this class stays under PHPStan's
+     * cognitive-complexity ceiling.
+     *
+     * @param  array<array-key, mixed>  $alerts
+     */
+    public static function validateAlerts(array $alerts): void
+    {
+        AlertsConfigValidator::validate($alerts);
+    }
+
+    /**
+     * Validate the chain_lineage block. Type-checks the toggle, the redis
+     * connection override (when set), and the two TTLs.
+     *
+     * @param  array<array-key, mixed>  $chainLineage
+     */
+    /**
+     * Type-check `capture.payloads` so a typo at boot ("metadta") fails
+     * with a clear error rather than silently degrading to the default.
+     *
+     * @param  array<array-key, mixed>  $capture
+     */
+    public static function validateCapture(array $capture): void
+    {
+        if (! array_key_exists('payloads', $capture)) {
+            return;
+        }
+
+        $value = $capture['payloads'];
+        if (! is_string($value) || CaptureMode::tryFrom($value) === null) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.capture.payloads must be one of: off, metadata, full.'
+            );
+        }
+    }
+
+    /**
+     * Validate the chain_lineage block. Type-checks the toggle, the redis
+     * connection override (when set), and the two TTLs.
+     *
+     * @param  array<array-key, mixed>  $chainLineage
+     */
+    public static function validateChainLineage(array $chainLineage): void
+    {
+        if (isset($chainLineage['enabled']) && ! is_bool($chainLineage['enabled'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.chain_lineage.enabled must be a boolean.'
+            );
+        }
+
+        // `isset()` returns false when the value is null, so this branch only
+        // fires for non-null overrides — the default-null path needs no check.
+        if (isset($chainLineage['redis_connection'])) {
+            $connection = $chainLineage['redis_connection'];
+            if (! is_string($connection) || $connection === '') {
+                throw new QueueInsightsConfigException(
+                    'queue-insights.chain_lineage.redis_connection must be a non-empty string or null.'
+                );
+            }
+        }
+
+        foreach (['claim_ttl_seconds', 'lineage_ttl_seconds'] as $key) {
+            if (! isset($chainLineage[$key])) {
+                continue;
+            }
+
+            $value = $chainLineage[$key];
+            if (! is_int($value) || $value < 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.chain_lineage.{$key} must be a positive integer."
                 );
             }
         }

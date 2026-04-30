@@ -17,6 +17,7 @@
         "aws/aws-sdk-php": "^3.0",
         "illuminate/console": "^11.0||^12.0||^13.0",
         "illuminate/contracts": "^11.0||^12.0||^13.0",
+        "illuminate/notifications": "^11.0||^12.0||^13.0",
         "illuminate/queue": "^11.0||^12.0||^13.0",
         "illuminate/redis": "^11.0||^12.0||^13.0",
         "illuminate/support": "^11.0||^12.0||^13.0"
@@ -49,7 +50,13 @@
         "tomasvotruba/type-coverage": "^2.1"
     },
     "suggest": {
-        "livewire/livewire": "Required only to use the bundled dashboard route. Capture + snapshot run without it."
+        "livewire/livewire": "Required only to use the bundled dashboard route. Capture + snapshot run without it.",
+        "guzzlehttp/guzzle": "Required only when the slack alert channel is enabled (provides the HTTP client used by `Illuminate\\Http\\Client\\Factory`).",
+        "illuminate/mail": "Required only when the mail alert channel is enabled (provides the `mail.manager` binding).",
+        "laravel-notification-channels/discord": "Optional — extend `QueueAlertNotification::via()` to add Discord routing.",
+        "laravel-notification-channels/microsoft-teams": "Optional — extend `QueueAlertNotification::via()` to add Microsoft Teams routing.",
+        "laravel-notification-channels/pagerduty": "Optional — extend `QueueAlertNotification::via()` to add PagerDuty incident routing.",
+        "laravel-notification-channels/telegram": "Optional — extend `QueueAlertNotification::via()` to add Telegram routing."
     },
     "autoload": {
         "psr-4": {

@@ -18,6 +18,7 @@ use Livewire\Component;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
+use SanderMuller\QueueInsights\Support\UuidResolver;
 use Throwable;
 
 #[Layout('queue-insights::layouts.app')]
@@ -144,6 +145,10 @@ final class QueueInsightsDashboard extends Component
     public function closePayload(): void
     {
         $this->selectedPayloadId = null;
+        // Closing the modal entirely (X / Esc) drops the chain
+        // navigation history — opening a different row from the table
+        // shouldn't inherit a stale "Back to ..." trail.
+        $this->chainBackStack = [];
     }
 
     public function openFailed(int $id): void
@@ -154,6 +159,7 @@ final class QueueInsightsDashboard extends Component
     public function closeFailed(): void
     {
         $this->selectedFailedId = null;
+        $this->chainBackStack = [];
     }
 
     public function openPending(string $uuid): void
@@ -168,6 +174,120 @@ final class QueueInsightsDashboard extends Component
     public function closePending(): void
     {
         $this->selectedPendingUuid = null;
+        $this->chainBackStack = [];
+    }
+
+    /**
+     * Chain-navigation back stack. Each frame captures the modal the
+     * user was viewing BEFORE clicking a `↰ From` parent link, so the
+     * parent modal can render a "Back to {child class}" button that
+     * pops the stack and re-opens the child.
+     *
+     * Frame shape: `{type: 'completed'|'failed'|'pending', id: int|string, class: ?string}`.
+     * Capped at 20 frames as cycle protection — pathological self-
+     * dispatching chains can't grow this unbounded.
+     *
+     * @var list<array{type: string, id: int|string, class: ?string}>
+     */
+    public array $chainBackStack = [];
+
+    /**
+     * Resolve a uuid to whichever surface it currently lives on (completed
+     * stream, failed_jobs row, or pending hash) and dispatch to the matching
+     * `open*` action. Drives the chain-lineage `↰ From` click-through.
+     *
+     * Pushes the modal the user was in onto `chainBackStack` so the parent
+     * modal can render a "Back" button that returns the user to the child
+     * — mirrors the "Back to batch" pattern but generalised across the
+     * three item modal types.
+     *
+     * Aged-out parents (no surface match) fall through to a flash banner
+     * instead of silently navigating nowhere.
+     */
+    public function openByUuid(string $uuid, ?string $fromClass = null): void
+    {
+        $target = UuidResolver::resolve($uuid);
+
+        if ($target === null) {
+            Session::flash('qi.retry.error', 'That job has aged out of retention — its modal is no longer available.');
+
+            return;
+        }
+
+        // Capture the current modal (if any) onto the back stack BEFORE
+        // resetting selection so the parent modal's `Back` button can
+        // restore it. Skip when no modal is currently open (a programmatic
+        // open from somewhere outside the modal chrome).
+        $currentFrame = $this->captureCurrentModalFrame($fromClass);
+        if ($currentFrame !== null) {
+            $this->chainBackStack[] = $currentFrame;
+            // Cycle / pathological-chain protection — cap depth so a
+            // self-dispatching chain can't grow this unbounded.
+            if (count($this->chainBackStack) > 20) {
+                $this->chainBackStack = array_slice($this->chainBackStack, -20);
+            }
+        }
+
+        // Reset every selection before re-opening so the previous modal
+        // closes before the new one mounts.
+        $this->selectedPayloadId = null;
+        $this->selectedFailedId = null;
+        $this->selectedPendingUuid = null;
+
+        match ($target['type']) {
+            'completed' => $this->openPayload((string) $target['id']),
+            'failed' => $this->openFailed((int) $target['id']),
+            'pending' => $this->openPending((string) $target['id']),
+        };
+    }
+
+    /**
+     * Pop the most recent frame off the chain back stack and re-open the
+     * matching modal. No-op when the stack is empty.
+     */
+    public function chainBack(): void
+    {
+        if ($this->chainBackStack === []) {
+            return;
+        }
+
+        $frame = array_pop($this->chainBackStack);
+
+        $this->selectedPayloadId = null;
+        $this->selectedFailedId = null;
+        $this->selectedPendingUuid = null;
+
+        match ($frame['type']) {
+            'completed' => $this->openPayload((string) $frame['id']),
+            'failed' => $this->openFailed((int) $frame['id']),
+            'pending' => $this->openPending((string) $frame['id']),
+            default => null,
+        };
+    }
+
+    /**
+     * Snapshot the currently-open modal as a back-stack frame, or null
+     * when nothing is open. The class label is best-effort — it's only
+     * used to render the "Back to {Class}" button text and gracefully
+     * falls back to "Back" when null.
+     *
+     * @return array{type: string, id: int|string, class: ?string}|null
+     */
+    private function captureCurrentModalFrame(?string $fromClass): ?array
+    {
+        if ($this->selectedPayloadId !== null) {
+            return ['type' => 'completed', 'id' => $this->selectedPayloadId, 'class' => $fromClass];
+        }
+
+        if ($this->selectedFailedId !== null) {
+            return ['type' => 'failed', 'id' => $this->selectedFailedId, 'class' => $fromClass];
+        }
+
+        if ($this->selectedPendingUuid !== null) {
+            return ['type' => 'pending', 'id' => $this->selectedPendingUuid, 'class' => $fromClass];
+        }
+
+        return null;
     }
 
     /**

@@ -130,9 +130,9 @@ final class QueueInsightsServiceProvider extends ServiceProvider implements Defe
         if (($alerts['enabled'] ?? false) === true) {
             ConfigValidator::validateAlerts($alerts);
         }
+
         ConfigValidator::validateCapture($section($cfg, 'capture'));
         ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
-        $this->warnDataDependentRulesWhenPendingDisabled();
 
         $this->registerListeners();
         $this->registerSchedule();
@@ -173,6 +173,10 @@ final class QueueInsightsServiceProvider extends ServiceProvider implements Defe
         });
     }
 
+    /**
+     * @return class-string[]
+     */
+    #[Override]
     public function provides(): array
     {
         return [
@@ -187,40 +191,6 @@ final class QueueInsightsServiceProvider extends ServiceProvider implements Defe
             QueueInsightsNotifiable::class,
             PayloadSanitizer::class,
         ];
-    }
-
-    /**
-     * Warn at boot when the host has alert rules enabled that depend on the
-     * pending-tracking hashes/zsets while `pending.enabled = false`. The
-     * detectors short-circuit at runtime, so the rule is effectively
-     * auto-disabled — this message is the migration hint.
-     */
-    private function warnDataDependentRulesWhenPendingDisabled(): void
-    {
-        if (Config::bool('pending.enabled', true)) {
-            return;
-        }
-
-        if (! Config::bool('alerts.enabled', false)) {
-            return;
-        }
-
-        $dataDependent = ['oldest_pending', 'stuck_inflight'];
-        $tripped = [];
-        foreach ($dataDependent as $rule) {
-            if (Config::bool("alerts.rules.{$rule}.enabled", true)) {
-                $tripped[] = $rule;
-            }
-        }
-
-        if ($tripped === []) {
-            return;
-        }
-
-        Log::warning(sprintf(
-            'queue-insights: alert rules [%s] depend on pending-tracking data which is disabled (pending.enabled=false). Rules will not fire — disable them in alerts.rules or enable pending tracking.',
-            implode(', ', $tripped),
-        ));
     }
 
     private function registerListeners(): void

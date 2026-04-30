@@ -12,6 +12,8 @@ final class LuaScripts
 
     private static ?string $markInFlight = null;
 
+    private static ?string $pushChainClaim = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
@@ -20,6 +22,11 @@ final class LuaScripts
     public static function markInFlight(): string
     {
         return self::$markInFlight ??= self::load(__DIR__ . '/Lua/MarkInFlight.lua');
+    }
+
+    public static function pushChainClaim(): string
+    {
+        return self::$pushChainClaim ??= self::load(__DIR__ . '/Lua/PushChainClaim.lua');
     }
 
     private static function load(string $path): string

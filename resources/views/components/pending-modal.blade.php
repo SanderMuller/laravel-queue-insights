@@ -3,6 +3,13 @@
     'pending' => null,
     /** Currently-open batch id, '' if none. Drives the "Back to batch" button so the user can return to the batch view they came from. */
     'expandedBatchId' => '',
+    /**
+     * Top of the chain-navigation back stack, or null. Drives the
+     * "Back to {class}" button.
+     *
+     * @var array{type: string, id: int|string, class: ?string}|null
+     */
+    'chainBackTop' => null,
 ])
 
 @php
@@ -62,7 +69,7 @@
         {{-- Header --}}
         <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 bg-white px-4 py-4">
             <div class="flex items-center gap-2">
-                @if ($expandedBatchId !== '')
+                @if($expandedBatchId !== '')
                     <button type="button"
                             wire:click="closePending"
                             aria-label="Back to batch"
@@ -73,12 +80,13 @@
                         <span>Back to batch</span>
                     </button>
                 @endif
+                @include('queue-insights::partials.chain-back-button', ['frame' => $chainBackTop])
                 <span class="inline-flex size-6 items-center justify-center rounded-md ring-1 ring-inset {{ match (true) {
                     $isInFlight => 'bg-amber-50 text-amber-600 ring-amber-600/20',
                     $isDelayed => 'bg-indigo-50 text-indigo-600 ring-indigo-600/20',
                     default => 'bg-gray-50 text-gray-600 ring-gray-600/20',
                 } }}">
-                    @if ($isInFlight)
+                    @if($isInFlight)
                         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path fill-rule="evenodd" d="M2 10a8 8 0 1 1 16 0 8 8 0 0 1-16 0Zm6.39-2.908a.75.75 0 0 1 .766.027l3.5 2.25a.75.75 0 0 1 0 1.262l-3.5 2.25A.75.75 0 0 1 8 12.25v-4.5a.75.75 0 0 1 .39-.658Z" clip-rule="evenodd"/>
                         </svg>
@@ -101,7 +109,7 @@
         </div>
 
         <div class="p-4">
-            @if ($row === null)
+            @if($row === null)
                 {{-- Race-after-pickup empty state. The row was open in the modal
                     but the next poll's hydration found nothing — a worker grabbed
                     the job (RecordJobProcessing deletes the pending hash), or
@@ -132,11 +140,19 @@
                         <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                             <x-queue-insights::meta-pill label="Connection" :value="$connection"/>
                             <x-queue-insights::meta-pill label="Queue" :value="$queue"/>
-                            @if ($batchId !== null)
+                            @if($batchId !== null)
                                 @include('queue-insights::partials.batch-chip', ['batchId' => $batchId])
                             @endif
                         </div>
                     </div>
+
+                    @include('queue-insights::partials.parent-lineage-row', [
+                        'parentUuid' => $row['parent_uuid'] ?? null,
+                        'parentClass' => $row['parent_class'] ?? null,
+                        'parentTarget' => $row['parent_target'] ?? null,
+                        'fromClass' => $class,
+                        'copyId' => 'qi-pending-parent-uuid',
+                    ])
                 </section>
 
                 {{-- Metrics row — waiting time + queued + state-specific tile.
@@ -154,17 +170,17 @@
                         <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Queued at</dt>
                         <dd class="mt-1">
                             <p class="truncate text-sm font-medium text-gray-900">{{ $queuedCarbon?->diffForHumans() ?? '—' }}</p>
-                            @if ($queuedCarbon)
+                            @if($queuedCarbon)
                                 <p class="truncate font-mono text-[10px] text-gray-400">{{ $queuedCarbon->toIso8601String() }}</p>
                             @endif
                         </dd>
                     </div>
-                    @if ($isInFlight)
+                    @if($isInFlight)
                         <div class="bg-white p-4">
                             <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Started</dt>
                             <dd class="mt-1">
                                 <p class="truncate text-sm font-medium text-gray-900">{{ $startedCarbon?->diffForHumans() ?? '—' }}</p>
-                                @if ($startedCarbon)
+                                @if($startedCarbon)
                                     <p class="truncate font-mono text-[10px] text-gray-400">{{ $startedCarbon->toIso8601String() }}</p>
                                 @endif
                             </dd>
@@ -185,12 +201,12 @@
                                 {{ $waitingForHumanized ?? '—' }}
                             </dd>
                         </div>
-                        @if ($isDelayed)
+                        @if($isDelayed)
                             <div class="bg-white p-4">
                                 <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Runs</dt>
                                 <dd class="mt-1">
                                     <p class="truncate text-sm font-medium text-gray-900">{{ $availableCarbon?->diffForHumans() ?? '—' }}</p>
-                                    @if ($availableCarbon)
+                                    @if($availableCarbon)
                                         <p class="truncate font-mono text-[10px] text-gray-400">{{ $availableCarbon->toIso8601String() }}</p>
                                     @endif
                                 </dd>
@@ -200,7 +216,7 @@
                 </dl>
 
                 {{-- UUID — same identity row pattern as the failed modal --}}
-                @if ($uuid !== null)
+                @if($uuid !== null)
                     <dl class="flex items-center gap-2 border-t border-gray-950/5 pt-3">
                         <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400">UUID</dt>
                         <dd class="flex min-w-0 flex-1 items-center gap-1.5">
@@ -212,9 +228,9 @@
                 @endif
 
                 <p class="mt-4 text-[11px] text-gray-500">
-                    @if ($isInFlight)
+                    @if($isInFlight)
                         A worker is processing this job right now. The modal will flip to its empty state once the job finishes (success or failure) — check Recent completed / Recent failed afterwards.
-                    @elseif ($isDelayed)
+                    @elseif($isDelayed)
                         This job is scheduled to run later. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.
                     @else
                         This job is in line to run. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.

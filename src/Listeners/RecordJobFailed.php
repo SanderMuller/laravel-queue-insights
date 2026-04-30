@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use Throwable;
 
@@ -60,16 +61,25 @@ final readonly class RecordJobFailed
                     $redis->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuid]);
                 }
 
-                // Batch tracking — index uuid → failed_jobs row id. JobFailed
-                // fires AFTER FailedJobProvider::log() inserts the row, so the
-                // lookup-by-uuid is safe. Modal opens by row id (openFailed),
-                // so the batch-detail view needs the id to wire the click.
-                if (Config::bool('batches.enabled', true)) {
+                // Batch tracking + chain-lineage click-through index —
+                // uuid → failed_jobs row id. JobFailed fires AFTER
+                // FailedJobProvider::log() inserts the row, so the
+                // lookup-by-uuid is safe. Doubles as the source for
+                // `UuidResolver::resolve` so the `↰ From` parent-lineage
+                // click-through can reach a failed parent's modal even
+                // when batches are disabled.
+                $needsTargetIndex = Config::bool('batches.enabled', true)
+                    || Config::bool('chain_lineage.enabled', true);
+                if ($needsTargetIndex) {
                     $failedJobsId = $this->resolveFailedJobId($uuid);
                     if ($failedJobsId !== null) {
+                        $ttl = max(
+                            Config::bool('batches.enabled', true) ? Config::int('batches.ttl_seconds', 604800) : 0,
+                            Config::bool('chain_lineage.enabled', true) ? Config::int('chain_lineage.lineage_ttl_seconds', 604800) : 0,
+                        );
                         $redis->command('setex', [
                             KeyPrefix::make("uuid-failed:{$uuid}"),
-                            Config::int('batches.ttl_seconds', 604800),
+                            $ttl,
                             (string) $failedJobsId,
                         ]);
                     }
@@ -78,6 +88,21 @@ final readonly class RecordJobFailed
 
             $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
             $redis->command('setex', [KeyPrefix::make("last_run:{$class}"), 2592000, $isoNow]);
+
+            // qi:class:{uuid} — uuid → class index for backward-chain lineage
+            // resolution. Same write as in RecordJobProcessed; failed jobs
+            // also need their class addressable by uuid because a downstream
+            // child can reference a failed parent in its lineage.
+            if (
+                Config::bool('chain_lineage.enabled', true)
+                && $uuid !== null && $uuid !== ''
+            ) {
+                $redis->command('setex', [
+                    ParentClassResolver::classKey($uuid),
+                    Config::int('chain_lineage.lineage_ttl_seconds', 604800),
+                    $class,
+                ]);
+            }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobFailed failed', [
                 'exception' => $throwable::class,

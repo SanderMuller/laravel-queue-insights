@@ -125,6 +125,22 @@ it('RecordJobProcessing computes wait_ms from pushed:{uuid} and writes both wait
         ->toBeLessThan(microtime(true) + 1);
 });
 
+it('per-queue wait ZSET key is canonicalised so SQS URLs match dashboard reads', function (): void {
+    $uuid = 'sqs-uuid-1';
+    $url = 'https://sqs.eu-west-1.amazonaws.com/123/work';
+
+    (new RecordJobQueued())->handle(makeJobQueuedEvent($uuid, 'sqs', $url));
+
+    Sleep::usleep(5_000);
+
+    (new RecordJobProcessing())->handle(makeJobProcessingEvent($uuid, 'sqs', $url));
+
+    // Writer must store under canonical 'work', not under the URL — otherwise
+    // the dashboard's `wait:sqs:work` reader misses it (codex-flagged bug).
+    expect(R::int('zcard', 'qmtest:wait:sqs:work'))->toBe(1)
+        ->and(R::conn()->command('exists', ['qmtest:wait:sqs:' . preg_replace('/[^a-zA-Z0-9_-]/', '_', $url)]))->toBe(0);
+});
+
 it('queue ZSET trim keeps the most recent samples, not the highest wait_ms', function (): void {
     // Codex review regression: prior `score = wait_ms` + `ZREMRANGEBYRANK 0 -1001`
     // dropped the FASTEST jobs (lowest score) and retained outliers, skewing p95

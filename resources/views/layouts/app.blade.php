@@ -144,12 +144,15 @@
                     </span>
                     <span class="text-base font-semibold tracking-tight text-white">Queue Insights</span>
                 </a>
+                @php($qiPolling = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true))
                 <div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
                     <span class="relative flex size-2">
-                        <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                        <span class="relative inline-flex size-2 rounded-full bg-emerald-400"></span>
+                        @if($qiPolling)
+                            <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                        @endif
+                        <span class="relative inline-flex size-2 rounded-full {{ $qiPolling ? 'bg-emerald-400' : 'bg-gray-500' }}"></span>
                     </span>
-                    <span>Active · polling 10s</span>
+                    <span>{{ $qiPolling ? 'Active · polling 10s' : 'Static · polling off' }}</span>
                 </div>
             </div>
         </header>

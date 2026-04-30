@@ -87,12 +87,31 @@ parameters:
             paths:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
+                - tests/Feature/AlertingNotificationsTest.php
             reportUnmatched: false
         -
             identifier: new.internalClass
             paths:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
+                - tests/Feature/AlertingNotificationsTest.php
+            reportUnmatched: false
+        -
+            identifier: property.internalClass
+            paths:
+                - tests/Feature/AlertingNotificationsTest.php
+                - tests/Feature/AlertingDetectorsTest.php
+                - tests/Feature/AlertingClassDetectorsTest.php
+                - tests/Feature/AlertingBacklogGrowingTest.php
+                - tests/Feature/AlertingTest.php
+                - tests/Feature/Http/AlertsDashboardTest.php
+            reportUnmatched: false
+        -
+            identifier: parameter.internalClass
+            paths:
+                - tests/Feature/AlertingClassDetectorsTest.php
+                - tests/Feature/AlertingDetectorsTest.php
+                - tests/Feature/AlertingNotificationsTest.php
             reportUnmatched: false
         # PHPUnit's AssertionFailedError / ExpectationFailedException are marked @internal
         # but legitimately referenced from tests when asserting on assertion failures

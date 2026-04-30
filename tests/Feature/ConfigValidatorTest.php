@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Log;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 
@@ -112,4 +113,74 @@ it('rejects a non-int gap_warn_threshold', function (): void {
     expect(function (): void {
         ConfigValidator::validatePending(['gap_warn_threshold' => 1.5]);
     })->toThrow(QueueInsightsConfigException::class, 'pending.gap_warn_threshold must be a positive integer');
+});
+
+it('accepts an empty alerts block', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([]))->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-bool alerts.enabled', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts(['enabled' => 'yes']))
+        ->toThrow(QueueInsightsConfigException::class, 'alerts.enabled must be a boolean');
+});
+
+it('rejects a negative alerts.cooldown_seconds', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts(['cooldown_seconds' => -1]))
+        ->toThrow(QueueInsightsConfigException::class, 'cooldown_seconds');
+});
+
+it('rejects an invalid severity in a depth threshold', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'depth' => [
+                'thresholds' => [
+                    ['connection' => 'sqs', 'queue' => 'work', 'depth' => 100, 'severity' => 'urgent'],
+                ],
+            ],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'warning, critical');
+});
+
+it('rejects slack channel enabled without webhook_url', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'channels' => [
+            'slack' => ['enabled' => true],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'webhook_url');
+});
+
+it('rejects mail channel enabled with empty to', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'channels' => [
+            'mail' => ['enabled' => true, 'to' => []],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'mail.to');
+});
+
+it('rejects a non-int depth threshold value', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'thresholds' => [
+            ['connection' => 'sqs', 'queue' => 'work', 'depth' => '1000'],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'depth must be a non-negative integer');
+});
+
+it('logs a deprecation warning when legacy alerts.thresholds is set', function (): void {
+    Log::shouldReceive('warning')
+        ->once()
+        ->withArgs(fn (string $message): bool => str_contains($message, 'legacy `alerts.thresholds`'));
+
+    ConfigValidator::validateAlerts([
+        'thresholds' => [
+            ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000],
+        ],
+    ]);
+});
+
+it('rejects ratio outside [0, 1]', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'failure_rate' => ['ratio' => 1.5],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'ratio');
 });

@@ -10,10 +10,13 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
+use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
+use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
@@ -67,6 +70,21 @@ final readonly class RecordJobProcessed
             // Last run
             $redis->command('setex', [KeyPrefix::make("last_run:{$class}"), 2592000, $isoNow]);
 
+            // qi:class:{uuid} — uuid → class index used by the backward-chain
+            // lineage UI to hydrate `parent_uuid` to a class label. Skipped
+            // when chain lineage is disabled (no consumer).
+            $uuidForClass = $event->job->uuid();
+            if (
+                Config::bool('chain_lineage.enabled', true)
+                && is_string($uuidForClass) && $uuidForClass !== ''
+            ) {
+                $redis->command('setex', [
+                    ParentClassResolver::classKey($uuidForClass),
+                    Config::int('chain_lineage.lineage_ttl_seconds', 604800),
+                    $class,
+                ]);
+            }
+
             // Classes ZSET
             $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
 
@@ -75,17 +93,28 @@ final readonly class RecordJobProcessed
 
             // Batch tracking — index uuid → completed-stream entry id so the
             // batch-detail view can resolve a uuid to the existing completed
-            // modal flow (which opens by stream id).
+            // modal flow (which opens by stream id). Doubles as the
+            // chain-lineage uuid → target index — `UuidResolver::resolve`
+            // reads this to drive the `↰ From` click-through to the
+            // parent's modal. Written unconditionally when chain lineage
+            // is on (with the lineage TTL) so click-through works even
+            // for hosts that have batches disabled.
             $uuidForBatch = $event->job->uuid();
+            $needsTargetIndex = Config::bool('batches.enabled', true)
+                || Config::bool('chain_lineage.enabled', true);
             if (
                 $globalStreamId !== null
                 && $uuidForBatch !== null
                 && $uuidForBatch !== ''
-                && Config::bool('batches.enabled', true)
+                && $needsTargetIndex
             ) {
+                $ttl = max(
+                    Config::bool('batches.enabled', true) ? Config::int('batches.ttl_seconds', 604800) : 0,
+                    Config::bool('chain_lineage.enabled', true) ? Config::int('chain_lineage.lineage_ttl_seconds', 604800) : 0,
+                );
                 $redis->command('setex', [
                     KeyPrefix::make("uuid-completed:{$uuidForBatch}"),
-                    Config::int('batches.ttl_seconds', 604800),
+                    $ttl,
                     $globalStreamId,
                 ]);
             }
@@ -172,7 +201,18 @@ final readonly class RecordJobProcessed
             $baseFields['chain'] = $chainJson;
         }
 
-        if (Config::string('capture.payloads', 'off') !== 'off') {
+        // Backward chain lineage — copy the interim qi:lineage:{uuid} pointer
+        // (written by RecordJobQueued on a successful claim pop) into the
+        // durable stream row, then forget the interim hash so subsequent reads
+        // pick the persisted value off the row directly. The interim hash's
+        // 7-day TTL is the safety net if anything in this listener throws
+        // before the stamp lands.
+        $parentUuid = $this->resolveParentUuid($event);
+        if ($parentUuid !== null) {
+            $baseFields['parent_uuid'] = $parentUuid;
+        }
+
+        if (Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off)->writesPayloadFields()) {
             foreach ($this->sanitizer->sanitize($event) as $key => $value) {
                 $baseFields['payload_' . $key] = $this->encodeStreamValue($value);
             }
@@ -192,6 +232,30 @@ final readonly class RecordJobProcessed
         $this->xaddApprox($redis, $perClassKey, $perClassMax, $perClassFields);
 
         return $globalStreamId;
+    }
+
+    private function resolveParentUuid(JobProcessed $event): ?string
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return null;
+        }
+
+        $uuid = $event->job->uuid();
+        if (! is_string($uuid) || $uuid === '') {
+            return null;
+        }
+
+        // Read-only — the interim `qi:lineage:{uuid}` hash is intentionally
+        // left to age out via its `lineage_ttl_seconds` TTL (default 7d).
+        // Two scenarios depend on this (codex review):
+        //   1. A child that failed first, was retried, and now succeeds:
+        //      the original failed_jobs row stays in the failed list and
+        //      RowEnricher::failed reads `qi:lineage:{uuid}` per render.
+        //      Deleting here would orphan that row's parent attribution.
+        //   2. Anything throwing between this read and the XADD below —
+        //      the lineage hash is the safety net and a delete here would
+        //      lose it before any durable record exists.
+        return (new ChainLineageStore())->readLineage($uuid);
     }
 
     private function encodedChain(JobProcessed $event): ?string

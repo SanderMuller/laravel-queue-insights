@@ -10,9 +10,12 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
+use SanderMuller\QueueInsights\Support\ChainLineageClaim;
+use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
 
 /**
@@ -58,6 +61,7 @@ final class RecordJobQueued
 
             $this->writePendingTracking($redis, $event, $uuid, $payload);
             $this->writeBatchTracking($redis, $uuid, $payload);
+            $this->resolveChainLineage($event, $uuid, $payload);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
                 'exception' => $throwable::class,
@@ -231,5 +235,110 @@ final class RecordJobQueued
             $ttl,
             $batchId,
         ]);
+    }
+
+    /**
+     * Try to attribute this newly-queued job to a parent that pushed a claim
+     * ticket while entering processing. Per Phase 0 finding: the child's
+     * serialized payload doesn't reliably carry a `chainConnection` /
+     * `chainQueue` signal under default `Bus::chain([...])->dispatch()` usage,
+     * so we attempt RPOP unconditionally — root jobs and non-chain dispatches
+     * miss harmlessly.
+     *
+     * The claim key is built from (connection, queue, displayName,
+     * tail-class fingerprint). The "tail" comes from the child's own
+     * `chained` property, which Laravel re-serializes after `array_shift`
+     * — so the child carries the same tail the parent computed at push
+     * time, and the keys collide deterministically.
+     *
+     * @param  array<array-key, mixed>|null  $payload
+     */
+    private function resolveChainLineage(JobQueued $event, string $uuid, ?array $payload): void
+    {
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return;
+        }
+
+        $command = is_array($payload) && isset($payload['data']) && is_array($payload['data'])
+            ? ($payload['data']['command'] ?? null)
+            : null;
+
+        if (! is_string($command) || $command === '') {
+            return;
+        }
+
+        $extracted = SerializedCommandReader::extract($command);
+        if ($extracted === null) {
+            return;
+        }
+
+        $childClass = $extracted['class'];
+        if (! is_string($childClass) || $childClass === '') {
+            return;
+        }
+
+        $tailClasses = $this->extractTailClasses($extracted['properties']['chained'] ?? null);
+        if ($tailClasses === null) {
+            // A malformed chained entry — bail rather than guessing on a
+            // tail that won't match the parent's fingerprint.
+            return;
+        }
+
+        $connection = (string) $event->connectionName;
+        $queueRaw = (string) $event->queue;
+        // Match the canonicalisation in RecordJobProcessing's push side —
+        // SQS producers stamp queue URLs on JobQueued while the worker
+        // reports the logical name on JobProcessing. Without canonicalising
+        // both sides, every chained SQS job would silently miss its claim.
+        $queueKey = $queueRaw === '' ? 'default' : CanonicalQueueKey::from($queueRaw);
+
+        $store = new ChainLineageStore();
+        $key = ChainLineageClaim::key($connection, $queueKey, $childClass, $tailClasses);
+
+        $parentUuid = $store->popClaim($key);
+        if ($parentUuid === null) {
+            return;
+        }
+
+        $store->writeLineage(
+            $uuid,
+            $parentUuid,
+            Config::int('chain_lineage.lineage_ttl_seconds', 604800),
+        );
+    }
+
+    /**
+     * Decode the `chained` property (a list of pre-serialized job bodies)
+     * down to a list of class names. Returns null on the first malformed
+     * entry — fail closed so the read-side key never collides with a
+     * partially-parsed parent fingerprint.
+     *
+     * @return list<string>|null
+     */
+    private function extractTailClasses(mixed $chained): ?array
+    {
+        if ($chained === null) {
+            return [];
+        }
+
+        if (! is_array($chained)) {
+            return null;
+        }
+
+        $classes = [];
+        foreach ($chained as $entry) {
+            if (! is_string($entry) || $entry === '') {
+                return null;
+            }
+
+            $sub = SerializedCommandReader::extract($entry);
+            if ($sub === null || ! is_string($sub['class']) || $sub['class'] === '') {
+                return null;
+            }
+
+            $classes[] = $sub['class'];
+        }
+
+        return $classes;
     }
 }

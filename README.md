@@ -14,7 +14,7 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 - Live depth, in-flight, and delayed counts per queue. Works on SQS, Redis, and database queues.
 - Pending & delayed-job inspector per queue — individual queued jobs with class FQCN and `runs in <countdown>` for delayed jobs. Driver-agnostic (event-captured into Redis), so SQS gets the same view as Redis and database queues.
 - Batched-jobs section — per-batch progress bar, processed/failed/pending counts, finished/cancelled state, and an expandable per-item rollup that links each uuid back to the existing completed/failed modal. Per-row chip on completed/failed/pending lists jumps to the batch in one click.
-- Chained-jobs visibility — completed and failed rows surface the next job in a `Bus::chain([...])` chain via a small `↳ Next (+N)` chip and a Chain section in the modal, sourced directly from the job's serialized payload.
+- Chained-jobs visibility — completed and failed rows surface the next job in a `Bus::chain([...])` chain via a small `↳ Next (+N)` chip and a Chain section in the modal, sourced directly from the job's serialized payload. Backward `↰ From {parent}` lineage is captured opportunistically via short-lived Redis claim tickets, so the modal and failed-row markdown export show which job ran *before* this one too.
 - Wait time per queue (p50 / p95) and per job. Measures enqueue to worker pickup.
 - 24h throughput sparkline (processed + failed) with hover tooltips per hour, alongside a headline-stats panel: jobs/min, jobs past hour, failed past hour, max throughput hour, max wait p95, max runtime p95.
 - Queues grouped into *Needs attention* (errored or stale) and *Healthy* so a broken queue can't hide in a long list.
@@ -23,6 +23,7 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 - Recent failed jobs from Laravel's `failed_jobs` table, with a filter row over connection, queue, class, and date range. Filters persist in the URL.
 - Retry failed jobs from the dashboard, single or bulk. Gated, rate-limited, and audit-logged.
 - Markdown export of failed-job details for handing off to an AI agent or pasting into a tracker.
+- Alerting — eight built-in detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown and built-in `log` / `slack` / `mail` channels via the standard Laravel notification stack. Typed events fire regardless of channel config so hosts can hook custom routing.
 - Standalone Livewire + Blade. No Filament or Nova coupling.
 - Small Redis footprint, bounded and auto-evicting. No external observability service required.
 
@@ -198,9 +199,15 @@ Jobs dispatched through `Bus::chain([...])->dispatch()` (or `$job->chain([...])`
 
 For **failed jobs** the source is `failed_jobs.payload.data.command` — Laravel always persists this column, so chain context renders regardless of the package's `capture.payloads` setting. For **completed jobs** the listener writes a JSON-encoded `chain` field (a list of `{class, connection, queue}` per chained link, typically ~80–300 bytes) onto each completed-stream entry at the time the job runs, also independent of `capture.payloads`. Per-link `connection`/`queue` overrides set on individual jobs are preserved — the displayed route reflects what Laravel will actually dispatch to. Encrypted jobs (`ShouldBeEncrypted`) carry an opaque base64 blob in `data.command`, so the chip and section are silently omitted for those rows — no error, just no signal.
 
-**Backward chain visibility (which job ran *before* this one) is intentionally not tracked.** Laravel dispatches the next chained job synchronously inside its own `CallQueuedHandler::call()`, before any post-processed listener can stamp lineage onto the child. Capturing prior-chain history reliably would require overriding Laravel-internal classes, which a third-party package shouldn't do — see `internal/specs/chained-jobs.md` for the full evaluation. May land in a future release with a different approach if real demand surfaces.
+**Backward chain visibility — `↰ From {parent}`.** As the parent enters processing, the package drops a short-lived **claim ticket** into Redis (per-shape FIFO list keyed by connection/queue/next-class/tail-fingerprint, default 60 s TTL). When the next link's `JobQueued` fires inside `CallQueuedHandler::call()`, the listener pops a ticket and stamps the parent's UUID onto the child's lineage hash. The completed-modal then renders `↰ From {uuid}` above the existing `↳ Next` row, and the failed-job markdown export gains a `**Parent:** \`{uuid}\` ({class})` line so AI-assisted triage can trace upstream of the failure point.
 
-`queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job will still carry the correct `chain` field — the retry doesn't lose chain visibility.
+- **Disable** via `QUEUE_INSIGHTS_CHAIN_LINEAGE=false` (or `chain_lineage.enabled = false`). Both write and read sides short-circuit at the listener entry — zero Redis writes, zero overhead.
+- **Encrypted parents (`ShouldBeEncrypted`) are silently skipped on both sides** — the serialized command body is opaque base64, so neither the parent's chain context nor the child's tail can be decoded. The child renders without a parent attribution; document this limitation if you mix encrypted chains with the dashboard.
+- **Cross-worker collision tolerance.** Two parents with identical chain shape (same connection/queue/next-class/remaining-tail) running concurrently on different workers can attribute their children to each other in dispatch order rather than dispatch identity. Within a single worker chain dispatch is synchronous, so attribution is exact. Acceptable for an observability tool — see `internal/specs/backward-chain-lineage.md` §3 for the full collision model.
+- **Class label is best-effort.** `qi:class:{uuid}` (TTL = `chain_lineage.lineage_ttl_seconds`, default 7 d) is the index that hydrates a parent UUID to a class name in the markdown export and modal. Past that horizon the UUID still renders, just without `(ClassName)`.
+- **Click-through to the parent's modal is not in v1** — the lineage row is plain text plus a copy-to-clipboard button. Resolving a UUID to its target surface (completed stream id vs failed_jobs id) is a follow-up.
+
+`queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job will still carry the correct `chain` field — the retry doesn't lose chain visibility. Backward lineage is keyed by uuid and survives the retry too: the existing `qi:lineage:{uuid}` is never overwritten with null.
 
 ### Customising row markup
 
@@ -210,15 +217,15 @@ The dashboard's queue, completed, and failed lists are each rendered through a B
 php artisan vendor:publish --tag=queue-insights-views
 ```
 
-| Partial                                 | What it renders                                                |
-|-----------------------------------------|----------------------------------------------------------------|
-| `partials/queue-row.blade.php`          | One row in the Queues list (Needs attention + Healthy groups)  |
-| `partials/completed-row.blade.php`      | One row in Recent completed                                    |
-| `partials/failed-list-row.blade.php`    | One row in Recent failed                                       |
-| `partials/batch-row.blade.php`          | One row in the Batches section (header + per-item rollup)      |
-| `partials/batch-chip.blade.php`         | The small chip rendered on rows that belong to a batch         |
-| `partials/filter-form.blade.php`        | The collapsible 5-field filter form (used by both completed + failed) |
-| `partials/stat-tile.blade.php`          | One tile in the headline-stats panel beside the throughput sparkline  |
+| Partial                              | What it renders                                                       |
+|--------------------------------------|-----------------------------------------------------------------------|
+| `partials/queue-row.blade.php`       | One row in the Queues list (Needs attention + Healthy groups)         |
+| `partials/completed-row.blade.php`   | One row in Recent completed                                           |
+| `partials/failed-list-row.blade.php` | One row in Recent failed                                              |
+| `partials/batch-row.blade.php`       | One row in the Batches section (header + per-item rollup)             |
+| `partials/batch-chip.blade.php`      | The small chip rendered on rows that belong to a batch                |
+| `partials/filter-form.blade.php`     | The collapsible 5-field filter form (used by both completed + failed) |
+| `partials/stat-tile.blade.php`       | One tile in the headline-stats panel beside the throughput sparkline  |
 
 If you only want to override one row layout, leave the others unpublished — Blade will fall back to the package's bundled version for those.
 
@@ -255,12 +262,12 @@ $this->app->bind(PayloadSanitizer::class, YourSanitizer::class);
 
 ### Dashboard signals
 
-| Signal | Meaning |
-|---|---|
+| Signal                     | Meaning                                                                                                             |
+|----------------------------|---------------------------------------------------------------------------------------------------------------------|
 | `—` on in-flight / delayed | Driver can't produce the metric (Null / sync), or the live cache expired (>90s since the last successful snapshot). |
-| `stale` badge | No snapshot ran in the last 2 minutes. |
-| `error` badge | Last snapshot run failed for this queue. Hover for the error message (10-minute TTL). |
-| `no snapshot yet` | The command has never completed successfully against this queue. |
+| `stale` badge              | No snapshot ran in the last 2 minutes.                                                                              |
+| `error` badge              | Last snapshot run failed for this queue. Hover for the error message (10-minute TTL).                               |
+| `no snapshot yet`          | The command has never completed successfully against this queue.                                                    |
 
 ### Driver-specific quirks
 
@@ -275,19 +282,129 @@ $this->app->bind(PayloadSanitizer::class, YourSanitizer::class);
 
 ### Alerting
 
-Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true` and declare thresholds in `config/queue-insights.php`:
+Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Seven detectors run every snapshot tick (≈ every minute) against live Redis state:
+
+| Rule               | Scope     | Fires when                                                                                                                |
+|--------------------|-----------|---------------------------------------------------------------------------------------------------------------------------|
+| `depth`            | per-queue | `live:depth` ≥ a configured threshold                                                                                     |
+| `stalled`          | per-queue | depth ≥ `min_depth` AND no worker pickups in `idle_seconds`                                                               |
+| `oldest_pending`   | per-queue | the oldest runnable pending job has been waiting `seconds` (skips not-yet-due delayed jobs)                               |
+| `stuck_inflight`   | per-queue | the longest-running in-flight job has been executing `seconds`                                                            |
+| `failure_rate`     | per-class | `failed / (processed + failed)` ≥ `ratio` over the **current hour bucket** AND total ≥ `min_jobs`                         |
+| `slow_p95`         | per-class | per-class p95 duration ≥ `class_threshold_ms[$class]` (opt-in per class)                                                  |
+| `snapshot_errored` | per-queue | the snapshot driver threw on the most recent tick (auto-clears on next success / 10-min TTL)                              |
+| `backlog_growing`  | per-queue | least-squares depth slope over the recent samples ≥ `min_slope_per_minute` (opt-in, warms up after `min_samples` samples) |
+
+A dashboard-only watchdog (`snapshot_command_dead`) renders a top-level red banner when `live:depth` keys are absent for every configured queue — i.e. the snapshot command itself has been silent for ≥ 90 s.
+
+Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}:{c}:{q}`, TTL `cooldown_seconds`). The dashboard always reflects live state.
+
+#### Config example
 
 ```php
+// config/queue-insights.php
 'alerts' => [
-    'enabled' => true,
+    'enabled' => env('QUEUE_INSIGHTS_ALERTS_ENABLED', false),
     'cooldown_seconds' => 900,
-    'thresholds' => [
-        ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000],
+
+    'rules' => [
+        'depth' => [
+            'enabled' => true,
+            // Multiple thresholds matching the same (connection, queue) →
+            // highest matching severity wins per tick.
+            'thresholds' => [
+                ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000, 'severity' => 'warning'],
+                ['connection' => 'sqs', 'queue' => 'work', 'depth' => 5000, 'severity' => 'critical'],
+            ],
+        ],
+        'stalled' => ['enabled' => true, 'idle_seconds' => 120, 'min_depth' => 1, 'severity' => 'critical'],
+        'oldest_pending' => ['enabled' => true, 'seconds' => 600, 'severity' => 'warning'],
+        'stuck_inflight' => ['enabled' => true, 'seconds' => 300, 'severity' => 'warning'],
+        'failure_rate' => ['enabled' => true, 'min_jobs' => 20, 'ratio' => 0.10, 'severity' => 'warning'],
+        'slow_p95' => [
+            'enabled' => false,
+            'class_threshold_ms' => ['App\\Jobs\\GenerateReport' => 30_000],
+            'severity' => 'warning',
+        ],
+        'snapshot_errored' => ['enabled' => true, 'severity' => 'warning'],
+        'backlog_growing' => [
+            'enabled' => false,
+            'min_slope_per_minute' => 50.0,
+            'min_samples' => 5,
+            'severity' => 'warning',
+        ],
+    ],
+
+    'channels' => [
+        'log' => ['enabled' => true, 'level' => 'warning'],
+        'slack' => ['enabled' => false, 'webhook_url' => env('QUEUE_INSIGHTS_SLACK_WEBHOOK')],
+        'mail' => ['enabled' => false, 'to' => ['ops@example.com']],
     ],
 ],
 ```
 
-Listen for `SanderMuller\QueueInsights\Events\QueueDepthExceeded` and route notifications via `Notification::route(...)` (Slack, Teams, email, PagerDuty, etc.).
+> **Heads up — `oldest_pending` / `stuck_inflight` need pending tracking.**
+> Both detectors read `pending-zset:*` / `inflight-zset:*` populated by the `RecordJobQueued` / `RecordJobProcessing` listeners. With `pending.enabled = false` they short-circuit at runtime and a one-off boot warning lists which rules were tripped. Either re-enable pending tracking or disable those rules.
+
+#### Notification channels
+
+The package ships three channels out of the box:
+
+- **`log`** — zero-dep, on by default; one structured log line per issue at the configured level (`alerts.channels.log.level`).
+- **`slack`** — `Http::post` to a Slack-compatible incoming webhook (works with Slack, Mattermost, Rocket.Chat). Block Kit payload with severity-coloured attachment; falls back to plain `text` if the receiver rejects Block Kit. Set `QUEUE_INSIGHTS_SLACK_WEBHOOK` and `alerts.channels.slack.enabled = true`.
+- **`mail`** — uses Laravel's first-party mail channel; subject prefix `[Queue Insights] {severity}: {rule} on {target}`. Recipients from `alerts.channels.mail.to` (array of addresses).
+
+Both `slack` and `mail` feature-detect the underlying binding (`Illuminate\Http\Client\Factory` and `mail.manager` respectively) — if the binding is missing they're silently skipped.
+
+#### Adding more channels (Discord, Teams, PagerDuty, Telegram, …)
+
+The package emits a `SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertNotification` and routes it through `SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable`, exactly as Spatie's alerting packages and Horizon do. To add a destination:
+
+1. Install the matching `laravel-notification-channels/*` package (`discord`, `microsoft-teams`, `pagerduty`, `telegram`, `vonage`, …).
+2. Extend `QueueAlertNotification` to add the channel to `via()` and a `to{Channel}()` method, OR override `QueueInsightsNotifiable` and add `routeNotificationFor{Channel}()`.
+3. Bind your override in your `AppServiceProvider`:
+
+   ```php
+   $this->app->bind(QueueAlertNotification::class, MyQueueAlertNotification::class);
+   $this->app->bind(QueueInsightsNotifiable::class, MyNotifiable::class);
+   ```
+
+#### Typed events (always fire)
+
+Each rule fires a typed event regardless of which channels are enabled — host apps can hook `Event::listen(...)` for custom routing:
+
+- `QueueDepthExceeded` (existing — added trailing nullable `?string $severity`)
+- `QueueStalled`, `OldestPendingAging`, `StuckInFlight`, `SnapshotErrored`
+- `JobClassFailureRateExceeded`, `JobClassP95Exceeded`
+- `BacklogGrowing`
+
+#### Active-rules panel
+
+The dashboard footer renders a read-only summary of `alerts.rules` + `alerts.channels` so operators can verify what's monitored without SSH'ing into the server. Edit the config file to change anything — there is no runtime mutation surface.
+
+#### Migrating from the 0.x `alerts.thresholds` shape
+
+The pre-1.0 config exposed a single flat `alerts.thresholds` list. It is still honoured (legacy wins over `alerts.rules.depth.thresholds`) and emits a one-off boot warning. To migrate:
+
+```diff
+ 'alerts' => [
+     'enabled' => true,
+     'cooldown_seconds' => 900,
+-    'thresholds' => [
+-        ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000],
+-    ],
++    'rules' => [
++        'depth' => [
++            'enabled' => true,
++            'thresholds' => [
++                ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000, 'severity' => 'warning'],
++            ],
++        ],
++    ],
+ ],
+```
+
+Note: Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published `config/queue-insights.php` before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
 
 ## License
 

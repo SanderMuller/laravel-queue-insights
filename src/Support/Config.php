@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Support;
 
+use BackedEnum;
+
 /**
  * Typed accessors for `config('queue-insights.*')`. Replaces scattered
  * `(string) config(...)` casts that PHPStan can't narrow from `mixed`.
@@ -57,5 +59,36 @@ final class Config
         $value = config('queue-insights.' . $key, []);
 
         return is_array($value) ? $value : [];
+    }
+
+    /**
+     * Read a backed string-enum from config. Hosts keep writing the
+     * raw string (`'metadata'`, `'critical'`, ...); the package converts
+     * to the typed case at the call site so internal code is exhaustive
+     * over the cases.
+     *
+     * Falls back to `$default` when the config key is missing or holds
+     * a value that doesn't map to any case — same conservative shape
+     * the per-detector `severity()` helpers used to have.
+     *
+     * @template T of \BackedEnum
+     *
+     * @param  class-string<T>  $enum
+     * @param  T  $default
+     * @return T
+     */
+    public static function enum(string $key, string $enum, BackedEnum $default): BackedEnum
+    {
+        $value = config('queue-insights.' . $key);
+
+        if ($value instanceof $enum) {
+            return $value;
+        }
+
+        if (is_string($value) || is_int($value)) {
+            return $enum::tryFrom($value) ?? $default;
+        }
+
+        return $default;
     }
 }

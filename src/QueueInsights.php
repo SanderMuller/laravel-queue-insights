@@ -270,11 +270,11 @@ final class QueueInsights
     public function pendingJobs(string $connection, string $queue, int $limit = 50): array
     {
         return PendingJobsReader::readZset(
-            $connection,
-            $queue,
-            '-inf',
-            (string) Date::now()->getTimestamp(),
-            $limit,
+            connection: $connection,
+            queue: $queue,
+            min: '-inf',
+            max: (string) Date::now()->getTimestamp(),
+            limit: $limit,
         );
     }
 

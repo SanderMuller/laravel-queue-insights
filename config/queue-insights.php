@@ -1,6 +1,7 @@
-<?php
+<?php declare(strict_types=1);
 
-declare(strict_types=1);
+use SanderMuller\QueueInsights\Enums\AlertSeverity;
+use SanderMuller\QueueInsights\Enums\CaptureMode;
 
 return [
     'enabled' => env('QUEUE_INSIGHTS_ENABLED', true),
@@ -45,7 +46,7 @@ return [
          | see inside `data.command`. Apps with sensitive jobs MUST bind a
          | custom PayloadSanitizer. See SECURITY.md.
          */
-        'payloads' => env('QUEUE_INSIGHTS_CAPTURE_PAYLOADS', 'off'),
+        'payloads' => env('QUEUE_INSIGHTS_CAPTURE_PAYLOADS', CaptureMode::Off->value),
         'redact_keys' => ['password', 'token', 'secret', 'api_?key', 'authorization'],
         'max_field_bytes' => 2048,
         'max_payload_bytes' => 16384,
@@ -66,20 +67,115 @@ return [
     'alerts' => [
         'enabled' => env('QUEUE_INSIGHTS_ALERTS_ENABLED', false),
         'cooldown_seconds' => 900,
+
         /*
-         | Per-queue depth thresholds. When depth crosses the threshold a
-         | QueueDepthExceeded event fires (subject to cooldown). Hook a listener
-         | or Notification route on the host app side.
-         |
-         | ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000]
+         | DEPRECATED top-level threshold list. Kept for backwards compatibility
+         | with hosts that published the package config before the alerts.rules
+         | migration. When this list is non-empty it WINS over alerts.rules.depth.thresholds
+         | and a deprecation warning is logged on boot. Move entries to
+         | `alerts.rules.depth.thresholds` (which also supports per-entry severity).
          */
         'thresholds' => [],
+
+        /*
+         | Per-rule configuration. Each rule is opt-out via `enabled = false`.
+         | See spec internal/specs/alerting.md §1 for detector semantics and
+         | source keys.
+         */
+        'rules' => [
+            'depth' => [
+                'enabled' => true,
+                /*
+                 | ['connection' => 'sqs', 'queue' => 'work', 'depth' => 1000, 'severity' => AlertSeverity::Warning->value],
+                 | ['connection' => 'sqs', 'queue' => 'work', 'depth' => 5000, 'severity' => AlertSeverity::Critical->value],
+                 |
+                 | When multiple entries match the same (connection, queue) the
+                 | highest-severity matching threshold fires per tick.
+                 */
+                'thresholds' => [],
+            ],
+
+            'stalled' => [
+                'enabled' => true,
+                'idle_seconds' => 120,
+                'min_depth' => 1,
+                'severity' => AlertSeverity::Critical->value,
+            ],
+
+            'oldest_pending' => [
+                'enabled' => true,
+                'seconds' => 600,
+                'severity' => AlertSeverity::Warning->value,
+            ],
+
+            'stuck_inflight' => [
+                'enabled' => true,
+                'seconds' => 300,
+                'severity' => AlertSeverity::Warning->value,
+            ],
+
+            'failure_rate' => [
+                'enabled' => true,
+                'min_jobs' => 20,
+                'ratio' => 0.10,
+                'severity' => AlertSeverity::Warning->value,
+            ],
+
+            'slow_p95' => [
+                'enabled' => false,
+                // Per-class opt-in: ['App\Jobs\Foo' => 30000]
+                'class_threshold_ms' => [],
+                'severity' => AlertSeverity::Warning->value,
+            ],
+
+            'snapshot_errored' => [
+                'enabled' => true,
+                'severity' => AlertSeverity::Warning->value,
+            ],
+
+            'backlog_growing' => [
+                'enabled' => false,
+                // Depth-per-minute slope (least-squares regression over the
+                // recent samples zset). 50/min ≈ "the queue is gaining one
+                // job per second faster than the workers can drain". Tune
+                // per workload.
+                'min_slope_per_minute' => 50.0,
+                // Don't fire until at least this many samples are in the
+                // window (warm-up guard for fresh installs / cleared queues).
+                'min_samples' => 5,
+                'severity' => AlertSeverity::Warning->value,
+            ],
+        ],
+
+        /*
+         | Outbound notification channels. All opt-in. Cooldown gates these —
+         | the dashboard always shows live state regardless.
+         */
+        'channels' => [
+            'log' => [
+                'enabled' => true,
+                'level' => 'warning',
+            ],
+            'slack' => [
+                'enabled' => false,
+                'webhook_url' => env('QUEUE_INSIGHTS_SLACK_WEBHOOK'),
+            ],
+            'mail' => [
+                'enabled' => false,
+                'to' => [],
+            ],
+        ],
     ],
 
     'dashboard' => [
         'enabled' => true,
         'path' => 'queue-insights',
         'middleware' => ['web', 'auth', 'can:viewQueueInsights'],
+        // Toggles `wire:poll.10s` on the dashboard root. Default-on for
+        // production hosts (live snapshots refresh, alerts re-evaluate).
+        // The workbench preview disables it because the seeded fixtures
+        // are static — every poll would be wasted Redis traffic.
+        'polling' => true,
     ],
 
     /*
@@ -100,6 +196,47 @@ return [
         // dashboard surfaces a "tracking gap" badge so operators know to
         // read the snapshot count, not the listed sample, as truth.
         'gap_warn_threshold' => 5,
+    ],
+
+    /*
+     | Backward-chain lineage. When enabled, the parent job in a `Bus::chain`
+     | drops a short-lived "claim ticket" into the cache as it enters
+     | processing; the next link's `JobQueued` listener pops the ticket and
+     | stamps `parent_uuid` onto the child's interim lineage record. The
+     | dashboard surfaces it as a `↰ From {uuid}` row in the Chain section
+     | and as a `Parent: {uuid}` line in the failed-job markdown export.
+     |
+     | Implementation depends on a Redis-backed cache store (LPUSH/RPOP on a
+     | per-shape list bounds same-shape concurrent attribution to "FIFO order"
+     | rather than "last writer wins"). When `chain_lineage.enabled = true`
+     | and any monitored queue connection is non-sync, the boot-time validator
+     | rejects the `array` cache driver.
+     |
+     | See spec internal/specs/backward-chain-lineage.md for the full design,
+     | including the encrypted-payload limitation and cross-worker collision
+     | tolerance.
+     */
+    'chain_lineage' => [
+        'enabled' => env('QUEUE_INSIGHTS_CHAIN_LINEAGE', true),
+        // Redis connection name (from config/database.php → redis.connections)
+        // for the claim list + interim lineage hash. null → reuses the package's
+        // primary `redis_connection` above. Override only when you want lineage
+        // tracking on a separate Redis instance from the rest of queue-insights
+        // (operationally rare; the override exists for hosts that segregate
+        // hot-path queue state from observability state).
+        'redis_connection' => env('QUEUE_INSIGHTS_CHAIN_LINEAGE_REDIS'),
+        // Claim-ticket TTL in seconds. Tickets that go unconsumed (parent
+        // crashed before chain dispatch, child never queued, etc) age out at
+        // this bound. 60s suits the common case of in-process chain dispatch
+        // (child queues within milliseconds of parent JobProcessing); raise
+        // for workloads where worker pickup latency commonly exceeds 60s.
+        'claim_ttl_seconds' => 60,
+        // Interim lineage-hash TTL in seconds. Holds `qi:lineage:{child-uuid}
+        // = parent-uuid` until the child's listeners (Processing/Processed/
+        // Failed) copy it into the durable record. Default 7d matches the
+        // stream retention window so lookups stay valid for as long as the
+        // child's row is queryable.
+        'lineage_ttl_seconds' => 604800,
     ],
 
     /*

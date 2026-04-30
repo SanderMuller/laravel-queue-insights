@@ -9,12 +9,10 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
-use SanderMuller\QueueInsights\Events\QueueDepthExceeded;
-use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
-use SanderMuller\QueueInsights\Support\RedisEval;
 use Throwable;
 
 final class QueueInsightsSnapshotCommand extends Command
@@ -25,6 +23,7 @@ final class QueueInsightsSnapshotCommand extends Command
 
     public function __construct(
         private readonly QueueSnapshotDriverFactory $factory,
+        private readonly IssueDispatcher $dispatcher,
     ) {
         parent::__construct();
     }
@@ -51,6 +50,7 @@ final class QueueInsightsSnapshotCommand extends Command
             $this->snapshot($redis, $connection, $queue);
         }
 
+        $this->dispatcher->dispatchClassScoped();
         $this->pruneClasses($redis);
 
         return self::SUCCESS;
@@ -83,9 +83,12 @@ final class QueueInsightsSnapshotCommand extends Command
 
             $redis->command('del', [KeyPrefix::make("snapshot:error:{$connection}:{$canonicalKey}")]);
 
-            $this->maybeAlert($redis, $connection, $canonicalKey, $depth);
+            $this->writeDepthSample($redis, $connection, $canonicalKey, $now, $depth);
+
+            $this->dispatcher->dispatchForSnapshot($connection, $canonicalKey, $depth);
         } catch (Throwable $throwable) {
-            $this->recordError($redis, $connection, $queueInput, $canonicalKey, $throwable);
+            $errorCanonicalKey = $this->recordError($redis, $connection, $queueInput, $canonicalKey, $throwable);
+            $this->dispatcher->dispatchSnapshotError($connection, $errorCanonicalKey);
         }
 
         unset($driver);
@@ -109,13 +112,39 @@ final class QueueInsightsSnapshotCommand extends Command
         $redis->command('setex', [$liveKey, 90, (string) $value]);
     }
 
+    /**
+     * Capped (ts, depth) sample series powering the `backlog_growing`
+     * detector. Stored as a ZSET so timestamp ordering is free, and the
+     * encoded member `"{ts}:{depth}"` keeps both values addressable
+     * without a second key family. Cap to the most-recent 30 samples
+     * (~30 minutes at the default cadence) and TTL the whole key at 2 h
+     * so an idle queue's series ages out automatically.
+     *
+     * Always written — the cost is three commands per snapshot per
+     * queue. Toggling `alerts.rules.backlog_growing.enabled` without a
+     * warm-up window is the operator-friendly default.
+     */
+    private function writeDepthSample(
+        RedisConnection $redis,
+        string $connection,
+        string $canonicalKey,
+        int $now,
+        int $depth,
+    ): void {
+        $key = KeyPrefix::make("samples:depth:{$connection}:{$canonicalKey}");
+
+        $redis->command('zadd', [$key, $now, "{$now}:{$depth}"]);
+        $redis->command('zremrangebyrank', [$key, 0, -31]);
+        $redis->command('expire', [$key, 7200]);
+    }
+
     private function recordError(
         RedisConnection $redis,
         string $connection,
         string $queueInput,
         ?string $canonicalKey,
         Throwable $e,
-    ): void {
+    ): string {
         Log::warning('queue-insights: snapshot failed', [
             'connection' => $connection,
             'queue' => $queueInput,
@@ -134,69 +163,8 @@ final class QueueInsightsSnapshotCommand extends Command
         } catch (Throwable) {
             // If the insights Redis itself is unreachable we log above and move on.
         }
-    }
 
-    private function maybeAlert(RedisConnection $redis, string $connection, string $canonicalKey, int $depth): void
-    {
-        if (! Config::bool('alerts.enabled', false)) {
-            return;
-        }
-
-        $threshold = $this->thresholdFor($connection, $canonicalKey);
-        if ($threshold === null || $depth < $threshold) {
-            return;
-        }
-
-        $cooldownKey = KeyPrefix::make("alert:cooldown:{$connection}:{$canonicalKey}");
-        $cooldownSeconds = Config::int('alerts.cooldown_seconds', 900);
-
-        // SET NX EX semantics — first caller wins, everyone else hits the existing key.
-        // Route through eval() because SET key val EX ttl NX has different positional/options
-        // shapes on phpredis vs Predis; eval side-steps the divergence. Returns 1 on acquire.
-        $acquired = RedisEval::exec(
-            $redis,
-            "if redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2], 'NX') then return 1 else return 0 end",
-            1,
-            $cooldownKey,
-            (string) Date::now()->getTimestamp(),
-            (string) $cooldownSeconds,
-        );
-
-        if ($acquired !== 1) {
-            return;
-        }
-
-        event(new QueueDepthExceeded($connection, $canonicalKey, $depth, $threshold));
-    }
-
-    private function thresholdFor(string $connection, string $canonicalKey): ?int
-    {
-        foreach (Config::array('alerts.thresholds') as $entry) {
-            if (! is_array($entry)) {
-                continue;
-            }
-
-            if (($entry['connection'] ?? null) !== $connection) {
-                continue;
-            }
-
-            $queue = $entry['queue'] ?? null;
-            $depth = $entry['depth'] ?? null;
-            if (! is_string($queue)) {
-                continue;
-            }
-
-            if (! is_int($depth)) {
-                continue;
-            }
-
-            // Match by either raw input or canonical form.
-            if (CanonicalQueueKey::from($queue) === $canonicalKey) {
-                return $depth;
-            }
-        }
-
-        return null;
+        return $errorKey;
     }
 
     private function pruneClasses(RedisConnection $redis): void

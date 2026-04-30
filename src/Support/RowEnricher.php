@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Support;
 
+use Illuminate\Support\Facades\Redis;
+
 /**
  * Enriches the dashboard's `Recent completed` and `Recent failed` row
  * shapes with payload-derived fields. Lives in `Support/` so the per-row
@@ -28,11 +30,26 @@ final class RowEnricher
 
         $batchIds = BatchReader::batchIdsForUuids($uuids);
 
+        $parentUuids = [];
+        foreach ($recentCompleted as $row) {
+            $p = $row['parent_uuid'] ?? null;
+            if (is_string($p) && $p !== '') {
+                $parentUuids[] = $p;
+            }
+        }
+
+        $parentClasses = $parentUuids === []
+            ? []
+            : ParentClassResolver::resolveMany($parentUuids);
+
         $rows = [];
         foreach ($recentCompleted as $row) {
             $id = $row['_id'] ?? '';
             $uuid = is_string($row['uuid'] ?? null) ? $row['uuid'] : '';
             $chainEncoded = is_string($row['chain'] ?? null) ? $row['chain'] : '';
+            $parentUuid = is_string($row['parent_uuid'] ?? null) && $row['parent_uuid'] !== ''
+                ? $row['parent_uuid']
+                : null;
 
             // Explicit assignment, NOT `$row + [...]` — the `+` operator
             // preserves existing keys, so it would leave `chain` as the raw
@@ -40,6 +57,8 @@ final class RowEnricher
             $row['short_id'] = is_string($id) && $id !== '' ? mb_substr(explode('-', $id)[0], -9) : '';
             $row['batch_id'] = $uuid !== '' ? ($batchIds[$uuid] ?? null) : null;
             $row['chain'] = self::decodeChain($chainEncoded);
+            $row['parent_uuid'] = $parentUuid;
+            $row['parent_class'] = $parentUuid !== null ? ($parentClasses[$parentUuid] ?? null) : null;
 
             $rows[] = $row;
         }
@@ -120,6 +139,23 @@ final class RowEnricher
      */
     public static function failed(array $recentFailed): array
     {
+        $parentUuids = [];
+        if (Config::bool('chain_lineage.enabled', true)) {
+            $childUuids = [];
+            foreach ($recentFailed as $row) {
+                $u = $row['uuid'] ?? null;
+                if (is_string($u) && $u !== '') {
+                    $childUuids[] = $u;
+                }
+            }
+
+            $parentUuids = self::lineageMany($childUuids);
+        }
+
+        $parentClasses = $parentUuids === []
+            ? []
+            : ParentClassResolver::resolveMany(array_values($parentUuids));
+
         $rows = [];
         foreach ($recentFailed as $row) {
             $payload = is_string($row['payload'] ?? null) ? json_decode($row['payload'], true) : null;
@@ -128,6 +164,7 @@ final class RowEnricher
             [$excClass, $excMessage] = self::splitExceptionHeader($exceptionFirst);
 
             $uuid = is_string($row['uuid'] ?? null) ? $row['uuid'] : '';
+            $parentUuid = $uuid !== '' ? ($parentUuids[$uuid] ?? null) : null;
 
             $rows[] = [
                 'id' => is_numeric($row['id'] ?? null) ? (int) $row['id'] : null,
@@ -143,10 +180,28 @@ final class RowEnricher
                 'exception_message' => $excMessage,
                 'batch_id' => Config::bool('batches.enabled', true) ? self::batchId($payload) : null,
                 'chain' => self::chainFromPayload($payload),
+                'parent_uuid' => $parentUuid,
+                'parent_class' => $parentUuid !== null ? ($parentClasses[$parentUuid] ?? null) : null,
             ];
         }
 
         return $rows;
+    }
+
+    /**
+     * Bulk-load `qi:lineage:{child-uuid}` → `parent-uuid` for the failed
+     * rows on the page. Routes through `ChainLineageStore` so the read
+     * lands on the configured `chain_lineage.redis_connection` override
+     * — the failed-list path was previously hard-coded to the primary
+     * `redis_connection` and would lose attribution for hosts that
+     * segregate lineage onto a separate Redis instance (codex review).
+     *
+     * @param  list<string>  $uuids
+     * @return array<string, string>
+     */
+    private static function lineageMany(array $uuids): array
+    {
+        return (new ChainLineageStore())->readLineageMany($uuids);
     }
 
     /**

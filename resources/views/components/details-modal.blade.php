@@ -3,13 +3,28 @@
     'payload' => [],
     /** @var 'raw'|'json' Active payload tab. */
     'payloadTab' => 'raw',
-    /** @var 'off'|'metadata'|'full' Capture mode (queue-insights.capture.payloads). */
-    'captureMode' => 'off',
+    /** Capture mode (queue-insights.capture.payloads). Accepts the enum or the legacy raw string for backwards compat with hosts that override the props. */
+    'captureMode' => \SanderMuller\QueueInsights\Enums\CaptureMode::Off,
     /** Currently-open batch id, '' if none. Drives the "Back to batch" button so the user can return to the batch view they came from. */
     'expandedBatchId' => '',
+    /**
+     * Top of the chain-navigation back stack, or null. Drives the
+     * "Back to {class}" button so a user who navigated through `↰ From`
+     * can return to the modal they came from.
+     *
+     * @var array{type: string, id: int|string, class: ?string}|null
+     */
+    'chainBackTop' => null,
 ])
 
 @php
+    // Accept either the CaptureMode enum (the production path from
+    // DashboardData) or a raw string (a host that publishes this view
+    // and writes their own prop value). Normalising up front keeps the
+    // comparisons below typed against the enum.
+    $captureMode = $captureMode instanceof \SanderMuller\QueueInsights\Enums\CaptureMode
+        ? $captureMode
+        : (\SanderMuller\QueueInsights\Enums\CaptureMode::tryFrom(is_string($captureMode) ? $captureMode : 'off') ?? \SanderMuller\QueueInsights\Enums\CaptureMode::Off);
     $sectionBKeys = ['payload_displayName', 'payload_maxTries', 'payload_timeout', 'payload_backoff', 'payload_note', 'payload_reason', 'payload_error', 'payload_size'];
     $hasSectionB = ! empty(array_intersect($sectionBKeys, array_keys($payload)));
     $sectionCBodyRaw = $payload['payload_body'] ?? null;
@@ -82,7 +97,7 @@
          @click.stop>
         <div class="sticky top-0 px-4 flex items-center justify-between gap-3 border-b border-gray-950/5 bg-white px-4 py-4">
             <div class="flex items-center gap-2 min-w-0">
-                @if ($expandedBatchId !== '')
+                @if($expandedBatchId !== '')
                     <button type="button"
                             x-show="view === 'job'"
                             wire:click="closePayload"
@@ -94,6 +109,7 @@
                         <span>Back to batch</span>
                     </button>
                 @endif
+                @include('queue-insights::partials.chain-back-button', ['frame' => $chainBackTop])
                 {{-- Back button only visible while inside the chain detail view. --}}
                 <button type="button"
                         x-show="view === 'chain' || view === 'chain-detail'"
@@ -114,7 +130,7 @@
             </div>
 
             <div class="flex items-center gap-3">
-                <span x-show="view === 'job'" class="whitespace-nowrap rounded-md bg-gray-950/5 px-2 py-0.5 font-mono text-xs text-gray-700">capture: {{ $captureMode }}</span>
+                <span x-show="view === 'job'" class="whitespace-nowrap rounded-md bg-gray-950/5 px-2 py-0.5 font-mono text-xs text-gray-700">capture: {{ $captureMode->value }}</span>
                 <button type="button"
                         wire:click="closePayload"
                         aria-label="Close details modal"
@@ -147,13 +163,21 @@
                                 ? $payload['batch_id']
                                 : null;
                         @endphp
-                        @if ($payloadBatchId !== null)
+                        @if($payloadBatchId !== null)
                             @include('queue-insights::partials.batch-chip', ['batchId' => $payloadBatchId])
                         @endif
                     </div>
                 </div>
 
-                @if ($chain !== null)
+                @include('queue-insights::partials.parent-lineage-row', [
+                    'parentUuid' => $payload['parent_uuid'] ?? null,
+                    'parentClass' => $payload['parent_class'] ?? null,
+                    'parentTarget' => $payload['parent_target'] ?? null,
+                    'fromClass' => is_string($payload['class'] ?? null) ? $payload['class'] : null,
+                    'copyId' => 'qi-completed-parent-uuid',
+                ])
+
+                @if($chain !== null)
                     <button type="button"
                             data-section="chain"
                             x-on:click="view = 'chain'"
@@ -167,15 +191,15 @@
                             <div class="flex flex-wrap items-baseline gap-x-2">
                                 <dt class="text-gray-400">Next</dt>
                                 <dd class="break-all font-mono text-gray-900">{{ $chain['next_class'] }}</dd>
-                                @if ($chain['remaining'] > 1)
+                                @if($chain['remaining'] > 1)
                                     <dd class="text-gray-500">(+{{ $chain['remaining'] - 1 }} more chained)</dd>
                                 @endif
                             </div>
-                            @if ($chain['chain_queue'] !== null || $chain['chain_connection'] !== null)
+                            @if($chain['chain_queue'] !== null || $chain['chain_connection'] !== null)
                                 <div class="flex flex-wrap items-baseline gap-x-2">
                                     <dt class="text-gray-400">Queue</dt>
                                     <dd class="font-mono text-gray-700">{{ $chain['chain_queue'] ?? '—' }}</dd>
-                                    @if ($chain['chain_connection'] !== null)
+                                    @if($chain['chain_connection'] !== null)
                                         <dd class="text-gray-400">·</dd>
                                         <dd class="font-mono text-gray-700">{{ $chain['chain_connection'] }}</dd>
                                     @endif
@@ -271,7 +295,7 @@
                                 <p class="mt-1 text-xs text-red-800">Sanitizer could not JSON-encode the payload for this job.</p>
                             </div>
                         </div>
-                    @elseif ($hasStatusSizeOverflow)
+                    @elseif($hasStatusSizeOverflow)
                         <div class="flex gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-900 ring-1 ring-inset ring-red-600/20">
                             <svg class="mt-0.5 size-4 shrink-0 text-red-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                 <path fill-rule="evenodd"
@@ -288,7 +312,7 @@
                                 @endif
                             </div>
                         </div>
-                    @elseif ($hasJobConfigCards)
+                    @elseif($hasJobConfigCards)
                         <h4 class="mb-3 text-xs font-medium text-gray-500">Job Config</h4>
 
                         @if($displayName = $payload['payload_displayName'] ?? null)
@@ -363,7 +387,7 @@
             @endif
 
             {{-- Footer — tiered escalation hints. --}}
-            @if($captureMode === 'off')
+            @if($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Off)
                 <div class="mt-6 flex gap-3 rounded-lg bg-gray-50 p-3 text-xs leading-5 text-gray-600 ring-1 ring-inset ring-gray-950/10">
                     <svg class="mt-0.5 size-4 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd"
@@ -380,7 +404,7 @@
                         before enabling full.
                     </p>
                 </div>
-            @elseif ($captureMode === 'metadata')
+            @elseif($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Metadata)
                 <div class="mt-6 flex gap-3 rounded-lg bg-gray-50 p-3 text-xs leading-5 text-gray-600 ring-1 ring-inset ring-gray-950/10">
                     <svg class="mt-0.5 size-4 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd"
@@ -396,7 +420,7 @@
             @endif
         </div>{{-- /padding wrapper --}}
 
-        @if ($chain !== null)
+        @if($chain !== null)
             @php
                 $chainCap = 50;
                 $chainJobs = array_slice($chain['jobs'], 0, $chainCap);
@@ -406,7 +430,7 @@
             <div class="p-4" x-show="view === 'chain'" x-cloak data-section="chain-detail">
                 <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">Chain ({{ $chain['remaining'] }} {{ $chain['remaining'] === 1 ? 'job' : 'jobs' }} after this one)</p>
                 <ol class="overflow-hidden rounded-xl ring-1 ring-gray-950/5 divide-y divide-gray-950/5">
-                    @foreach ($chainJobs as $i => $job)
+                    @foreach($chainJobs as $i => $job)
                         <li>
                             <button type="button"
                                     x-on:click="chainIndex = {{ $i }}; view = 'chain-detail'"
@@ -418,7 +442,7 @@
                                     <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                                         <x-queue-insights::meta-pill label="Connection" :value="$job['connection'] ?? null" size="sm"/>
                                         <x-queue-insights::meta-pill label="Queue" :value="$job['queue'] ?? null" size="sm"/>
-                                        @if ($i === 0)
+                                        @if($i === 0)
                                             <span class="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>
                                         @endif
                                     </div>
@@ -430,7 +454,7 @@
                         </li>
                     @endforeach
                 </ol>
-                @if ($chainTruncated)
+                @if($chainTruncated)
                     <p class="mt-2 text-[11px] text-amber-700">
                         Showing the first {{ $chainCap }} of {{ $chainTotal }} chained jobs. The remaining {{ $chainTotal - $chainCap }} are hidden to keep the modal responsive.
                     </p>
@@ -445,11 +469,11 @@
                 interaction once the modal is open. Capped to the same
                 window as the list above. --}}
             <div class="p-4" x-show="view === 'chain-detail'" x-cloak>
-                @foreach ($chainJobs as $i => $job)
+                @foreach($chainJobs as $i => $job)
                     <div x-show="chainIndex === {{ $i }}" x-cloak>
                         <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">
                             Chained job {{ $i + 1 }} of {{ $chainTotal }}
-                            @if ($i === 0)<span class="ml-1 rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>@endif
+                            @if($i === 0)<span class="ml-1 rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>@endif
                         </p>
                         <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10">
                             <dl>
@@ -486,7 +510,7 @@
                         @php
                             $chainProps = is_array($job['properties'] ?? null) ? $job['properties'] : [];
                         @endphp
-                        @if (count($chainProps) > 0)
+                        @if(count($chainProps) > 0)
                             <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">
                                 <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Job instance</p>
                                 <x-queue-insights::serialized-properties :properties="$chainProps"/>
@@ -498,7 +522,7 @@
                         @endif
 
                         <p class="mt-4 text-[11px] text-gray-500">
-                            @if ($i === 0)
+                            @if($i === 0)
                                 This job is the next link in the chain — Laravel re-dispatches it once the parent finishes (or after a manual retry of a failed parent).
                             @else
                                 This job runs after job {{ $i }} ({{ $chain['jobs'][$i - 1]['class'] }}) finishes successfully. It's still serialized inside the parent's chain context — no individual instance has been pushed onto a queue yet.

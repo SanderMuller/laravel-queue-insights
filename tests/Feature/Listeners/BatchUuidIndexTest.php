@@ -69,14 +69,31 @@ it('RecordJobProcessed writes uuid → completed-stream-id mapping', function ()
     expect($streamId)->toMatch('/^\d+-\d+$/');
 });
 
-it('RecordJobProcessed skips uuid → completed mapping when batches.enabled is false', function (): void {
+it('RecordJobProcessed skips uuid → completed mapping only when both batches and chain_lineage are off', function (): void {
+    // Chain lineage also reads from this index for the `↰ From`
+    // click-through, so the listener now writes it when EITHER batches
+    // OR chain_lineage is enabled. Both off → skipped.
     config()->set('queue-insights.batches.enabled', false);
+    config()->set('queue-insights.chain_lineage.enabled', false);
+
     $uuid = '01ARZ3NDEKTSV4RRFFQ69PROCOFF';
 
     $event = new JobProcessed(connectionName: 'redis', job: makeBatchJobMock($uuid));
     resolve(RecordJobProcessed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:uuid-completed:' . $uuid))->toBe(0);
+});
+
+it('RecordJobProcessed writes uuid → completed mapping when only chain_lineage is on', function (): void {
+    config()->set('queue-insights.batches.enabled', false);
+    config()->set('queue-insights.chain_lineage.enabled', true);
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CHAINONLY';
+
+    $event = new JobProcessed(connectionName: 'redis', job: makeBatchJobMock($uuid));
+    resolve(RecordJobProcessed::class)->handle($event);
+
+    expect(R::int('exists', 'qmtest:uuid-completed:' . $uuid))->toBe(1);
 });
 
 it('RecordJobFailed writes uuid → failed_jobs-id mapping when the row exists', function (): void {
@@ -140,8 +157,13 @@ it('RecordJobFailed indexes the most recent failed_jobs row when a uuid has retr
     expect(R::str('get', 'qmtest:uuid-failed:' . $uuid))->toBe((string) $newestId);
 });
 
-it('RecordJobFailed skips uuid → failed mapping when batches.enabled is false', function (): void {
+it('RecordJobFailed skips uuid → failed mapping only when both batches and chain_lineage are off', function (): void {
+    // Same dual-gate as the processed-side write — chain lineage reads
+    // this index for the `↰ From` click-through, so the listener still
+    // writes it with batches off as long as chain_lineage is on.
     config()->set('queue-insights.batches.enabled', false);
+    config()->set('queue-insights.chain_lineage.enabled', false);
+
     $uuid = '01ARZ3NDEKTSV4RRFFQ69FAILOFF';
 
     DB::table('failed_jobs')->insertGetId([

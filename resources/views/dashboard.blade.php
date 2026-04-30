@@ -1,4 +1,4 @@
-<div wire:poll.10s class="flex flex-col gap-10">
+<div @if(\SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true)) wire:poll.10s @endif class="flex flex-col gap-10">
     {{-- Dashboard content wrapper — made `inert` when a modal is open so AT
         users don't hear the background dashboard and keyboard focus can't
         escape the modal. MUST be a sibling of the modal (not an ancestor),
@@ -8,6 +8,10 @@
          x-data x-bind:inert="@js($hasOpenModal)">
 
         <x-queue-insights::flash-banner/>
+
+        @include('queue-insights::partials.snapshot-watchdog-banner')
+
+        @include('queue-insights::partials.alerts-strip')
 
         @include('queue-insights::partials.persistent-hero')
 
@@ -31,14 +35,15 @@
             :payload="$selectedPayload"
             :payload-tab="$payloadTab"
             :capture-mode="$captureMode"
-            :expanded-batch-id="$expandedBatchId"/>
+            :expanded-batch-id="$expandedBatchId"
+            :chain-back-top="$chainBackTop"/>
     @endif
 
     @if($selectedFailed !== null)
-        <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry" :expanded-batch-id="$expandedBatchId"/>
+        <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
     @endif
 
     @if($pendingEnabled && $selectedPendingUuid !== null)
-        <x-queue-insights::pending-modal :pending="$selectedPending" :expanded-batch-id="$expandedBatchId"/>
+        <x-queue-insights::pending-modal :pending="$selectedPending" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
     @endif
 </div>
