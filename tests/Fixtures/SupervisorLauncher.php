@@ -62,10 +62,10 @@ if ($graceRaw !== false && is_numeric($graceRaw)) {
     config()->set('queue-insights.work.shutdown_grace_seconds', (int) $graceRaw);
 }
 
-$factory = new class ($stubEnv, $packageRoot) implements WorkerProcessFactory {
+$factory = new readonly class ($stubEnv, $packageRoot) implements WorkerProcessFactory {
     public function __construct(
-        private readonly mixed $envSpec,
-        private readonly string $packageRoot,
+        private mixed $envSpec,
+        private string $packageRoot,
     ) {}
 
     public function make(string $connection, array $queues, array $forwardedFlags): Process

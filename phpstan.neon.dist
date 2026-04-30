@@ -140,3 +140,24 @@ parameters:
             identifier: property.notFound
             path: tests/
             reportUnmatched: false
+
+        # tests/Feature/QueueInsightsWorkSignalTest.php must use
+        # `proc_open` + `posix_kill` to launch the supervisor as its
+        # own subprocess and forward SIGTERM. The spec
+        # (internal/specs/queue-insights-work-command.md §4.2) mandates
+        # this pattern because in-process pcntl handling is unsafe
+        # under PHPUnit's process model. The disallowed-calls extension
+        # is otherwise the right default — scope the exception narrowly
+        # to this one file.
+        -
+            identifier: disallowed.function
+            path: tests/Feature/QueueInsightsWorkSignalTest.php
+            reportUnmatched: false
+        -
+            identifier: staticMethod.void
+            path: tests/Feature/QueueInsightsWorkSignalTest.php
+            reportUnmatched: false
+        -
+            identifier: pest.redundantExpectation
+            path: tests/Feature/QueueInsightsWorkSignalTest.php
+            reportUnmatched: false

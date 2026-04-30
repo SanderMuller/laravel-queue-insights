@@ -181,6 +181,12 @@ final class ConfigValidator
         }
     }
 
+    /**
+     * Validate the chain_lineage block. Type-checks the toggle, the redis
+     * connection override (when set), and the two TTLs.
+     *
+     * @param  array<array-key, mixed>  $chainLineage
+     */
     public static function validateChainLineage(array $chainLineage): void
     {
         if (isset($chainLineage['enabled']) && ! is_bool($chainLineage['enabled'])) {

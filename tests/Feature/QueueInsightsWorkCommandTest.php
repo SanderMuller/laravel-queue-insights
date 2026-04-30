@@ -79,14 +79,18 @@ final class CapturedWorkerStreams implements WorkerOutputStreams
     {
         rewind($this->out);
 
-        return stream_get_contents($this->out) ?: '';
+        $contents = stream_get_contents($this->out);
+
+        return $contents === false ? '' : $contents;
     }
 
     public function readStderr(): string
     {
         rewind($this->err);
 
-        return stream_get_contents($this->err) ?: '';
+        $contents = stream_get_contents($this->err);
+
+        return $contents === false ? '' : $contents;
     }
 }
 
@@ -104,9 +108,11 @@ it('refuses to boot when snapshots are empty', function (): void {
 
     $exit = Artisan::call('queue-insights:work');
 
-    expect($exit)->toBe(1);
-    expect(Artisan::output())->toContain('no monitored queues configured');
-    expect($this->factory->calls)->toBe([]);
+    expect($exit)->toBe(1)
+        ->and(Artisan::output())
+        ->toContain('no monitored queues configured')
+        ->and($this->factory->calls)
+        ->toBeEmpty();
 });
 
 it('groups snapshots by connection and preserves queue order', function (): void {
@@ -119,12 +125,13 @@ it('groups snapshots by connection and preserves queue order', function (): void
 
     $exit = Artisan::call('queue-insights:work');
 
-    expect($exit)->toBe(0);
-    expect($this->factory->calls)->toHaveCount(2);
-    expect($this->factory->calls[0]['connection'])->toBe('sqs');
-    expect($this->factory->calls[0]['queues'])->toBe(['high', 'default']);
-    expect($this->factory->calls[1]['connection'])->toBe('redis');
-    expect($this->factory->calls[1]['queues'])->toBe(['default', 'mail']);
+    expect($exit)->toBe(0)
+        ->and($this->factory->calls)
+        ->toHaveCount(2)
+        ->and($this->factory->calls[0])
+        ->toMatchArray(['connection' => 'sqs', 'queues' => ['high', 'default']])
+        ->and($this->factory->calls[1])
+        ->toMatchArray(['connection' => 'redis', 'queues' => ['default', 'mail']]);
 });
 
 it('skips malformed snapshot entries silently', function (): void {
@@ -138,10 +145,11 @@ it('skips malformed snapshot entries silently', function (): void {
 
     $exit = Artisan::call('queue-insights:work');
 
-    expect($exit)->toBe(0);
-    expect($this->factory->calls)->toHaveCount(1);
-    expect($this->factory->calls[0]['connection'])->toBe('sqs');
-    expect($this->factory->calls[0]['queues'])->toBe(['default']);
+    expect($exit)->toBe(0)
+        ->and($this->factory->calls)
+        ->toHaveCount(1)
+        ->and($this->factory->calls[0])
+        ->toMatchArray(['connection' => 'sqs', 'queues' => ['default']]);
 });
 
 it('forwards value flags exactly when supplied', function (): void {
@@ -161,18 +169,9 @@ it('forwards value flags exactly when supplied', function (): void {
         '--name' => 'supervisor-1',
     ]);
 
-    expect($exit)->toBe(0);
-    expect($this->factory->calls[0]['flags'])->toBe([
-        'tries' => '5',
-        'timeout' => '90',
-        'memory' => '256',
-        'sleep' => '3',
-        'rest' => '0',
-        'max-jobs' => '100',
-        'max-time' => '3600',
-        'backoff' => '10',
-        'name' => 'supervisor-1',
-    ]);
+    expect($exit)->toBe(0)
+        ->and($this->factory->calls[0]['flags'])
+        ->toBe(['tries' => '5', 'timeout' => '90', 'memory' => '256', 'sleep' => '3', 'rest' => '0', 'max-jobs' => '100', 'max-time' => '3600', 'backoff' => '10', 'name' => 'supervisor-1']);
 });
 
 it('omits flags that were not supplied', function (): void {
@@ -211,8 +210,9 @@ it('narrows fan-out via --connection= (single value)', function (): void {
 
     Artisan::call('queue-insights:work', ['--connection' => ['redis']]);
 
-    expect($this->factory->calls)->toHaveCount(1);
-    expect($this->factory->calls[0]['connection'])->toBe('redis');
+    expect($this->factory->calls)->toHaveCount(1)
+        ->and($this->factory->calls[0]['connection'])
+        ->toBe('redis');
 });
 
 it('narrows fan-out via repeated --connection= (array form)', function (): void {
@@ -226,8 +226,9 @@ it('narrows fan-out via repeated --connection= (array form)', function (): void 
         '--connection' => ['sqs', 'beanstalk'],
     ]);
 
-    expect($this->factory->calls)->toHaveCount(2);
-    expect(array_column($this->factory->calls, 'connection'))->toBe(['sqs', 'beanstalk']);
+    expect($this->factory->calls)->toHaveCount(2)
+        ->and(array_column($this->factory->calls, 'connection'))
+        ->toBe(['sqs', 'beanstalk']);
 });
 
 it('narrows fan-out via CSV --connection= (single value, comma-split)', function (): void {
@@ -241,8 +242,9 @@ it('narrows fan-out via CSV --connection= (single value, comma-split)', function
         '--connection' => ['sqs,redis'],
     ]);
 
-    expect($this->factory->calls)->toHaveCount(2);
-    expect(array_column($this->factory->calls, 'connection'))->toBe(['sqs', 'redis']);
+    expect($this->factory->calls)->toHaveCount(2)
+        ->and(array_column($this->factory->calls, 'connection'))
+        ->toBe(['sqs', 'redis']);
 });
 
 it('composes array + CSV in --connection= and dedups first-seen', function (): void {
@@ -256,8 +258,8 @@ it('composes array + CSV in --connection= and dedups first-seen', function (): v
         '--connection' => ['sqs,redis', 'sqs', ' beanstalk '],
     ]);
 
-    expect($this->factory->calls)->toHaveCount(3);
-    expect(array_column($this->factory->calls, 'connection'))
+    expect($this->factory->calls)->toHaveCount(3)
+        ->and(array_column($this->factory->calls, 'connection'))
         ->toBe(['sqs', 'redis', 'beanstalk']);
 });
 
@@ -273,11 +275,12 @@ it('refuses when --connection= matches nothing and lists configured connections'
 
     expect($exit)->toBe(1);
     $output = Artisan::output();
-    expect($output)->toContain('--connection=nope');
-    expect($output)->toContain('matched no monitored connections');
-    expect($output)->toContain('sqs');
-    expect($output)->toContain('redis');
-    expect($this->factory->calls)->toBe([]);
+    expect($output)->toContain('--connection=nope')
+        ->toContain('matched no monitored connections')
+        ->toContain('sqs')
+        ->toContain('redis')
+        ->and($this->factory->calls)
+        ->toBeEmpty();
 });
 
 it('default factory builds queue:work argv with timeout disabled', function (): void {
@@ -298,14 +301,14 @@ it('default factory builds queue:work argv with timeout disabled', function (): 
     expect($process->getTimeout())->toBeNull();
 
     $cmd = $process->getCommandLine();
-    expect($cmd)->toContain('queue:work');
-    expect($cmd)->toContain('sqs');
-    expect($cmd)->toContain('--queue=high,default');
-    expect($cmd)->toContain('--tries=5');
-    expect($cmd)->toContain('--timeout=90');
-    expect($cmd)->toContain('--name=super');
-    expect($cmd)->toContain('--once');
-    expect($cmd)->toContain('--force');
+    expect($cmd)->toContain('queue:work')
+        ->toContain('sqs')
+        ->toContain('--queue=high,default')
+        ->toContain('--tries=5')
+        ->toContain('--timeout=90')
+        ->toContain('--name=super')
+        ->toContain('--once')
+        ->toContain('--force');
 });
 
 it('spawns one child per connection and prefixes stdout per [conn] tag', function (): void {
@@ -327,8 +330,8 @@ it('spawns one child per connection and prefixes stdout per [conn] tag', functio
 
     expect($exit)->toBe(0);
     $stdout = $streams->readStdout();
-    expect($stdout)->toContain("[sqs] hello-from-sqs\n");
-    expect($stdout)->toContain("[redis] hello-from-redis\n");
+    expect($stdout)->toContain("[sqs] hello-from-sqs\n")
+        ->toContain("[redis] hello-from-redis\n");
 });
 
 it('routes stderr lines through the [conn] prefix on the parent stderr stream', function (): void {
@@ -346,9 +349,11 @@ it('routes stderr lines through the [conn] prefix on the parent stderr stream', 
 
     $exit = Artisan::call('queue-insights:work');
 
-    expect($exit)->toBe(0);
-    expect($streams->readStderr())->toBe("[sqs] oops-on-sqs\n");
-    expect($streams->readStdout())->toBe('');
+    expect($exit)->toBe(0)
+        ->and($streams->readStderr())
+        ->toBe("[sqs] oops-on-sqs\n")
+        ->and($streams->readStdout())
+        ->toBeEmpty();
 });
 
 it('flushes a partial-line tail when the child exits', function (): void {
@@ -366,8 +371,9 @@ it('flushes a partial-line tail when the child exits', function (): void {
 
     $exit = Artisan::call('queue-insights:work');
 
-    expect($exit)->toBe(0);
-    expect($streams->readStdout())->toBe("[sqs] unterminated-tail\n");
+    expect($exit)->toBe(0)
+        ->and($streams->readStdout())
+        ->toBe("[sqs] unterminated-tail\n");
 });
 
 it('propagates the first non-zero child exit and terminates the survivor', function (): void {
@@ -389,9 +395,11 @@ it('propagates the first non-zero child exit and terminates the survivor', funct
     $exit = Artisan::call('queue-insights:work');
     $duration = microtime(true) - $start;
 
-    expect($exit)->toBe(7);
-    expect($duration)->toBeLessThan(10.0);
-    expect($streams->readStdout())->toContain("[redis] caught:SIGTERM\n");
+    expect($exit)->toBe(7)
+        ->and($duration)
+        ->toBeLessThan(10.0)
+        ->and($streams->readStdout())
+        ->toContain("[redis] caught:SIGTERM\n");
 });
 
 it('returns 0 when every child exits 0', function (): void {

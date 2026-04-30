@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Sleep;
 use SanderMuller\QueueInsights\Console\WorkerOutputStreams;
 use SanderMuller\QueueInsights\Console\WorkerProcessFactory;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
@@ -19,9 +20,13 @@ beforeEach(function (): void {
  * Phase 3 — `validateWork` config typecheck.
  */
 it('validateWork accepts a positive int default', function (): void {
-    expect(ConfigValidator::validateWork([]))->toBeNull();
-    expect(ConfigValidator::validateWork(['shutdown_grace_seconds' => 1]))->toBeNull();
-    expect(ConfigValidator::validateWork(['shutdown_grace_seconds' => 120]))->toBeNull();
+    // `validateWork` returns void; the assertion is the absence of a
+    // thrown exception. Pest fails the test if any of these throw, so
+    // reaching the trailing `expect(true)` is itself the contract.
+    ConfigValidator::validateWork([]);
+    ConfigValidator::validateWork(['shutdown_grace_seconds' => 1]);
+    ConfigValidator::validateWork(['shutdown_grace_seconds' => 120]);
+    expect(true)->toBeTrue();
 });
 
 it('validateWork throws on a non-int shutdown_grace_seconds', function (): void {
@@ -79,8 +84,15 @@ it('escalates to SIGKILL when a child ignores SIGTERM past the grace window', fu
 
         public function __construct()
         {
-            $this->out = fopen('php://memory', 'w+') ?: throw new RuntimeException('memory stream open failed');
-            $this->err = fopen('php://memory', 'w+') ?: throw new RuntimeException('memory stream open failed');
+            $out = fopen('php://memory', 'w+');
+            $err = fopen('php://memory', 'w+');
+
+            if ($out === false || $err === false) {
+                throw new RuntimeException('failed to open php://memory streams for the grace-expiry test');
+            }
+
+            $this->out = $out;
+            $this->err = $err;
         }
 
         public function stdout(): mixed
@@ -97,7 +109,9 @@ it('escalates to SIGKILL when a child ignores SIGTERM past the grace window', fu
         {
             rewind($this->err);
 
-            return stream_get_contents($this->err) ?: '';
+            $contents = stream_get_contents($this->err);
+
+            return $contents === false ? '' : $contents;
         }
     };
 
@@ -119,8 +133,8 @@ it('escalates to SIGKILL when a child ignores SIGTERM past the grace window', fu
     expect($duration)->toBeLessThan(5.0);
 
     $stderr = $streams->readStderr();
-    expect($stderr)->toContain('grace window (1s) expired');
-    expect($stderr)->toContain('redis');
+    expect($stderr)->toContain('grace window (1s) expired')
+        ->toContain('redis');
 });
 
 /**
@@ -148,8 +162,8 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
             'redis' => ['STUB_TRAP' => '1', 'STUB_SLEEP' => '30'],
         ]),
         'QI_LAUNCHER_GRACE' => '5',
-        'PATH' => getenv('PATH') ?: '/usr/bin:/bin',
-        'HOME' => getenv('HOME') ?: '/tmp',
+        'PATH' => is_string($pathEnv = getenv('PATH')) && $pathEnv !== '' ? $pathEnv : '/usr/bin:/bin',
+        'HOME' => is_string($homeEnv = getenv('HOME')) && $homeEnv !== '' ? $homeEnv : '/tmp',
     ];
 
     $descriptors = [
@@ -166,7 +180,9 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
         $env,
     );
 
-    expect($proc)->toBeResource();
+    if (! is_resource($proc)) {
+        $this->fail('proc_open failed to launch the supervisor subprocess');
+    }
 
     fclose($pipes[0]);
     stream_set_blocking($pipes[1], false);
@@ -180,7 +196,7 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
     // runs and the parent dies without forwarding.
     $deadline = microtime(true) + 3.0;
     while (microtime(true) < $deadline) {
-        usleep(100_000);
+        Sleep::usleep(100_000);
         $stdout .= stream_get_contents($pipes[1]);
         $stderr .= stream_get_contents($pipes[2]);
 
@@ -198,7 +214,7 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
     // for the 5s grace + child SIGTERM handlers + reaping.
     $deadline = microtime(true) + 10.0;
     while (microtime(true) < $deadline) {
-        usleep(100_000);
+        Sleep::usleep(100_000);
         $stdout .= stream_get_contents($pipes[1]);
         $stderr .= stream_get_contents($pipes[2]);
 
@@ -220,10 +236,11 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
         proc_close($proc);
         $this->fail('Supervisor did not exit within 10s of SIGTERM');
     }
+
     proc_close($proc);
 
     // 128 + 15 (SIGTERM) when the parent's signalReceived path wins.
     expect($exitCode)->toBe(143);
-    expect($stdout)->toContain('[sqs] caught:SIGTERM');
-    expect($stdout)->toContain('[redis] caught:SIGTERM');
+    expect($stdout)->toContain('[sqs] caught:SIGTERM')
+        ->toContain('[redis] caught:SIGTERM');
 });

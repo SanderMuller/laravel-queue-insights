@@ -11,6 +11,7 @@ use Rector\DeadCode\Rector\ClassMethod\RemoveUselessReturnTagRector;
 use Rector\Php81\Rector\FuncCall\NullToStrictStringFuncCallArgRector;
 use Rector\Privatization\Rector\ClassMethod\PrivatizeFinalClassMethodRector;
 use Rector\TypeDeclaration\Rector\ArrowFunction\AddArrowFunctionReturnTypeRector;
+use RectorLaravel\Rector\FuncCall\SleepFuncToSleepStaticCallRector;
 use RectorLaravel\Set\LaravelSetList;
 use RectorPest\Set\PestSetList;
 
@@ -63,4 +64,11 @@ return RectorConfig::configure()
         PrivatizeFinalClassMethodRector::class,
         RemoveUselessParamTagRector::class,
         RemoveUselessReturnTagRector::class,
+        // tests/Fixtures/StubWorker.php is a standalone PHP script that
+        // runs as `php StubWorker.php` (no composer autoload) so it
+        // cannot reach `Illuminate\Support\Sleep`. Native `sleep()` is
+        // mandatory for that file.
+        SleepFuncToSleepStaticCallRector::class => [
+            __DIR__ . '/tests/Fixtures/StubWorker.php',
+        ],
     ]);
