@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
 use Livewire\LivewireServiceProvider;
+use Livewire\Mechanisms\HandleRequests\HandleRequests;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\IssueDetector;
@@ -23,12 +24,16 @@ use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 /**
  * Wipe the route table and reboot the providers whose routes the test
  * needs. Re-registers Livewire alongside the queue-insights provider —
- * without it the test renders 500 on Livewire prefer-lowest because
- * `route('livewire.update')` is undefined.
+ * without forgetting Livewire's `HandleRequests` mechanism singleton
+ * the second boot short-circuits the `livewire.update` route registration
+ * (the mechanism's `$updateRoute` survives the wipe and the boot guard
+ * skips re-registration). On Livewire prefer-lowest that drops the
+ * `route('livewire.update')` reference and 500s every page render.
  */
 function rebootQueueInsightsRoutes(): void
 {
     Route::setRoutes(new RouteCollection());
+    app()->forgetInstance(HandleRequests::class);
     (new LivewireServiceProvider(app()))->boot();
     (new QueueInsightsServiceProvider(app()))->boot();
 }
