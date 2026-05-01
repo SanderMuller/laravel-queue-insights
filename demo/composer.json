@@ -33,6 +33,12 @@
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
+        ],
+        "post-install-cmd": [
+            "@php bin/link-local-package.php"
+        ],
+        "post-update-cmd": [
+            "@php bin/link-local-package.php"
         ]
     },
     "extra": {
