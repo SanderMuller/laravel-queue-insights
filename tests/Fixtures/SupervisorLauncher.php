@@ -21,6 +21,7 @@
 
 require __DIR__ . '/../../vendor/autoload.php';
 
+use Composer\InstalledVersions;
 use Illuminate\Contracts\Console\Kernel as ConsoleKernel;
 use Orchestra\Testbench\Foundation\Application as TestbenchApplication;
 use SanderMuller\QueueInsights\Console\WorkerProcessFactory;
@@ -100,13 +101,18 @@ $kernel = $app->make(ConsoleKernel::class);
 // signal-test failure hook can print something even if the supervisor
 // never reaches the buffered "Booting …" line.
 fwrite(STDERR, sprintf(
-    "[launcher] APP_KEY_set=%s pcntl=%s snapshots=%s php=%s php_sapi=%s os=%s\n",
+    "[launcher] APP_KEY_set=%s pcntl=%s snapshots=%s php=%s php_sapi=%s os=%s symfony_process=%s\n",
     getenv('APP_KEY') !== false ? 'yes' : 'no',
     extension_loaded('pcntl') ? 'yes' : 'no',
     is_array($snapshots) ? (string) count($snapshots) : 'invalid',
     PHP_BINARY,
     PHP_SAPI,
     PHP_OS_FAMILY,
+    InstalledVersions::getVersion('symfony/process') ?? '?',
+));
+fwrite(STDERR, sprintf(
+    "[launcher] stubEnv=%s\n",
+    json_encode($stubEnv),
 ));
 
 exit($kernel->call('queue-insights:work'));
