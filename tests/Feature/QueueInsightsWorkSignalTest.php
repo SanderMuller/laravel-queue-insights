@@ -243,7 +243,21 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
     }
 
     $status = proc_get_status($proc);
-    expect($status['running'])->toBeTrue();
+    if (! $status['running']) {
+        // Final drain — supervisor died before "Booting" was emitted.
+        // Surface stdout/stderr so CI matrix failures don't show up as
+        // a context-free `Failed asserting that false is true`.
+        $stdout .= stream_get_contents($pipes[1]);
+        $stderr .= stream_get_contents($pipes[2]);
+        $exit = $status['exitcode'];
+
+        $this->fail(sprintf(
+            "supervisor subprocess exited before 'Booting 2 connection(s)' line — exit=%d\n--- STDOUT ---\n%s\n--- STDERR ---\n%s",
+            $exit,
+            $stdout,
+            $stderr,
+        ));
+    }
 
     posix_kill($status['pid'], SIGTERM);
 
@@ -347,7 +361,18 @@ it('does not reset the grace timer when SIGTERM is sent twice', function (): voi
     }
 
     $status = proc_get_status($proc);
-    expect($status['running'])->toBeTrue();
+    if (! $status['running']) {
+        $stdout .= stream_get_contents($pipes[1]);
+        $stderr .= stream_get_contents($pipes[2]);
+        $exit = $status['exitcode'];
+
+        $this->fail(sprintf(
+            "supervisor subprocess exited before 'Booting 1 connection(s)' line — exit=%d\n--- STDOUT ---\n%s\n--- STDERR ---\n%s",
+            $exit,
+            $stdout,
+            $stderr,
+        ));
+    }
     $supervisorPid = $status['pid'];
 
     // First SIGTERM — supervisor forwards to child (which ignores it),

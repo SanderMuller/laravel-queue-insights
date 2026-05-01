@@ -166,13 +166,18 @@ final class QueueInsights
         $failed = $this->sumCounters($redis, $this->hourlyBucketKeys("failed:{$bucketSuffix}", 24));
 
         // Single HMGET — three HGETs on the same key were a hot-path waste.
+        // phpredis returns an associative array keyed by field; Predis
+        // returns a positional list. `array_values` normalises both into
+        // the input-field order so the positional access below works for
+        // both client drivers.
         $fields = $redis->command('hmget', [
             KeyPrefix::classKey('duration', $class, $connection),
             ['count', 'sum_ms', 'max_ms'],
         ]);
-        $count = is_array($fields) && is_numeric($fields[0] ?? null) ? (int) $fields[0] : 0;
-        $sumMs = is_array($fields) && is_numeric($fields[1] ?? null) ? (float) $fields[1] : 0.0;
-        $maxMs = is_array($fields) && is_numeric($fields[2] ?? null) ? (int) $fields[2] : null;
+        $values = is_array($fields) ? array_values($fields) : [];
+        $count = is_numeric($values[0] ?? null) ? (int) $values[0] : 0;
+        $sumMs = is_numeric($values[1] ?? null) ? (float) $values[1] : 0.0;
+        $maxMs = is_numeric($values[2] ?? null) ? (int) $values[2] : null;
 
         $lastRunRaw = $redis->command('get', [KeyPrefix::classKey('last_run', $class, $connection)]);
         $lastRunAt = is_string($lastRunRaw) && $lastRunRaw !== '' ? Date::parse($lastRunRaw) : null;
