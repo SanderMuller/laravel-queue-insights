@@ -2,6 +2,66 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0 - 2026-05-01
+
+### What's new
+
+#### Multi-connection scoping
+
+`/queue-insights` aggregates every monitored connection into one view (unchanged). `/queue-insights/{connection}` narrows every panel to the named connection: queue rows, alerts strip, snapshot watchdog, pending / delayed / in-flight inspectors, batches, recent completed / failed lists, headline stats (jobs / min, throughput sparkline, p95 wait, max runtime), per-class metrics, and the alert-rules panel's depth thresholds.
+
+A connection nav strip above the headline cards renders one tab per allowed connection plus an "All" tab. The strip auto-suppresses when only one connection is monitored, so single-connection installs see no UI change.
+
+The `{connection}` segment is validated against the configured `snapshots.*.connection` names in the dashboard's `mount()`. A typo 404s rather than mounting an empty dashboard.
+
+##### Per-connection authorisation (optional)
+
+Add `viewQueueInsightsConnection` to authorise per connection:
+
+```php
+Gate::define('viewQueueInsightsConnection', function ($user, string $connection): bool {
+    return $user->canAccessTenant($connection);
+});
+
+```
+When defined, the dashboard:
+
+- 403s direct visits to `/queue-insights/{connection}` the user can't access.
+- Hides denied connections from the nav strip.
+- Renames the "All" tab to "All allowed" with a tooltip listing only the connections the user can already open (denied tenants are never named).
+
+If the gate isn't defined, every monitored connection is reachable to anyone who passes `viewQueueInsights` — same behaviour as pre-spec versions.
+
+##### Audit log carries scope
+
+Every retry log line (`queue-insights.retry`) gains a `scope_connection` field alongside the existing filter snapshot, so retries that span tenants are distinguishable from scoped retries.
+
+##### Per-connection class metrics need traffic to warm
+
+Per-connection counters (`processed:{class}:{connection}:{bucket}`, `failed:{class}:{connection}:{bucket}`, `duration:{class}:{connection}`, `last_run:{class}:{connection}`, `classes:{connection}` zset) are dual-written alongside the existing aggregate keys. Aggregate dashboards (`/queue-insights`) render correctly from second 0 after upgrade. Scoped views (`/queue-insights/{connection}`) for per-class p95 / throughput / 24h totals fill in as new events flow — the first hour after deploy will show `0` for class counts on a scoped view. Aggregate keys are unchanged so rolling back the package version is safe.
+
+##### Known limitations under scope
+
+These v1 gaps surface only on the connection-scoped routes; the un-scoped dashboard is unaffected.
+
+- **Batches section is hidden under scope.** Per-batch metadata isn't yet keyed by connection, so the batches section would otherwise leak other-connection batches into a scoped view. The section reappears the moment scope is removed.
+- **Recent completed list reads from a global stream.** `recentCompleted()` pulls the most recent ~250 entries from a single global stream and then filters by the scoped connection. In deployments with a deeply imbalanced traffic split (one connection running 100x more jobs than another), the scoped Recent completed list can show stale or empty rows even though matching jobs exist. Workaround: raise `recent_fetch_limit`, or contribute per-connection streams as a follow-up. Recent failed is unaffected — it reads from the failed_jobs DB table with explicit WHERE clauses.
+- **Per-connection counter dual-write isn't atomic.** Aggregate and per-connection counters are written as separate Redis commands. A listener crash mid-write can leave the per-connection counter behind aggregate; later traffic re-fills it. Same best-effort guarantee the package's existing listeners offer; never produces phantom data.
+
+#### Slack channel label (informational)
+
+`alerts.channels.slack.channel` (env: `QUEUE_INSIGHTS_SLACK_CHANNEL`) lets you record a display name for the destination channel — useful when one notifiable routes to multiple webhooks and you want the source-of-truth config to show where each one lands. Slack incoming webhooks bind the channel server-side at creation time, so the value is informational only and does not override the webhook's destination.
+
+#### Live demo
+
+A Laravel Cloud demo app now ships under `demo/` with a Phase-1 build script, basic-auth gate (configurable via `DEMO_*` env vars), and an idempotent preview seeder so the dashboard renders sample data on first paint. The README links to the live URL. Internal-facing only at this release; no public API surface lives under `demo/`.
+
+### New publishable assets
+
+Hosts that published the views (`php artisan vendor:publish --tag=queue-insights-views`) should re-publish to pick up the connection nav strip in `partials/tabs-workspace.blade.php` and the layout slot in `layouts/app.blade.php`. Existing publishable partials are untouched.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.6.0...0.7.0
+
 ## 0.6.0 - 2026-04-30
 
 ### What's new
@@ -84,6 +144,7 @@ Pre-0.6 hosts that published `config/queue-insights.php` keep working — the le
 +    ],
  ],
 
+
 ```
 Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published the config before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
 
@@ -141,6 +202,7 @@ The metadata pill (`Connection: redis`, `Queue: default`, `ID: <uuid>`) used to 
 <x-queue-insights::meta-pill label="Queue" :value="$payload['queue'] ?? null" size="sm"/>
 
 
+
 ```
 A second new component, `<x-queue-insights::list-row>`, owns the four main row partials' `role="button"` + `tabindex` + keyboard handler scaffold — one place to fix click + a11y wiring instead of four.
 
@@ -181,6 +243,7 @@ public function render(DashboardData $data): View
 }
 
 
+
 ```
 ### Internal — view decomposition
 
@@ -200,6 +263,7 @@ resources/views/partials/
     ├── pane-completed.blade.php
     ├── pane-failed.blade.php
     └── tab-button.blade.php
+
 
 
 ```
@@ -342,6 +406,7 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
 
 
 
+
 ```
 ### Storage cost
 
@@ -414,6 +479,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -603,6 +669,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
