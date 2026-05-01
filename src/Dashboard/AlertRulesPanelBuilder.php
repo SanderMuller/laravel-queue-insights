@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
+use Illuminate\Support\Facades\Date;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
@@ -121,7 +122,8 @@ final readonly class AlertRulesPanelBuilder
      */
     private function aggregateFiring(array $activeIssues): array
     {
-        $now = time();
+        $now = Date::now()
+            ->getTimestamp();
         $out = [];
         foreach ($activeIssues as $issue) {
             $rule = $issue->rule;
