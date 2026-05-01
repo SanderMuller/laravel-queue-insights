@@ -21,7 +21,6 @@
 
 require __DIR__ . '/../../vendor/autoload.php';
 
-use Composer\InstalledVersions;
 use Illuminate\Contracts\Console\Kernel as ConsoleKernel;
 use Orchestra\Testbench\Foundation\Application as TestbenchApplication;
 use SanderMuller\QueueInsights\Console\WorkerProcessFactory;
@@ -63,6 +62,15 @@ $app = TestbenchApplication::create(
     ],
 );
 
+// Disable the dashboard before the package boots. Without it, the
+// provider's `registerDashboard` calls `Livewire::component()` which
+// resolves `livewire.finder` — a binding only the Livewire service
+// provider registers. CI fresh installs run with `enables_package_
+// discoveries = false`, so Livewire's provider never loads and the
+// boot aborts with "Class livewire.finder does not exist". The
+// launcher exists to exercise the work command, not the dashboard.
+config()->set('queue-insights.dashboard.enabled', false);
+
 $app->register(QueueInsightsServiceProvider::class);
 
 config()->set('queue-insights.snapshots', is_array($snapshots) ? $snapshots : []);
@@ -96,23 +104,5 @@ $factory = new readonly class ($stubEnv, $packageRoot) implements WorkerProcessF
 $app->instance(WorkerProcessFactory::class, $factory);
 
 $kernel = $app->make(ConsoleKernel::class);
-
-// CI matrix-failure diagnostic — surface basic state so the
-// signal-test failure hook can print something even if the supervisor
-// never reaches the buffered "Booting …" line.
-fwrite(STDERR, sprintf(
-    "[launcher] APP_KEY_set=%s pcntl=%s snapshots=%s php=%s php_sapi=%s os=%s symfony_process=%s\n",
-    getenv('APP_KEY') !== false ? 'yes' : 'no',
-    extension_loaded('pcntl') ? 'yes' : 'no',
-    is_array($snapshots) ? (string) count($snapshots) : 'invalid',
-    PHP_BINARY,
-    PHP_SAPI,
-    PHP_OS_FAMILY,
-    InstalledVersions::getVersion('symfony/process') ?? '?',
-));
-fwrite(STDERR, sprintf(
-    "[launcher] stubEnv=%s\n",
-    json_encode($stubEnv),
-));
 
 exit($kernel->call('queue-insights:work'));

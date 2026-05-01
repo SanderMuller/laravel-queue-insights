@@ -373,6 +373,7 @@ it('does not reset the grace timer when SIGTERM is sent twice', function (): voi
             $stderr,
         ));
     }
+
     $supervisorPid = $status['pid'];
 
     // First SIGTERM — supervisor forwards to child (which ignores it),

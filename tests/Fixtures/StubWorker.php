@@ -19,20 +19,6 @@
  *   STUB_IGNORE_TERM "1"  — set SIGTERM to SIG_IGN so only SIGKILL ends
  *                           the process (used by grace-expiry tests)
  */
-// CI matrix-failure diagnostic — confirm the stub launches and sees the
-// env vars the test set on the Symfony Process. Stripped once the
-// signal-test failures are root-caused.
-fwrite(STDERR, sprintf(
-    "[stub:%s] argc=%d STUB_SLEEP=%s STUB_TRAP=%s STUB_IGNORE_TERM=%s STUB_EXIT=%s pcntl=%s\n",
-    $argv[1] ?? '?',
-    $argc,
-    var_export(getenv('STUB_SLEEP'), true),
-    var_export(getenv('STUB_TRAP'), true),
-    var_export(getenv('STUB_IGNORE_TERM'), true),
-    var_export(getenv('STUB_EXIT'), true),
-    extension_loaded('pcntl') ? 'yes' : 'no',
-));
-
 if (extension_loaded('pcntl')) {
     pcntl_async_signals(true);
 
