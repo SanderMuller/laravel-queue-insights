@@ -5,7 +5,7 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use Workbench\App\Providers\WorkbenchServiceProvider;
 
-class AppServiceProvider extends ServiceProvider
+final class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {

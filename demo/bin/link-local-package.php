@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 /*
  * Replace demo/vendor/sandermuller/laravel-queue-insights (a real-dir copy

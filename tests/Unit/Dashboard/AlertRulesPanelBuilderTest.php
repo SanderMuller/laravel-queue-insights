@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Dashboard\AlertRulesPanelBuilder;
