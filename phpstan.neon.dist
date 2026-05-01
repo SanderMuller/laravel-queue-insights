@@ -153,6 +153,14 @@ parameters:
             identifier: disallowed.function
             path: tests/Feature/QueueInsightsWorkSignalTest.php
             reportUnmatched: false
+        # SupervisorLauncher seeds APP_KEY via putenv before the Laravel
+        # app boots — without it, CI fresh installs (no `.env` in the
+        # testbench skeleton) abort before the supervisor's "Booting …"
+        # line. Same narrow-scope exception as the signal test above.
+        -
+            identifier: disallowed.function
+            path: tests/Fixtures/SupervisorLauncher.php
+            reportUnmatched: false
         -
             identifier: staticMethod.void
             path: tests/Feature/QueueInsightsWorkSignalTest.php

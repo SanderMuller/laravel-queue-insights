@@ -11,6 +11,7 @@ use Rector\DeadCode\Rector\ClassMethod\RemoveUselessReturnTagRector;
 use Rector\Php81\Rector\FuncCall\NullToStrictStringFuncCallArgRector;
 use Rector\Privatization\Rector\ClassMethod\PrivatizeFinalClassMethodRector;
 use Rector\TypeDeclaration\Rector\ArrowFunction\AddArrowFunctionReturnTypeRector;
+use RectorLaravel\Rector\ArrayDimFetch\EnvVariableToEnvHelperRector;
 use RectorLaravel\Rector\FuncCall\SleepFuncToSleepStaticCallRector;
 use RectorLaravel\Set\LaravelSetList;
 use RectorPest\Set\PestSetList;
@@ -70,5 +71,12 @@ return RectorConfig::configure()
         // mandatory for that file.
         SleepFuncToSleepStaticCallRector::class => [
             __DIR__ . '/tests/Fixtures/StubWorker.php',
+        ],
+        // SupervisorLauncher seeds APP_KEY into $_ENV / $_SERVER BEFORE
+        // booting the Laravel app, so `Env::get()` (which reads from the
+        // already-resolved repository) is the wrong tool. The transform
+        // also produces invalid PHP (`Env::get(...) = $value`).
+        EnvVariableToEnvHelperRector::class => [
+            __DIR__ . '/tests/Fixtures/SupervisorLauncher.php',
         ],
     ]);

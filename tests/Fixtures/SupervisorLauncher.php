@@ -45,6 +45,15 @@ $packageRoot = dirname(__DIR__, 2);
 // package's provider on top.
 $basePath = $packageRoot . '/vendor/orchestra/testbench-core/laravel';
 
+// CI fresh installs ship the testbench skeleton with `.env.example`
+// only — no `.env`, so APP_KEY is unset and Testbench's bootstrap
+// aborts before the supervisor's "Booting …" line. Locally `.env` is
+// usually present (created on first run), masking the failure. Force
+// a deterministic APP_KEY into the subprocess env so both shapes work.
+$qiAppKey = 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+putenv("APP_KEY={$qiAppKey}");
+$_ENV['APP_KEY'] = $_SERVER['APP_KEY'] = $qiAppKey;
+
 $app = TestbenchApplication::create(
     basePath: $basePath,
     resolvingCallback: null,

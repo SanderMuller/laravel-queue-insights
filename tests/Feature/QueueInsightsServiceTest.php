@@ -199,14 +199,14 @@ it('classMetrics($class, $connection) reads per-connection bucket + duration + l
     // Aggregate keys (existing API path).
     $r->command('set', [KeyPrefix::make("processed:{$class}:{$bucket}"), '20']);
     $r->command('set', [KeyPrefix::make("failed:{$class}:{$bucket}"), '4']);
-    $r->command('hmset', [KeyPrefix::make("duration:{$class}"), 'count', '10', 'sum_ms', '1000', 'max_ms', '500']);
+    $r->command('hmset', [KeyPrefix::make("duration:{$class}"), ['count' => '10', 'sum_ms' => '1000', 'max_ms' => '500']]);
     $r->command('set', [KeyPrefix::make("last_run:{$class}"), $now->toIso8601String()]);
 
     // Per-connection keys (new Phase 4 path) — different totals so we can
     // distinguish which keys the read consulted.
     $r->command('set', [KeyPrefix::make("processed:{$class}:redis:{$bucket}"), '7']);
     $r->command('set', [KeyPrefix::make("failed:{$class}:redis:{$bucket}"), '1']);
-    $r->command('hmset', [KeyPrefix::make("duration:{$class}:redis"), 'count', '7', 'sum_ms', '350', 'max_ms', '120']);
+    $r->command('hmset', [KeyPrefix::make("duration:{$class}:redis"), ['count' => '7', 'sum_ms' => '350', 'max_ms' => '120']]);
     $r->command('set', [KeyPrefix::make("last_run:{$class}:redis"), $now->toIso8601String()]);
 
     $aggregate = resolve(QueueInsights::class)->classMetrics($class);
