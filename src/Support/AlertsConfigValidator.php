@@ -322,6 +322,12 @@ final class AlertsConfigValidator
                 );
             }
         }
+
+        if (isset($channel['channel']) && ! is_string($channel['channel'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.alerts.channels.slack.channel must be a string (e.g. "#queue-alerts") or omitted.'
+            );
+        }
     }
 
     private static function validateMailChannel(mixed $channel): void

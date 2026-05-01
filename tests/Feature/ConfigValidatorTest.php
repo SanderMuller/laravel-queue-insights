@@ -147,6 +147,14 @@ it('rejects slack channel enabled without webhook_url', function (): void {
     ]))->toThrow(QueueInsightsConfigException::class, 'webhook_url');
 });
 
+it('rejects a non-string slack channel label', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'channels' => [
+            'slack' => ['enabled' => false, 'channel' => 12345],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'slack.channel');
+});
+
 it('rejects mail channel enabled with empty to', function (): void {
     expect(fn () => ConfigValidator::validateAlerts([
         'channels' => [
