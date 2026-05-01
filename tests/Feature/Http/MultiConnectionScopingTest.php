@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
+use Livewire\LivewireServiceProvider;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\IssueDetector;
@@ -18,6 +19,19 @@ use SanderMuller\QueueInsights\QueueInsightsServiceProvider;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
+
+/**
+ * Wipe the route table and reboot the providers whose routes the test
+ * needs. Re-registers Livewire alongside the queue-insights provider —
+ * without it the test renders 500 on Livewire prefer-lowest because
+ * `route('livewire.update')` is undefined.
+ */
+function rebootQueueInsightsRoutes(): void
+{
+    Route::setRoutes(new RouteCollection());
+    (new LivewireServiceProvider(app()))->boot();
+    (new QueueInsightsServiceProvider(app()))->boot();
+}
 
 it('registers the connection-scoped route by default', function (): void {
     expect(Route::has('queue-insights.connection'))->toBeTrue();
@@ -30,8 +44,7 @@ it('constrains the {connection} segment via whereIn from the configured snapshot
         ['connection' => 'sqs', 'queue' => 'work'],
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    Route::setRoutes(new RouteCollection());
-    (new QueueInsightsServiceProvider(app()))->boot();
+    rebootQueueInsightsRoutes();
 
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
 
@@ -307,8 +320,7 @@ it('renders the connection-scope picker with one entry per allowed connection pl
     ]);
 
     // Reboot provider so the route's whereIn picks up the snapshots set above.
-    Route::setRoutes(new RouteCollection());
-    (new QueueInsightsServiceProvider(app()))->boot();
+    rebootQueueInsightsRoutes();
 
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
     $user = (new User())->forceFill(['id' => 1, 'name' => 'dev', 'email' => 'dev@example.test']);
@@ -357,8 +369,7 @@ it('hides gate-denied tabs from the nav strip', function (): void {
 
     // Reboot provider so the route's whereIn picks up the snapshots set above
     // (route registration runs at boot, before the test's config()->set()).
-    Route::setRoutes(new RouteCollection());
-    (new QueueInsightsServiceProvider(app()))->boot();
+    rebootQueueInsightsRoutes();
 
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
     Gate::define('viewQueueInsightsConnection', static fn (?User $user, string $connection): bool => $connection !== 'highmem');
