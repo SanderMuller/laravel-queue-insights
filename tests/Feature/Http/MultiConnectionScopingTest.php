@@ -1,68 +1,39 @@
 <?php declare(strict_types=1);
 
 use Illuminate\Foundation\Auth\User;
-use Illuminate\Routing\RouteCollection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
 use Livewire\Livewire;
-use Livewire\LivewireServiceProvider;
-use Livewire\Mechanisms\HandleRequests\HandleRequests;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\IssueDetector;
 use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
-use SanderMuller\QueueInsights\QueueInsightsServiceProvider;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
-
-/**
- * Wipe the route table and reboot the providers whose routes the test
- * needs. Re-registers Livewire alongside the queue-insights provider —
- * without forgetting Livewire's `HandleRequests` mechanism singleton
- * the second boot short-circuits the `livewire.update` route registration
- * (the mechanism's `$updateRoute` survives the wipe and the boot guard
- * skips re-registration). On Livewire prefer-lowest that drops the
- * `route('livewire.update')` reference and 500s every page render.
- */
-function rebootQueueInsightsRoutes(): void
-{
-    Route::setRoutes(new RouteCollection());
-    app()->forgetInstance(HandleRequests::class);
-    (new LivewireServiceProvider(app()))->boot();
-    (new QueueInsightsServiceProvider(app()))->boot();
-}
 
 it('registers the connection-scoped route by default', function (): void {
     expect(Route::has('queue-insights.connection'))->toBeTrue();
 });
 
-it('constrains the {connection} segment via whereIn from the configured snapshots', function (): void {
-    // Reboot the provider with a snapshots set so the route's whereIn is
-    // computed against it. The dashboard route loader reads config at boot.
+it('aborts 404 in the dashboard mount when {connection} is not in the configured snapshots', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
     config()->set('queue-insights.snapshots', [
         ['connection' => 'sqs', 'queue' => 'work'],
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    rebootQueueInsightsRoutes();
 
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
 
     $user = (new User())->forceFill(['id' => 1, 'name' => 'dev', 'email' => 'dev@example.test']);
-
-    if (! RedisAvailability::check()) {
-        // 404 tests don't need Redis (route mismatch happens before the
-        // component mounts), so we still assert those.
-        test()->actingAs($user)->get('/queue-insights/unknown')->assertNotFound();
-        test()->actingAs($user)->get('/queue-insights/sqs')->assertOk()->assertSee('Queue Insights');
-
-        return;
-    }
 
     test()->actingAs($user)->get('/queue-insights/sqs')->assertOk();
     test()->actingAs($user)->get('/queue-insights/redis')->assertOk();
@@ -324,9 +295,6 @@ it('renders the connection-scope picker with one entry per allowed connection pl
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
 
-    // Reboot provider so the route's whereIn picks up the snapshots set above.
-    rebootQueueInsightsRoutes();
-
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
     $user = (new User())->forceFill(['id' => 1, 'name' => 'dev', 'email' => 'dev@example.test']);
 
@@ -371,10 +339,6 @@ it('hides gate-denied tabs from the nav strip', function (): void {
         ['connection' => 'sqs', 'queue' => 'work'],
         ['connection' => 'highmem', 'queue' => 'reports'],
     ]);
-
-    // Reboot provider so the route's whereIn picks up the snapshots set above
-    // (route registration runs at boot, before the test's config()->set()).
-    rebootQueueInsightsRoutes();
 
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
     Gate::define('viewQueueInsightsConnection', static fn (?User $user, string $connection): bool => $connection !== 'highmem');
