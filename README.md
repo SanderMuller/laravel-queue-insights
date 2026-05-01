@@ -72,6 +72,52 @@ Mounts at `/queue-insights` when `dashboard.enabled=true` and `livewire/livewire
 Gate::define('viewQueueInsights', fn ($user) => $user->isAdmin());
 ```
 
+### Multi-connection scoping
+
+When you monitor more than one queue connection (e.g. a multi-tenant app with one connection per tenant, or a mixed `sqs` + `redis` setup), the dashboard exposes connection as a **first-class navigation axis**, not a filter dropdown:
+
+- `/queue-insights` — un-scoped, every monitored connection aggregated into one view.
+- `/queue-insights/{connection}` — scoped to a single connection. Every panel narrows: queue rows, alerts strip, snapshot watchdog, pending/delayed/in-flight inspectors, batches, recent completed/failed lists, headline stats (jobs / min, throughput sparkline, p95 wait, max runtime), per-class metrics, and the alert-rules panel's depth thresholds.
+
+A tab strip above the headline cards renders one tab per allowed connection plus an "All" tab. The strip auto-suppresses when only one connection is monitored.
+
+The `{connection}` segment is constrained to your configured `snapshots.*.connection` names — typos 404 instead of mounting an empty dashboard.
+
+#### Per-connection authorisation (optional)
+
+Add the `viewQueueInsightsConnection` Gate to authorise per connection:
+
+```php
+// app/Providers/AuthServiceProvider.php
+Gate::define('viewQueueInsightsConnection', function ($user, string $connection): bool {
+    return $user->canAccessTenant($connection);
+});
+```
+
+When defined, the dashboard:
+
+- 403s direct visits to `/queue-insights/{connection}` the user can't access.
+- Hides denied connections from the tab strip.
+- Renames the "All" tab to "All allowed" with a tooltip listing only the connections the user can already open (denied tenants are never named).
+
+If the gate isn't defined, every monitored connection is reachable to anyone who passes `viewQueueInsights` — same behaviour as pre-spec versions.
+
+#### Audit log carries scope
+
+Every retry log line (`queue-insights.retry`) includes `scope_connection` alongside the existing filter snapshot, so retries that span tenants are distinguishable from scoped retries.
+
+#### Upgrade note — per-connection class metrics need traffic to warm
+
+Per-connection class counters (`processed:{class}:{connection}:{bucket}`, `failed:{class}:{connection}:{bucket}`, `duration:{class}:{connection}`, `last_run:{class}:{connection}`, `classes:{connection}` zset) are dual-written alongside the existing aggregate keys. Aggregate dashboards (`/queue-insights`) render correctly from second 0 after upgrade. Scoped views (`/queue-insights/{connection}`) for per-class p95 / throughput / 24h totals fill in as new events flow — the first hour after deploy will show `0` for class counts on a scoped view. Aggregate keys are unchanged so rolling back the package version is safe.
+
+#### Known limitations under scope
+
+These v1 gaps surface only on the connection-scoped routes; the un-scoped dashboard is unaffected.
+
+- **Batches section is hidden under scope.** Per-batch metadata isn't yet keyed by connection, so the batches section would otherwise leak other-connection batches into a scoped view. The section reappears the moment scope is removed.
+- **Recent completed list reads from a global stream.** `recentCompleted()` pulls the most recent ~250 entries from a single global stream and then filters by the scoped connection. In deployments with a deeply-imbalanced traffic split (e.g. one connection runs 100x more jobs than another), the scoped Recent completed list can show stale or empty rows even though matching jobs exist. Workaround: raise `recent_fetch_limit` (or contribute per-connection streams as a follow-up). Recent failed is unaffected — it reads from the failed_jobs DB table with explicit WHERE clauses.
+- **Per-connection counter dual-write isn't atomic.** Aggregate and per-connection counters are written as separate Redis commands. A listener crash mid-write can leave the per-connection counter behind aggregate; later traffic re-fills it. Same best-effort guarantee the package's existing listeners offer; never produces phantom data.
+
 ### Retry permissions (write actions)
 
 Retrying a failed job is a write action and needs its own Gate, separate from the read-only `viewQueueInsights`:
@@ -89,7 +135,7 @@ Guards on the retry path:
 - 30 retries per minute, per user.
 - The server rejects a bulk retry when the matching set is over 100 rows. The UI shows a "narrow to retry" hint instead of the action button.
 - The server also rejects a bulk retry when no filter is set, so you can't accidentally one-click retry every failed job.
-- Every retry writes an `info`-level log line with channel `queue-insights.retry`, including the user id and the active filter set. Forward that to your audit log.
+- Every retry writes an `info`-level log line with channel `queue-insights.retry`, including the user id, the active filter set, and `scope_connection` (the multi-connection scope, when set). Forward that to your audit log.
 
 ### Retry workflow
 
@@ -250,6 +296,14 @@ Disable the bundled route and mount the Livewire component yourself:
     @livewire('queue-insights-dashboard')
 @endsection
 ```
+
+To embed a connection-scoped view, pass the scope as a mount param:
+
+```blade
+@livewire('queue-insights-dashboard', ['connection' => $tenant->queueConnection])
+```
+    
+The component validates the connection against the configured snapshots (404s on mismatch) and runs `viewQueueInsightsConnection` defensively, same as the bundled route — so this is safe to render in publicly-reachable views.
 
 ### Custom payload sanitizer
 

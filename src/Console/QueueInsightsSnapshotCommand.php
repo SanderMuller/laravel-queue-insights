@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Console;
 
@@ -12,6 +10,7 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use Throwable;
 
@@ -169,12 +168,26 @@ final class QueueInsightsSnapshotCommand extends Command
 
     private function pruneClasses(RedisConnection $redis): void
     {
+        $cutoff = Date::now()->getTimestamp() - 2592000;
+
         try {
             $redis->command('zremrangebyscore', [
                 KeyPrefix::make('classes'),
                 0,
-                Date::now()->getTimestamp() - 2592000,
+                $cutoff,
             ]);
+
+            // Per-connection rosters re-bump their 30d EXPIRE on every
+            // event, so dormant connections fall off naturally. The sweep
+            // here is belt-and-suspenders for the case where a single
+            // long-tail class would otherwise keep an idle roster pinned.
+            foreach (ConfiguredConnections::all() as $connection) {
+                $redis->command('zremrangebyscore', [
+                    KeyPrefix::make("classes:{$connection}"),
+                    0,
+                    $cutoff,
+                ]);
+            }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: classes prune failed', [
                 'exception' => $throwable::class,

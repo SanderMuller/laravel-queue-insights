@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use SanderMuller\QueueInsights\Console\WorkerOutputPrefixer;
 use Symfony\Component\Process\Process;

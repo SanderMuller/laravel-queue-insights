@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
@@ -18,14 +16,28 @@ final readonly class FilterOptionsBuilder
 {
     /**
      * @param  list<array<string, mixed>>  $classes
+     * @param  ?string  $scopeConnection  when non-null, the connections list
+     *                                    is omitted (the dropdown hides anyway —
+     *                                    scope already pins the connection),
+     *                                    and queues are restricted to the
+     *                                    scoped connection.
      * @return array{connections: list<string>, queues: list<string>, classes: list<string>}
      */
-    public function build(array $classes): array
+    public function build(array $classes, ?string $scopeConnection = null): array
     {
         $snapshots = array_values(array_filter(Config::array('snapshots'), is_array(...)));
 
+        if ($scopeConnection !== null) {
+            $snapshots = array_values(array_filter(
+                $snapshots,
+                static fn (array $s): bool => ($s['connection'] ?? null) === $scopeConnection,
+            ));
+        }
+
         return [
-            'connections' => $this->distinctStrings(array_column($snapshots, 'connection')),
+            'connections' => $scopeConnection !== null
+                ? []
+                : $this->distinctStrings(array_column($snapshots, 'connection')),
             'queues' => $this->distinctStrings(array_column($snapshots, 'queue')),
             'classes' => $this->distinctStrings(array_column($classes, 'class')),
         ];

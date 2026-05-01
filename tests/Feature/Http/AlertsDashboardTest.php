@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use Illuminate\Support\Facades\Redis;
 use Livewire\Livewire;
@@ -76,8 +74,8 @@ it('renders the alert-rules panel with current config', function (): void {
     Livewire::withoutLazyLoading();
 
     Livewire::test(AlertRulesPanel::class)
-        ->assertSee('Alert rules')
-        ->assertSee('cooldown: 900s')
+        ->assertSee('Alerting')
+        ->assertSee('cooldown 900s')
         ->assertSee('sqsq:work≥4000 (warning)')
         ->assertSee('level: error');
 });

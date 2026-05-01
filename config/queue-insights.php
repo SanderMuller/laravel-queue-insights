@@ -159,6 +159,12 @@ return [
             'slack' => [
                 'enabled' => false,
                 'webhook_url' => env('QUEUE_INSIGHTS_SLACK_WEBHOOK'),
+                // Optional display label for the destination channel
+                // (e.g. "#queue-alerts"). Slack incoming-webhooks bind the
+                // channel at creation time on Slack's side, so this value
+                // is informational only — it does not override the
+                // webhook's destination.
+                'channel' => env('QUEUE_INSIGHTS_SLACK_CHANNEL'),
             ],
             'mail' => [
                 'enabled' => false,

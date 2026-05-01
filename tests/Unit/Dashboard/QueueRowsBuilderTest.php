@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use Illuminate\Support\Facades\Date;
 use Mockery\LegacyMockInterface;
@@ -180,6 +178,52 @@ it('build computes pending_gap from |tracked - (depth + delayed)|', function ():
     $svc->shouldReceive('pendingTrackedCount')->andReturn(45);
 
     expect(queueRowsBuilder($svc)->build('')[0]['pending_gap'])->toBe(15);
+});
+
+it('build restricts iteration to a scoped connection when one is provided', function (): void {
+    config()->set('queue.connections.sqs', ['driver' => 'sqs']);
+
+    $svc = Mockery::mock(QueueInsights::class);
+    // The scope is threaded into configuredQueues itself — the builder
+    // doesn't do its own scope filter. The mock returns only the matching
+    // row for the scoped call (mirroring the production behaviour).
+    $svc->shouldReceive('configuredQueues')->with('sqs')->once()->andReturn([
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+    $svc->shouldReceive('lastSnapshotAt')->with('sqs', 'work')->once()->andReturn(Date::now());
+    $svc->shouldReceive('queueWaitPercentiles')->with('sqs', 'work')->once()->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('liveDepth')->with('sqs', 'work')->once()->andReturn(0);
+    $svc->shouldReceive('liveInFlight')->with('sqs', 'work')->once()->andReturn(0);
+    $svc->shouldReceive('liveDelayed')->with('sqs', 'work')->once()->andReturn(0);
+    $svc->shouldReceive('snapshotError')->with('sqs', 'work')->once()->andReturnNull();
+    $svc->shouldReceive('pendingTrackedCount')->with('sqs', 'work')->once()->andReturn(0);
+
+    $rows = queueRowsBuilder($svc)->build('', 'sqs');
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['connection'])->toBe('sqs')
+        ->and($rows[0]['queue'])->toBe('work');
+});
+
+it('build returns every row when scope is null (back-compat)', function (): void {
+    config()->set('queue.connections.sqs', ['driver' => 'sqs']);
+
+    $svc = Mockery::mock(QueueInsights::class);
+    $svc->shouldReceive('configuredQueues')->andReturn([
+        ['connection' => 'redis', 'queue' => 'default'],
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now());
+    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('liveDepth')->andReturn(0);
+    $svc->shouldReceive('liveInFlight')->andReturn(0);
+    $svc->shouldReceive('liveDelayed')->andReturn(0);
+    $svc->shouldReceive('snapshotError')->andReturnNull();
+    $svc->shouldReceive('pendingTrackedCount')->andReturn(0);
+
+    $rows = queueRowsBuilder($svc)->build('');
+
+    expect($rows)->toHaveCount(2);
 });
 
 it('build falls back to em-dash for a non-string driver config', function (): void {

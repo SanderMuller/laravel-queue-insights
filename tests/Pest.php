@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use DG\BypassFinals;
 use Illuminate\Redis\Connections\Connection as RedisConnection;

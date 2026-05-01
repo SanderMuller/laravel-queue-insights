@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
@@ -28,13 +26,15 @@ final readonly class QueueRowsBuilder
     /**
      * @param  string  $expandedQueueKey  the "{connection}:{canonical-queue}" of
      *                                    the expanded inspector, '' if none
+     * @param  ?string  $scopeConnection  when non-null, restricts iteration to
+     *                                    snapshots whose `connection` matches
      * @return list<array<string, mixed>>
      */
-    public function build(string $expandedQueueKey): array
+    public function build(string $expandedQueueKey, ?string $scopeConnection = null): array
     {
         $rows = [];
 
-        foreach ($this->svc->configuredQueues() as $entry) {
+        foreach ($this->svc->configuredQueues($scopeConnection) as $entry) {
             $connection = $entry['connection'];
             $queue = $entry['queue'];
 

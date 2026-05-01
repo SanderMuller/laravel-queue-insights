@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use Illuminate\Contracts\Console\Kernel as ConsoleKernelContract;
 use Illuminate\Database\Schema\Blueprint;

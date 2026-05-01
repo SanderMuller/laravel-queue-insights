@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
@@ -16,6 +14,7 @@ use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
+use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
 use SanderMuller\QueueInsights\Support\RowEnricher;
 use SanderMuller\QueueInsights\Support\UuidResolver;
@@ -54,6 +53,8 @@ final readonly class DashboardData
      * test time rather than in a host's Blade template.
      */
     public const array EXPECTED_KEYS = [
+        'scopeConnection',
+        'connectionNav',
         'activeIssues',
         'snapshotCommandDead',
         'queues',
@@ -115,6 +116,7 @@ final readonly class DashboardData
         private QueueRowsBuilder $queueRowsBuilder,
         private ActiveIssuesProvider $activeIssues,
         private SnapshotWatchdog $watchdog,
+        private ConnectionNavBuilder $connectionNav,
     ) {}
 
     /**
@@ -127,14 +129,16 @@ final readonly class DashboardData
         // and normalises before its comparisons.
         $captureMode = Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off);
 
-        $queues = $this->queueRowsBuilder->build($component->expandedQueueKey);
-        $classes = $this->classRowsBuilder->build();
+        $scope = $component->scopeConnection;
+
+        $queues = $this->queueRowsBuilder->build($component->expandedQueueKey, $scope);
+        $classes = $this->classRowsBuilder->build($scope);
 
         $failedFilters = $component->buildFailedFilters();
 
         $recentCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, $component->selectedClass);
         $recentFailed = $this->svc->recentFailed(self::RECENT_FETCH_LIMIT, $failedFilters);
-        $throughput = $this->svc->hourlyThroughput();
+        $throughput = $this->svc->hourlyThroughput(24, $scope);
 
         $selectedPayload = $this->modals->selectedPayload($component->selectedPayloadId, $recentCompleted);
         $selectedFailed = $this->modals->selectedFailed($component->selectedFailedId, $recentFailed);
@@ -199,14 +203,19 @@ final readonly class DashboardData
             }
         }
 
-        $filterOptions = $this->filterOptionsBuilder->build($classes);
+        $filterOptions = $this->filterOptionsBuilder->build($classes, $scope);
 
-        $batches = BatchReader::sectionRows($this->svc, $component->expandedBatchId);
+        // Batches are not yet keyed by connection — until they are, a scoped
+        // view would otherwise leak other-connection batches.
+        $batches = $scope === null
+            ? BatchReader::sectionRows($this->svc, $component->expandedBatchId)
+            : [];
 
         $pendingEnabled = Config::bool('pending.enabled', true);
-        $pendingRows = $pendingEnabled ? $this->svc->allPendingJobs(50) : [];
-        $delayedRows = $pendingEnabled ? $this->svc->allDelayedJobs(50) : [];
-        $inFlightRows = $pendingEnabled ? $this->svc->allInFlightJobs(50) : [];
+        $scopedQueues = $this->svc->configuredQueues($scope);
+        $pendingRows = $pendingEnabled ? PendingJobsReader::allPending($scopedQueues, 50) : [];
+        $delayedRows = $pendingEnabled ? PendingJobsReader::allDelayed($scopedQueues, 50) : [];
+        $inFlightRows = $pendingEnabled ? PendingJobsReader::allInFlight($scopedQueues, 50) : [];
 
         $selectedPending = $this->modals->selectedPending(
             $component->selectedPendingUuid,
@@ -269,8 +278,10 @@ final readonly class DashboardData
         $aggregates = QueueAggregates::aggregate($queues);
 
         return [
-            'activeIssues' => $this->activeIssues->get(),
-            'snapshotCommandDead' => $this->watchdog->isSnapshotCommandDead(),
+            'scopeConnection' => $scope,
+            'connectionNav' => $this->connectionNav->build($scope),
+            'activeIssues' => $this->activeIssues->get($scope),
+            'snapshotCommandDead' => $this->watchdog->isSnapshotCommandDead($scope),
             'queues' => $queues,
             'totalDepth' => $aggregates['total_depth'],
             'totalInFlight' => $aggregates['total_inflight'],
@@ -312,7 +323,9 @@ final readonly class DashboardData
             'canRetry' => $canRetry,
             'bulkRetryCount' => $bulkRetryCount,
             'batches' => $batches,
-            'batchesEnabled' => Config::bool('batches.enabled', true),
+            // Section hidden under a scope until per-batch connection
+            // keying lands — see the `$batches` build block above.
+            'batchesEnabled' => Config::bool('batches.enabled', true) && $scope === null,
             'expandedBatchId' => $component->expandedBatchId,
             'selectedBatch' => $selectedBatch,
             'selectedPending' => $selectedPending,
@@ -331,8 +344,13 @@ final readonly class DashboardData
 
     private function buildCompletedFilter(QueueInsightsDashboard $component): CompletedRowFilter
     {
+        // Same hard-pin pattern as `buildFailedFilters()` — when scope is
+        // active the connection axis is forced to scope so the completed
+        // panel cannot reach rows outside the scoped connection.
+        $connection = $component->scopeConnection ?? $component->completedFilterConnection;
+
         return new CompletedRowFilter(
-            connection: $component->completedFilterConnection,
+            connection: $connection,
             queue: $component->completedFilterQueue,
             from: $component->completedFilterFrom,
             to: $component->completedFilterTo,

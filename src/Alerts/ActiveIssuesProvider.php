@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Alerts;
 
@@ -40,24 +38,29 @@ final class ActiveIssuesProvider
     /**
      * @return list<Issue>
      */
-    public function get(): array
+    public function get(?string $scopeConnection = null): array
     {
-        if ($this->memoised !== null) {
-            return $this->memoised;
+        $issues = $this->memoised ?? $this->readCache();
+
+        if ($issues === null) {
+            $issues = $this->detector->detectAll();
+            $this->writeCache($issues);
         }
 
-        $cached = $this->readCache();
-        if ($cached !== null) {
-            $this->memoised = $cached;
-
-            return $cached;
-        }
-
-        $issues = $this->detector->detectAll();
-        $this->writeCache($issues);
         $this->memoised = $issues;
 
-        return $issues;
+        if ($scopeConnection === null) {
+            return $issues;
+        }
+
+        // Class-scoped detectors (failure_rate, slow_p95) construct issues
+        // with an empty `connection` field — those are aggregate by design
+        // and should still surface under any scope. Queue-scoped issues
+        // filter by exact connection match.
+        return array_values(array_filter(
+            $issues,
+            static fn (Issue $i): bool => $i->connection === '' || $i->connection === $scopeConnection,
+        ));
     }
 
     /**

@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace Workbench\App\Support;
 
@@ -17,6 +15,7 @@ use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\RedisEval;
+use Workbench\App\Http\Middleware\SeedPreviewState;
 
 /**
  * Hydrates Redis (and the failed_jobs DB table) with the demo state the
@@ -87,6 +86,18 @@ final class PreviewSeeder
         config()->set('queue-insights.snapshots', self::staticQueueDefinitions());
         config()->set('queue-insights.capture.payloads', CaptureMode::Full->value);
 
+        // Override the bundled dashboard middleware so the workbench can
+        // exercise both `/queue-insights` and `/queue-insights/{connection}`
+        // without an authenticated session. WorkbenchServiceProvider's
+        // permissive `Gate::before` keeps `viewQueueInsights` short-circuited
+        // to true; the `auth` middleware would otherwise redirect to a
+        // non-existent login route. SeedPreviewState ensures Redis is hot
+        // before the dashboard reads, same as the `/` shortcut.
+        config()->set('queue-insights.dashboard.middleware', [
+            'web',
+            SeedPreviewState::class,
+        ]);
+
         // Permissive alerts so the dashboard renders the alert chrome with
         // realistic seeded issues. Depth threshold matches the seeded
         // `live:depth:sqs:reports = 2480` so the depth detector fires.
@@ -99,6 +110,14 @@ final class PreviewSeeder
                 'severity' => AlertSeverity::Critical->value,
             ],
         ]);
+
+        // Demo-only: pretend Slack is wired so the alerts panel surfaces a
+        // realistic channel detail (`channel: #queue-alerts`). The webhook
+        // URL is a placeholder — outbound notifications are not actually
+        // delivered in the preview.
+        config()->set('queue-insights.alerts.channels.slack.enabled', true);
+        config()->set('queue-insights.alerts.channels.slack.webhook_url', 'https://hooks.slack.com/services/T0DEMO000/B0DEMO000/demoDemoDemo1234');
+        config()->set('queue-insights.alerts.channels.slack.channel', '#queue-alerts');
 
         // Backward-chain lineage on by default — the preview demonstrates it.
         config()->set('queue-insights.chain_lineage.enabled', true);
@@ -290,7 +309,11 @@ LUA,
             // sine-shaped business-hours peak so the chart shows a real
             // diurnal pattern instead of a single tall bar at "now".
             $base = 30 + ((int) abs(crc32($class)) % 80);
-            $failureWeight = $class === 'App\\Jobs\\NotifyImportFinished' ? 0.18 : 0.02;
+            $failureWeight = match ($class) {
+                'App\\Jobs\\NotifyImportFinished' => 0.18,
+                'App\\Jobs\\GenerateInvoicePdf' => 0.14,
+                default => 0.02,
+            };
             for ($i = 23; $i >= 0; --$i) {
                 $hour = $now->copy()->utc()->subHours($i)->startOfHour();
                 $bucket = $hour->format('YmdH');

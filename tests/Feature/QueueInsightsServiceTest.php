@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Date;
@@ -177,6 +175,74 @@ it('hourlyThroughput returns a 24-bucket timeline of zeros by default', function
     expect($series)->toHaveCount(24)
         ->and($series[0])->toMatchArray(['processed' => 0, 'failed' => 0])
         ->and($series[23])->toMatchArray(['processed' => 0, 'failed' => 0]);
+});
+
+it('jobClasses($connection) reads the per-connection roster', function (): void {
+    $r = Redis::connection('default');
+    $now = Date::now('UTC')->getTimestamp();
+
+    $r->command('zadd', [KeyPrefix::make('classes'), $now, 'App\\Global']);
+    $r->command('zadd', [KeyPrefix::make('classes:redis'), $now, 'App\\OnRedis']);
+    $r->command('zadd', [KeyPrefix::make('classes:sqs'), $now, 'App\\OnSqs']);
+
+    expect(resolve(QueueInsights::class)->jobClasses())->toContain('App\\Global')
+        ->and(resolve(QueueInsights::class)->jobClasses('redis'))->toBe(['App\\OnRedis'])
+        ->and(resolve(QueueInsights::class)->jobClasses('sqs'))->toBe(['App\\OnSqs']);
+});
+
+it('classMetrics($class, $connection) reads per-connection bucket + duration + last_run keys', function (): void {
+    $r = Redis::connection('default');
+    $now = Date::now('UTC');
+    $bucket = $now->format('YmdH');
+    $class = 'App\\Jobs\\Foo';
+
+    // Aggregate keys (existing API path).
+    $r->command('set', [KeyPrefix::make("processed:{$class}:{$bucket}"), '20']);
+    $r->command('set', [KeyPrefix::make("failed:{$class}:{$bucket}"), '4']);
+    $r->command('hmset', [KeyPrefix::make("duration:{$class}"), 'count', '10', 'sum_ms', '1000', 'max_ms', '500']);
+    $r->command('set', [KeyPrefix::make("last_run:{$class}"), $now->toIso8601String()]);
+
+    // Per-connection keys (new Phase 4 path) — different totals so we can
+    // distinguish which keys the read consulted.
+    $r->command('set', [KeyPrefix::make("processed:{$class}:redis:{$bucket}"), '7']);
+    $r->command('set', [KeyPrefix::make("failed:{$class}:redis:{$bucket}"), '1']);
+    $r->command('hmset', [KeyPrefix::make("duration:{$class}:redis"), 'count', '7', 'sum_ms', '350', 'max_ms', '120']);
+    $r->command('set', [KeyPrefix::make("last_run:{$class}:redis"), $now->toIso8601String()]);
+
+    $aggregate = resolve(QueueInsights::class)->classMetrics($class);
+    $scoped = resolve(QueueInsights::class)->classMetrics($class, 'redis');
+
+    expect($aggregate->processed24h)->toBe(20)
+        ->and($aggregate->failed24h)->toBe(4)
+        ->and($aggregate->maxDurationMs)->toBe(500)
+        ->and($scoped->processed24h)->toBe(7)
+        ->and($scoped->failed24h)->toBe(1)
+        ->and($scoped->maxDurationMs)->toBe(120);
+});
+
+it('hourlyThroughput($hours, $connection) reads per-connection processed+failed buckets', function (): void {
+    $r = Redis::connection('default');
+    $now = Date::now('UTC');
+    $thisHour = $now->format('YmdH');
+
+    // Per-connection roster + aggregate roster.
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\A']);
+    $r->command('zadd', [KeyPrefix::make('classes:redis'), $now->getTimestamp(), 'App\\A']);
+    $r->command('zadd', [KeyPrefix::make('classes:sqs'), $now->getTimestamp(), 'App\\A']);
+
+    // Aggregate counters (sum=12), per-connection counters intentionally
+    // smaller so the read path being consulted is unambiguous.
+    $r->command('set', [KeyPrefix::make("processed:App\\A:{$thisHour}"), '12']);
+    $r->command('set', [KeyPrefix::make("processed:App\\A:redis:{$thisHour}"), '5']);
+    $r->command('set', [KeyPrefix::make("processed:App\\A:sqs:{$thisHour}"), '7']);
+
+    $aggregate = resolve(QueueInsights::class)->hourlyThroughput();
+    $scopedRedis = resolve(QueueInsights::class)->hourlyThroughput(24, 'redis');
+    $scopedSqs = resolve(QueueInsights::class)->hourlyThroughput(24, 'sqs');
+
+    expect($aggregate[23]['processed'])->toBe(12)
+        ->and($scopedRedis[23]['processed'])->toBe(5)
+        ->and($scopedSqs[23]['processed'])->toBe(7);
 });
 
 it('hourlyThroughput sums processed + failed counters across classes per hour bucket', function (): void {

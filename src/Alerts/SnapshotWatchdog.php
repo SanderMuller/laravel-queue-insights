@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Alerts;
 
@@ -27,10 +25,21 @@ final class SnapshotWatchdog
      * Returns true when no `live:depth:{c}:{q}` key exists for any
      * configured snapshot pair. Empty config → returns false (nothing
      * to watch).
+     *
+     * When `$scopeConnection` is non-null, restricts evaluation to pairs
+     * whose connection matches scope so a stalled snapshotter on a
+     * different connection doesn't banner an operator scoped elsewhere.
      */
-    public function isSnapshotCommandDead(): bool
+    public function isSnapshotCommandDead(?string $scopeConnection = null): bool
     {
         $pairs = $this->configuredPairs();
+        if ($scopeConnection !== null) {
+            $pairs = array_values(array_filter(
+                $pairs,
+                static fn (array $p): bool => $p[0] === $scopeConnection,
+            ));
+        }
+
         if ($pairs === []) {
             return false;
         }

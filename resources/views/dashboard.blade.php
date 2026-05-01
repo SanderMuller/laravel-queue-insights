@@ -7,6 +7,67 @@
          class="flex flex-col gap-6"
          x-data x-bind:inert="@js($hasOpenModal)">
 
+        {{-- Connection-scope picker — pushed into the dark header above. --}}
+        @if($connectionNav['should_render'])
+            @php($activeTab = collect($connectionNav['tabs'])->firstWhere('active', true) ?? ($connectionNav['tabs'][0] ?? null))
+            @push('header-scope')
+                <span class="text-gray-600" aria-hidden="true">/</span>
+
+                <div class="relative" x-data="{ open: false }">
+                    <button type="button"
+                            x-on:click="open = !open"
+                            x-on:keydown.escape.window="open = false"
+                            x-bind:aria-expanded="open"
+                            aria-haspopup="menu"
+                            class="inline-flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-inset ring-white/10 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400">
+                        <span class="text-xs uppercase tracking-wide text-gray-400">Connection</span>
+                        @if($activeTab !== null)
+                            @if($activeTab['name'] === null)
+                                <span>{{ $activeTab['label'] }}</span>
+                            @else
+                                <code class="font-mono">{{ $activeTab['label'] }}</code>
+                            @endif
+                        @endif
+                        <svg class="size-4 text-gray-400 transition" x-bind:class="open ? 'rotate-180' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 7.22a.75.75 0 0 1 1.06 0L10 10.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
+                    </button>
+                    <div x-show="open" x-cloak
+                         x-transition.origin.top
+                         x-on:click.outside="open = false"
+                         role="menu"
+                         aria-label="Connection scope"
+                         class="absolute left-0 top-full z-20 mt-2 w-56 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-950/10">
+                        <ul role="list" class="py-1 text-sm">
+                            @foreach($connectionNav['tabs'] as $tab)
+                                <li>
+                                    <a href="{{ $tab['url'] }}"
+                                       wire:navigate
+                                       @if($tab['tooltip'] !== null) title="{{ $tab['tooltip'] }}" @endif
+                                       role="menuitemradio"
+                                       aria-checked="{{ $tab['active'] ? 'true' : 'false' }}"
+                                       @class([
+                                           'flex items-center gap-2 px-3 py-1.5 transition focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-500',
+                                           'bg-emerald-50 text-emerald-700' => $tab['active'],
+                                           'text-gray-700 hover:bg-gray-50' => ! $tab['active'],
+                                       ])>
+                                        @if($tab['active'])
+                                            <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.7a1 1 0 0 1 .03 1.4l-7.5 8a1 1 0 0 1-1.46 0l-3.5-3.75a1 1 0 1 1 1.46-1.36l2.77 2.97 6.77-7.23a1 1 0 0 1 1.43-.03Z" clip-rule="evenodd"/></svg>
+                                        @else
+                                            <span class="size-4" aria-hidden="true"></span>
+                                        @endif
+                                        @if($tab['name'] === null)
+                                            <span>{{ $tab['label'] }}</span>
+                                        @else
+                                            <code class="font-mono text-xs">{{ $tab['label'] }}</code>
+                                        @endif
+                                    </a>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </div>
+                </div>
+            @endpush
+        @endif
+
         <x-queue-insights::flash-banner/>
 
         @include('queue-insights::partials.snapshot-watchdog-banner')

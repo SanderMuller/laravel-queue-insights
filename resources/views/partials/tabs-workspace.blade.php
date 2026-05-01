@@ -76,6 +76,6 @@
         @include('queue-insights::partials.tabs.pane-failed')
     </div>
     <div x-show="tab==='alerts'" x-cloak>
-        <livewire:queue-insights-alert-rules-panel />
+        <livewire:queue-insights-alert-rules-panel :scope-connection="$scopeConnection ?? null" />
     </div>
 </div>

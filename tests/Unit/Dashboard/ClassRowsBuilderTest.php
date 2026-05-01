@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use Illuminate\Support\Facades\Date;
 use Mockery\LegacyMockInterface;
@@ -24,11 +22,11 @@ it('build returns one row per registered class with metrics flattened to scalars
     $now = Date::parse('2026-04-28 10:00:00');
 
     $svc = Mockery::mock(QueueInsights::class);
-    $svc->shouldReceive('jobClasses')->once()->andReturn(['App\\Jobs\\Alpha', 'App\\Jobs\\Beta']);
-    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Alpha')->once()->andReturn(
+    $svc->shouldReceive('jobClasses')->with(null)->once()->andReturn(['App\\Jobs\\Alpha', 'App\\Jobs\\Beta']);
+    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Alpha', null)->once()->andReturn(
         new JobClassMetrics('App\\Jobs\\Alpha', 100, 2, 312.5, 1200, 820, $now),
     );
-    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Beta')->once()->andReturn(
+    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Beta', null)->once()->andReturn(
         new JobClassMetrics('App\\Jobs\\Beta', 50, 0, 90.0, 200, 150, null),
     );
 
@@ -50,8 +48,22 @@ it('build returns one row per registered class with metrics flattened to scalars
 
 it('build returns an empty list when no classes are registered', function (): void {
     $svc = Mockery::mock(QueueInsights::class);
-    $svc->shouldReceive('jobClasses')->once()->andReturn([]);
+    $svc->shouldReceive('jobClasses')->with(null)->once()->andReturn([]);
     $svc->shouldNotReceive('classMetrics');
 
     expect(classRowsBuilder($svc)->build())->toBeEmpty();
+});
+
+it('build threads scopeConnection through jobClasses + classMetrics for per-connection rows', function (): void {
+    $svc = Mockery::mock(QueueInsights::class);
+    $svc->shouldReceive('jobClasses')->with('redis')->once()->andReturn(['App\\Jobs\\Alpha']);
+    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Alpha', 'redis')->once()->andReturn(
+        new JobClassMetrics('App\\Jobs\\Alpha', 10, 0, 50.0, 100, 80, null),
+    );
+
+    $rows = classRowsBuilder($svc)->build('redis');
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['class'])->toBe('App\\Jobs\\Alpha')
+        ->and($rows[0]['processed_24h'])->toBe(10);
 });

@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use SanderMuller\QueueInsights\Dashboard\FilterOptionsBuilder;
 
@@ -56,6 +54,35 @@ it('build skips empty + non-string values', function (): void {
     expect($options['connections'])->toBe(['redis'])
         ->and($options['queues'])->toBe(['default', 'high'])
         ->and($options['classes'])->toBe(['App\\Jobs\\Alpha']);
+});
+
+it('build omits connections and restricts queues when scope is set', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'default'],
+        ['connection' => 'redis', 'queue' => 'high'],
+        ['connection' => 'sqs', 'queue' => 'reports'],
+    ]);
+
+    $options = (new FilterOptionsBuilder())->build([
+        ['class' => 'App\\Jobs\\Alpha'],
+    ], 'redis');
+
+    expect($options['connections'])
+        ->toBeEmpty()
+        ->and($options['queues'])->toBe(['default', 'high'])
+        ->and($options['classes'])->toBe(['App\\Jobs\\Alpha']);
+});
+
+it('build returns every connection when scope is null', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'default'],
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+
+    $options = (new FilterOptionsBuilder())->build([]);
+
+    expect($options['connections'])->toBe(['redis', 'sqs'])
+        ->and($options['queues'])->toBe(['default', 'work']);
 });
 
 it('build tolerates non-array snapshot entries', function (): void {

@@ -18,7 +18,12 @@
         </svg>
     </summary>
 
-    <div class="mt-3 grid grid-cols-1 gap-3 rounded-lg bg-gray-50 p-3 ring-1 ring-inset ring-gray-950/5 sm:grid-cols-5">
+    {{-- When the dashboard is scoped to a single connection,
+         FilterOptionsBuilder returns an empty connectionOptions list and
+         this block hides — the connection axis is already pinned by scope
+         and a redundant dropdown would mislead operators. --}}
+    <div class="mt-3 grid grid-cols-1 gap-3 rounded-lg bg-gray-50 p-3 ring-1 ring-inset ring-gray-950/5 {{ $connectionOptions === [] ? 'sm:grid-cols-4' : 'sm:grid-cols-5' }}">
+        @if($connectionOptions !== [])
         <label class="flex flex-col gap-1 text-xs font-medium text-gray-500">
             Connection
             <select wire:model.live="{{ $models['connection'] }}"
@@ -29,6 +34,7 @@
                 @endforeach
             </select>
         </label>
+        @endif
         <label class="flex flex-col gap-1 text-xs font-medium text-gray-500">
             Queue
             <select wire:model.live="{{ $models['queue'] }}"

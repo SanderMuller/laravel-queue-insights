@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights;
 
@@ -14,6 +12,7 @@ use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use SanderMuller\QueueInsights\Support\HourlyBucketReader;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
@@ -98,7 +97,7 @@ final class QueueInsights
     /**
      * @return list<array{connection: string, queue: string}>
      */
-    public function configuredQueues(): array
+    public function configuredQueues(?string $scopeConnection = null): array
     {
         $out = [];
 
@@ -117,6 +116,10 @@ final class QueueInsights
                 continue;
             }
 
+            if ($scopeConnection !== null && $connection !== $scopeConnection) {
+                continue;
+            }
+
             $out[] = [
                 'connection' => $connection,
                 'queue' => $queue,
@@ -128,14 +131,17 @@ final class QueueInsights
 
     /**
      * @return list<string> Class names ordered by last seen (newest first).
+     *                     When `$connection` is non-null, returns only classes
+     *                     that have run on that connection within the per-
+     *                     connection roster's TTL (30d).
      */
-    public function jobClasses(): array
+    public function jobClasses(?string $connection = null): array
     {
-        $result = $this->redis()->command('zrevrange', [
-            KeyPrefix::make('classes'),
-            0,
-            -1,
-        ]);
+        $key = $connection === null
+            ? KeyPrefix::make('classes')
+            : KeyPrefix::make("classes:{$connection}");
+
+        $result = $this->redis()->command('zrevrange', [$key, 0, -1]);
 
         if (! is_array($result)) {
             return [];
@@ -151,43 +157,33 @@ final class QueueInsights
         return $out;
     }
 
-    public function classMetrics(string $class): JobClassMetrics
+    public function classMetrics(string $class, ?string $connection = null): JobClassMetrics
     {
         $redis = $this->redis();
 
-        $processedKeys = $this->hourlyBucketKeys("processed:{$class}", 24);
-        $failedKeys = $this->hourlyBucketKeys("failed:{$class}", 24);
+        $bucketSuffix = $connection === null ? "{$class}" : "{$class}:{$connection}";
+        $processed = $this->sumCounters($redis, $this->hourlyBucketKeys("processed:{$bucketSuffix}", 24));
+        $failed = $this->sumCounters($redis, $this->hourlyBucketKeys("failed:{$bucketSuffix}", 24));
 
-        $processed = $this->sumCounters($redis, $processedKeys);
-        $failed = $this->sumCounters($redis, $failedKeys);
+        // Single HMGET — three HGETs on the same key were a hot-path waste.
+        $fields = $redis->command('hmget', [
+            KeyPrefix::classKey('duration', $class, $connection),
+            ['count', 'sum_ms', 'max_ms'],
+        ]);
+        $count = is_array($fields) && is_numeric($fields[0] ?? null) ? (int) $fields[0] : 0;
+        $sumMs = is_array($fields) && is_numeric($fields[1] ?? null) ? (float) $fields[1] : 0.0;
+        $maxMs = is_array($fields) && is_numeric($fields[2] ?? null) ? (int) $fields[2] : null;
 
-        $durationKey = KeyPrefix::make("duration:{$class}");
-
-        $countRaw = $redis->command('hget', [$durationKey, 'count']);
-        $count = is_numeric($countRaw) ? (int) $countRaw : 0;
-
-        $sumRaw = $redis->command('hget', [$durationKey, 'sum_ms']);
-        $sumMs = is_numeric($sumRaw) ? (float) $sumRaw : 0.0;
-
-        $maxMsRaw = $redis->command('hget', [$durationKey, 'max_ms']);
-        $maxMs = is_numeric($maxMsRaw) ? (int) $maxMsRaw : null;
-
-        $avgMs = $count > 0 ? $sumMs / $count : null;
-
-        $p95Ms = $this->p95DurationMs($class);
-
-        $lastRunRaw = $redis->command('get', [KeyPrefix::make("last_run:{$class}")]);
-        $lastRunAt = is_string($lastRunRaw) && $lastRunRaw !== ''
-            ? Date::parse($lastRunRaw)
-            : null;
+        $lastRunRaw = $redis->command('get', [KeyPrefix::classKey('last_run', $class, $connection)]);
+        $lastRunAt = is_string($lastRunRaw) && $lastRunRaw !== '' ? Date::parse($lastRunRaw) : null;
 
         return new JobClassMetrics(
             class: $class,
             processed24h: $processed,
             failed24h: $failed,
-            avgDurationMs: $avgMs,
+            avgDurationMs: $count > 0 ? $sumMs / $count : null,
             maxDurationMs: $maxMs,
-            p95DurationMs: $p95Ms,
+            p95DurationMs: $this->p95DurationMs($class, $connection),
             lastRunAt: $lastRunAt,
         );
     }
@@ -381,13 +377,11 @@ final class QueueInsights
         return is_numeric($value) ? (int) $value : null;
     }
 
-    public function p95DurationMs(string $class): ?int
+    public function p95DurationMs(string $class, ?string $connection = null): ?int
     {
-        $samples = $this->redis()->command('lrange', [
-            KeyPrefix::make("duration:samples:{$class}"),
-            0,
-            -1,
-        ]);
+        $key = KeyPrefix::classKey('duration:samples', $class, $connection);
+
+        $samples = $this->redis()->command('lrange', [$key, 0, -1]);
 
         if (! is_array($samples) || $samples === []) {
             return null;
@@ -453,16 +447,19 @@ final class QueueInsights
 
     /**
      * Per-hour processed + failed throughput across all classes, oldest first.
+     * When `$connection` is non-null, throughput is restricted to that
+     * connection.
      *
      * @return list<array{timestamp: int, processed: int, failed: int}>
      */
-    public function hourlyThroughput(int $hours = 24): array
+    public function hourlyThroughput(int $hours = 24, ?string $connection = null): array
     {
-        [$timestamps, $bucketIndex] = $this->buildHourlyTimeline($hours);
-        $classes = $this->jobClasses();
+        [$timestamps, $bucketIndex] = HourlyBucketReader::buildTimeline($hours);
+        $classes = $this->jobClasses($connection);
+        $redis = $this->redis();
 
-        $processedCounts = $this->sumPerBucket($classes, $bucketIndex, 'processed');
-        $failedCounts = $this->sumPerBucket($classes, $bucketIndex, 'failed');
+        $processedCounts = HourlyBucketReader::sumPerBucket($redis, $classes, $bucketIndex, 'processed', $connection);
+        $failedCounts = HourlyBucketReader::sumPerBucket($redis, $classes, $bucketIndex, 'failed', $connection);
 
         $timeline = [];
         for ($i = 0; $i < $hours; ++$i) {
@@ -474,69 +471,6 @@ final class QueueInsights
         }
 
         return $timeline;
-    }
-
-    /**
-     * @return array{0: list<int>, 1: array<int|string, int>} — [timestamps, bucketIndex]
-     */
-    private function buildHourlyTimeline(int $hours): array
-    {
-        $now = Date::now('UTC');
-        $timestamps = [];
-        $bucketIndex = [];
-
-        for ($i = $hours - 1; $i >= 0; --$i) {
-            $hour = $now->copy()->subHours($i)->startOfHour();
-            $bucketStr = $hour->format('YmdH');
-            $timestamps[] = $hour->getTimestamp();
-            $bucketIndex[$bucketStr] = count($timestamps) - 1;
-        }
-
-        return [$timestamps, $bucketIndex];
-    }
-
-    /**
-     * MGET across {prefix}:{class}:{bucket} for all classes × all buckets, then reduce
-     * into one integer per bucket.
-     *
-     * @param  list<string>  $classes
-     * @param  array<int|string, int>  $bucketIndex
-     * @return list<int>
-     */
-    private function sumPerBucket(array $classes, array $bucketIndex, string $prefix): array
-    {
-        $count = count($bucketIndex);
-        $counts = [];
-        for ($i = 0; $i < $count; ++$i) {
-            $counts[] = 0;
-        }
-
-        if ($classes === []) {
-            return $counts;
-        }
-
-        $keys = [];
-        $keyMeta = [];
-        foreach ($classes as $class) {
-            foreach (array_keys($bucketIndex) as $bucketStr) {
-                $keys[] = KeyPrefix::make("{$prefix}:{$class}:{$bucketStr}");
-                $keyMeta[] = $bucketStr;
-            }
-        }
-
-        $values = $this->redis()->command('mget', [$keys]);
-        if (! is_array($values)) {
-            return $counts;
-        }
-
-        foreach ($values as $i => $v) {
-            if (is_numeric($v) && isset($keyMeta[$i], $bucketIndex[$keyMeta[$i]])) {
-                $counts[$bucketIndex[$keyMeta[$i]]] += (int) $v;
-            }
-        }
-
-        // `array_values` reasserts the list-shape PHPStan lost when we mutated by numeric key.
-        return array_values($counts);
     }
 
     /**

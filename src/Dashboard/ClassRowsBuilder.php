@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
@@ -20,14 +18,18 @@ final readonly class ClassRowsBuilder
     ) {}
 
     /**
+     * @param  ?string  $scopeConnection  when non-null, the 24h roster is read
+     *                                    from the per-connection `classes:{c}`
+     *                                    zset and class metrics are scoped to
+     *                                    that connection's bucket keys.
      * @return list<array<string, mixed>>
      */
-    public function build(): array
+    public function build(?string $scopeConnection = null): array
     {
         $rows = [];
 
-        foreach ($this->svc->jobClasses() as $class) {
-            $m = $this->svc->classMetrics($class);
+        foreach ($this->svc->jobClasses($scopeConnection) as $class) {
+            $m = $this->svc->classMetrics($class, $scopeConnection);
             $rows[] = [
                 'class' => $m->class,
                 'processed_24h' => $m->processed24h,

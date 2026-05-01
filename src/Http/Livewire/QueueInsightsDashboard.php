@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Http\Livewire;
 
@@ -16,6 +14,7 @@ use Livewire\Attributes\Layout;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
+use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\UuidResolver;
@@ -109,15 +108,54 @@ final class QueueInsightsDashboard extends Component
     public string $expandedBatchId = '';
 
     /**
+     * Active connection scope (path segment from `/queue-insights/{connection}`).
+     * Distinct from `$filterConnection` (failed-jobs filter): scope narrows the
+     * entire dashboard surface, filter narrows within failed/completed panels.
+     * Lives in the path, not the query string — Livewire's snapshot persists
+     * the prop across `wire:poll` round-trips so no `#[Url]` mirror is needed.
+     */
+    public ?string $scopeConnection = null;
+
+    /**
      * Defense-in-depth: enforce the `viewQueueInsights` Gate on component mount,
      * not just on the bundled route. A host app that embeds the component in a
      * publicly-reachable view would otherwise leak queue insights.
+     *
+     * When `$connection` is supplied (route param or embed), validate it
+     * against the configured snapshot connections and 404 on mismatch.
+     * Then, if the optional `viewQueueInsightsConnection` Gate exists, run
+     * an authorize-or-403 check against the scoped connection.
      */
-    public function mount(): void
+    public function mount(?string $connection = null): void
     {
         if (Gate::has('viewQueueInsights')) {
             Gate::authorize('viewQueueInsights');
         }
+
+        if ($connection === null) {
+            // Un-scoped route 403s when the per-connection gate denies any
+            // monitored connection — otherwise a partially-restricted
+            // operator would see denied tenants' data. ConnectionNavBuilder
+            // drops the "All" tab in that case so the only path here is a
+            // manual URL hit.
+            if (Gate::has('viewQueueInsightsConnection')) {
+                foreach (ConfiguredConnections::all() as $name) {
+                    Gate::authorize('viewQueueInsightsConnection', $name);
+                }
+            }
+
+            return;
+        }
+
+        if (! in_array($connection, ConfiguredConnections::all(), true)) {
+            abort(404);
+        }
+
+        if (Gate::has('viewQueueInsightsConnection')) {
+            Gate::authorize('viewQueueInsightsConnection', $connection);
+        }
+
+        $this->scopeConnection = $connection;
     }
 
     public function selectClass(?string $class = null): void
@@ -387,16 +425,22 @@ final class QueueInsightsDashboard extends Component
 
     /**
      * Build a `FailedJobFilters` value object from the current Livewire-tracked
-     * filter state. Public so `Dashboard\DashboardData::build()` can read the
-     * same filter shape the bulk-retry action uses — keeps the two paths in
-     * lockstep without duplicating the constructor wiring.
-     *
-     * @internal
+     * filter state. Public so `Dashboard\DashboardData::build()` and the
+     * package's own test suite can read the same filter shape the bulk-retry
+     * action uses — keeps the two paths in lockstep without duplicating the
+     * constructor wiring. Not part of the package's downstream API contract;
+     * downstream hosts should configure filters via the existing `?fc=`/`?fq=`
+     * URL state, not by calling this method.
      */
     public function buildFailedFilters(): FailedJobFilters
     {
+        // When scope is active the connection axis is hard-pinned to scope —
+        // any user-supplied `?fc=` that disagrees is ignored so the failed
+        // panel cannot reach rows outside the scoped connection.
+        $connection = $this->scopeConnection ?? $this->filterConnection;
+
         return new FailedJobFilters(
-            connection: $this->filterConnection,
+            connection: $connection,
             queue: $this->filterQueue,
             class: $this->filterClass,
             from: $this->filterFrom,
@@ -571,6 +615,10 @@ final class QueueInsightsDashboard extends Component
             'uuids' => $uuids,
             'count' => count($uuids),
             'user_id' => Auth::id(),
+            // Multi-tenant accountability — when scope is active, every retry
+            // log entry carries which connection the operator was scoped to.
+            // Sanitised the same way the URL-controlled filter fields are.
+            'scope_connection' => $this->sanitizeAuditField($this->scopeConnection ?? ''),
             // Audit logs persist for a long time; the filter set is fully
             // user-controlled URL state, so unbounded logging is an info
             // leak (codex review). Sanitize each field: ASCII printable,

@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace Workbench\App\Providers;
 
@@ -19,6 +17,13 @@ final class WorkbenchServiceProvider extends ServiceProvider
         // within a single page render — repeated middleware hits don't
         // re-flush + re-seed the keyspace.
         $this->app->singleton(PreviewSeeder::class);
+
+        // Apply the QI config in register() (BEFORE QueueInsightsServiceProvider
+        // boots) so the package's `routes/web.php` reads the seeded snapshots
+        // when computing the `{connection}` whereIn constraint. Otherwise the
+        // bundled connection-scoped route would mount with an empty allowed
+        // list and 404 every variant.
+        PreviewSeeder::applyConfig();
     }
 
     public function boot(): void

@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Listeners;
 
@@ -47,28 +45,37 @@ final readonly class RecordJobProcessed
 
             $durationMs = $this->readAndConsumeStart($redis, $event->job->uuid());
 
-            // Processed counter + bucket expiry
-            $processedKey = KeyPrefix::make("processed:{$class}:{$bucket}");
-            $redis->command('incr', [$processedKey]);
-            $redis->command('expireat', [$processedKey, $this->bucketStart($bucket) + (7 * 86400)]);
-
-            // Duration hash (processed jobs only)
-            if ($durationMs !== null) {
-                $durationKey = KeyPrefix::make("duration:{$class}");
-                $redis->command('hincrby', [$durationKey, 'count', 1]);
-                $redis->command('hincrbyfloat', [$durationKey, 'sum_ms', (float) $durationMs]);
-                RedisEval::exec($redis, LuaScripts::updateMaxDuration(), 1, $durationKey, (string) $durationMs);
-                $redis->command('expire', [$durationKey, 2592000]);
-
-                // p95 sample window: last 500 durations per class.
-                $sampleKey = KeyPrefix::make("duration:samples:{$class}");
-                $redis->command('rpush', [$sampleKey, (string) $durationMs]);
-                $redis->command('ltrim', [$sampleKey, -500, -1]);
-                $redis->command('expire', [$sampleKey, 2592000]);
+            // Dual-write the (class) + (class, connection) variants — aggregate
+            // readers stay on the (class) keys, scoped readers consume the
+            // (class, connection) keys.
+            $bucketExpireAt = $this->bucketStart($bucket) + (7 * 86400);
+            foreach ([$class, "{$class}:{$connectionName}"] as $classSegment) {
+                $processedKey = KeyPrefix::make("processed:{$classSegment}:{$bucket}");
+                $redis->command('incr', [$processedKey]);
+                $redis->command('expireat', [$processedKey, $bucketExpireAt]);
             }
 
-            // Last run
-            $redis->command('setex', [KeyPrefix::make("last_run:{$class}"), 2592000, $isoNow]);
+            if ($durationMs !== null) {
+                foreach ([null, $connectionName] as $conn) {
+                    $durationKey = KeyPrefix::classKey('duration', $class, $conn);
+                    $redis->command('hincrby', [$durationKey, 'count', 1]);
+                    $redis->command('hincrbyfloat', [$durationKey, 'sum_ms', (float) $durationMs]);
+                    RedisEval::exec($redis, LuaScripts::updateMaxDuration(), 1, $durationKey, (string) $durationMs);
+                    $redis->command('expire', [$durationKey, 2592000]);
+
+                    // Per-connection list capped at the same 500 as the
+                    // aggregate so a high-volume connection can't crowd
+                    // out a quiet one in the scoped percentile read.
+                    $sampleKey = KeyPrefix::classKey('duration:samples', $class, $conn);
+                    $redis->command('rpush', [$sampleKey, (string) $durationMs]);
+                    $redis->command('ltrim', [$sampleKey, -500, -1]);
+                    $redis->command('expire', [$sampleKey, 2592000]);
+                }
+            }
+
+            foreach ([null, $connectionName] as $conn) {
+                $redis->command('setex', [KeyPrefix::classKey('last_run', $class, $conn), 2592000, $isoNow]);
+            }
 
             // qi:class:{uuid} — uuid → class index used by the backward-chain
             // lineage UI to hydrate `parent_uuid` to a class label. Skipped
@@ -85,8 +92,17 @@ final readonly class RecordJobProcessed
                 ]);
             }
 
-            // Classes ZSET
+            // Classes ZSETs — global aggregate roster + per-connection roster.
+            // The per-connection roster lets `ClassRowsBuilder` and
+            // `hourlyThroughput` resolve "which classes ran on this
+            // connection in the past 30d" without a fan-out scan.
             $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
+            $classesConnKey = KeyPrefix::make("classes:{$connectionName}");
+            $redis->command('zadd', [$classesConnKey, $nowTs, $class]);
+            // 30d TTL — re-bumped on every event. Gives operators with
+            // dormant connections a clean fall-off without needing the
+            // snapshot command to enumerate per-connection rosters.
+            $redis->command('expire', [$classesConnKey, 2592000]);
 
             // Streams
             $globalStreamId = $this->writeStreams($redis, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow);

@@ -1,9 +1,8 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
+use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
 
@@ -38,30 +37,39 @@ final readonly class AlertRulesPanelBuilder
     ];
 
     /**
+     * @param  list<Issue>|null  $activeIssues  current detected issues (already
+     *                                          scope-filtered by the caller via
+     *                                          `ActiveIssuesProvider::get()`).
+     *                                          Null means "don't render firing
+     *                                          state" — keeps the builder usable
+     *                                          from contexts without a provider.
      * @return array{
      *     enabled: bool,
      *     cooldown_seconds: int,
-     *     rules: list<array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>}>,
+     *     rules: list<array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}>,
      *     channels: list<array{key: string, enabled: bool, detail: string}>,
      *     legacy_thresholds_in_use: bool,
      * }
      */
-    public function build(): array
+    public function build(?string $scopeConnection = null, ?array $activeIssues = null): array
     {
         return [
             'enabled' => Config::bool('alerts.enabled', false),
             'cooldown_seconds' => Config::int('alerts.cooldown_seconds', 900),
-            'rules' => $this->rules(),
+            'rules' => $this->rules($scopeConnection, $activeIssues ?? []),
             'channels' => $this->channels(),
             'legacy_thresholds_in_use' => Config::array('alerts.thresholds') !== [],
         ];
     }
 
     /**
-     * @return list<array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>}>
+     * @param  list<Issue>  $activeIssues
+     * @return list<array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}>
      */
-    private function rules(): array
+    private function rules(?string $scopeConnection, array $activeIssues): array
     {
+        $firingByRule = $this->aggregateFiring($activeIssues);
+
         $rules = Config::array('alerts.rules');
 
         $out = [];
@@ -83,11 +91,16 @@ final readonly class AlertRulesPanelBuilder
                 ? AlertSeverity::tryFrom($rule['severity'])
                 : null;
 
+            $firing = $firingByRule[$key] ?? ['count' => 0, 'severity' => null, 'issues' => []];
+
             $out[] = [
                 'key' => $key,
                 'enabled' => $enabled,
                 'severity' => $severity,
-                'params' => $this->paramsFor($key, $rule),
+                'params' => $this->paramsFor($key, $rule, $scopeConnection),
+                'firing_count' => $firing['count'],
+                'firing_severity' => $firing['severity'],
+                'firing_issues' => $firing['issues'],
             ];
         }
 
@@ -95,14 +108,74 @@ final readonly class AlertRulesPanelBuilder
     }
 
     /**
+     * Aggregate `$activeIssues` by rule key. Counts and severity come from
+     * the issues as-passed; scope filtering is the caller's job (handled
+     * by `ActiveIssuesProvider::get($scopeConnection)`). Class-scoped issues
+     * (`connection===''`, e.g. failure_rate / slow_p95) survive every scope
+     * filter by design and are shown in both the alerts strip and the panel
+     * — the panel mirrors the strip so a scoped operator does not see a red
+     * strip alongside an "All alarms OK" panel.
+     *
+     * @param  list<Issue>  $activeIssues
+     * @return array<string, array{count: int, severity: ?AlertSeverity, issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}>
+     */
+    private function aggregateFiring(array $activeIssues): array
+    {
+        $now = time();
+        $out = [];
+        foreach ($activeIssues as $issue) {
+            $rule = $issue->rule;
+            $current = $out[$rule] ?? ['count' => 0, 'severity' => null, 'issues' => []];
+            ++$current['count'];
+            $current['issues'][] = $this->flattenIssue($issue, $now);
+
+            $existing = $current['severity'];
+            if ($existing === null || ($issue->severity === AlertSeverity::Critical && $existing !== AlertSeverity::Critical)) {
+                $current['severity'] = $issue->severity;
+            }
+
+            $out[$rule] = $current;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Pre-flatten the (internal) `Issue` value object into a blade-friendly
+     * row so the panel's contract doesn't leak `Issue` itself into the
+     * dashboard surface.
+     *
+     * @return array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}
+     */
+    private function flattenIssue(Issue $issue, int $now): array
+    {
+        $context = [];
+        foreach ($issue->context as $k => $v) {
+            if (is_scalar($v)) {
+                $context[$k] = $v;
+            }
+        }
+
+        return [
+            'target' => $issue->jobClass ?? "{$issue->connection}:{$issue->queue}",
+            'target_type' => $issue->jobClass !== null ? 'class' : 'queue',
+            'title' => $issue->title,
+            'description' => $issue->description,
+            'severity' => $issue->severity,
+            'age_seconds' => max(0, $now - $issue->detectedAt),
+            'context' => $context,
+        ];
+    }
+
+    /**
      * @param  array<string, mixed>  $rule
      * @return list<array{label: string, value: string}>
      */
-    private function paramsFor(string $key, array $rule): array
+    private function paramsFor(string $key, array $rule, ?string $scopeConnection): array
     {
         return match ($key) {
             'depth' => [
-                ['label' => 'thresholds', 'value' => $this->formatDepthThresholds($rule)],
+                ['label' => 'thresholds', 'value' => $this->formatDepthThresholds($rule, $scopeConnection)],
             ],
             'stalled' => [
                 ['label' => 'idle_seconds', 'value' => $this->scalar($rule['idle_seconds'] ?? null)],
@@ -129,7 +202,7 @@ final readonly class AlertRulesPanelBuilder
     /**
      * @param  array<string, mixed>  $rule
      */
-    private function formatDepthThresholds(array $rule): string
+    private function formatDepthThresholds(array $rule, ?string $scopeConnection): string
     {
         // Resolve via the same legacy-wins path as DepthDetector so the
         // panel reflects what will actually fire.
@@ -147,6 +220,10 @@ final readonly class AlertRulesPanelBuilder
             }
 
             $conn = is_string($entry['connection'] ?? null) ? $entry['connection'] : '?';
+            if ($scopeConnection !== null && $conn !== $scopeConnection) {
+                continue;
+            }
+
             $queue = is_string($entry['queue'] ?? null) ? $entry['queue'] : '?';
             $depth = $this->scalar($entry['depth'] ?? null);
             $sev = is_string($entry['severity'] ?? null) ? $entry['severity'] : 'warning';
@@ -198,15 +275,33 @@ final readonly class AlertRulesPanelBuilder
 
         $slackEnabled = Config::bool('alerts.channels.slack.enabled', false);
         $slackUrl = Config::string('alerts.channels.slack.webhook_url', '');
-        $slackDetail = $slackEnabled
-            ? ($slackUrl === '' ? 'webhook URL unset' : 'webhook configured')
-            : 'disabled';
+        $slackChannel = Config::string('alerts.channels.slack.channel', '');
+        $slackDetail = match (true) {
+            ! $slackEnabled => 'disabled',
+            $slackUrl === '' => 'webhook URL unset',
+            $slackChannel !== '' => "channel: {$slackChannel}",
+            default => sprintf('webhook: %s', $this->slackWebhookFingerprint($slackUrl)),
+        };
 
         return [
             ['key' => 'log', 'enabled' => $log, 'detail' => "level: {$level}"],
             ['key' => 'mail', 'enabled' => $mailEnabled, 'detail' => $mailDetail],
             ['key' => 'slack', 'enabled' => $slackEnabled, 'detail' => $slackDetail],
         ];
+    }
+
+    /**
+     * Stable, non-secret fingerprint for a Slack incoming-webhook URL —
+     * 8 hex chars of `sha256(url)`. Lets operators tell two configured
+     * webhooks apart in screenshots and incident chats without revealing
+     * any substring of the secret token. The channel itself is bound at
+     * webhook creation time on Slack's side and is not derivable from the
+     * URL, so an explicit `alerts.channels.slack.channel` config key is
+     * the only way to surface the channel name in this panel.
+     */
+    private function slackWebhookFingerprint(string $url): string
+    {
+        return substr(hash('sha256', $url), 0, 8);
     }
 
     private function scalar(mixed $value): string

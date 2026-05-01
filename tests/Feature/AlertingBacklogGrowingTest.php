@@ -1,6 +1,4 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Date;
@@ -8,6 +6,7 @@ use Illuminate\Support\Facades\Event;
 use SanderMuller\QueueInsights\Alerts\Detectors\BacklogGrowingDetector;
 use SanderMuller\QueueInsights\Contracts\QueueSnapshotDriver;
 use SanderMuller\QueueInsights\Dashboard\AlertRulesPanelBuilder;
+use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Events\BacklogGrowing;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
@@ -225,7 +224,7 @@ it('AlertRulesPanelBuilder surfaces backlog_growing in the panel rules list', fu
     $rule = collect($panel['rules'])->firstWhere('key', 'backlog_growing');
     expect($rule)->not->toBeNull();
 
-    /** @var array{key: string, enabled: bool, severity: ?string, params: list<array{label: string, value: string}>} $rule */
+    /** @var array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>} $rule */
     expect($rule['enabled'])->toBeTrue();
 
     $params = collect($rule['params'])->keyBy('label')->all();

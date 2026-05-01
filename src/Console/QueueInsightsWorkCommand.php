@@ -1,26 +1,26 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Console;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Sleep;
+use LogicException;
 use SanderMuller\QueueInsights\Support\Config;
 use Symfony\Component\Process\Process;
+use Throwable;
 
 /**
- * Multi-connection queue worker supervisor.
+ * Multi-connection queue worker supervisor. Reads
+ * `queue-insights.snapshots`, groups entries by connection, and spawns
+ * one `queue:work` subprocess per connection with `--queue=` carrying
+ * the comma-joined queue list (Laravel's built-in priority order).
  *
- * Reads `queue-insights.snapshots`, groups entries by connection, and
- * spawns one `queue:work` subprocess per connection with `--queue=`
- * carrying the comma-joined queue list (Laravel's built-in priority
- * order). This command is a thin parent supervisor — it owns argv
- * assembly + signal forwarding + exit-code propagation. Restart-on-crash
- * and other liveness concerns belong to the host's process manager.
- *
- * Phase 1 ships argv assembly + boot-time refusals. Phase 2 wires the
- * spawn loop. Phase 3 adds signal forwarding + grace shutdown.
+ * The supervisor owns: argv assembly, line-prefixed child output,
+ * SIGTERM/SIGINT/SIGQUIT forwarding to live children, a configurable
+ * grace window followed by SIGKILL escalation, and Bash-convention
+ * `128 + signum` exit code propagation. Restart-on-crash and other
+ * liveness concerns belong to the host process manager (systemd,
+ * supervisord, docker).
  */
 final class QueueInsightsWorkCommand extends Command
 {
@@ -101,12 +101,20 @@ final class QueueInsightsWorkCommand extends Command
 
         if ($filter !== null) {
             $configured = array_keys($map);
-            $map = array_intersect_key($map, array_flip($filter));
+            $map = $filter === [] ? [] : array_intersect_key($map, array_flip($filter));
 
             if ($map === []) {
+                // Distinguish "supplied but parsed to nothing" (e.g.
+                // `--connection=,` / whitespace / env-expanded empty)
+                // from "supplied a real name that doesn't match any
+                // configured connection." Same exit-non-zero failure
+                // shape; the error text helps the operator see the
+                // footgun.
+                $supplied = $filter === [] ? '(empty)' : implode(',', $filter);
+
                 $this->components->error(sprintf(
                     'queue-insights:work: --connection=%s matched no monitored connections. Configured: %s',
-                    implode(',', $filter),
+                    $supplied,
                     implode(', ', $configured),
                 ));
 
@@ -153,8 +161,6 @@ final class QueueInsightsWorkCommand extends Command
      */
     private function supervise(array $processes, WorkerOutputPrefixer $prefixer): int
     {
-        $this->startProcesses($processes, $prefixer);
-
         /** @var array<string, int> $exits */
         $exits = [];
         $firstFailure = null;
@@ -163,42 +169,139 @@ final class QueueInsightsWorkCommand extends Command
         $signalReceived = null;
         $killEscalated = false;
 
-        $this->installSignalHandlers($processes, $exits, $signalReceived, $teardownIssued, $teardownStartedAt);
+        // Capture pre-existing signal handlers + async-signal state so
+        // we can restore them on exit. CLI artisan dies after handle()
+        // returns so the leak is invisible there — but Octane / Pest
+        // / any long-lived host that runs the command in-process would
+        // otherwise inherit our handlers (closures with stale by-ref
+        // captures of the now-defunct `$exits` / `$processes`) and
+        // mishandle later signals.
+        $previousAsync = pcntl_async_signals();
+        $previousHandlers = [
+            SIGTERM => pcntl_signal_get_handler(SIGTERM),
+            SIGINT => pcntl_signal_get_handler(SIGINT),
+            SIGQUIT => pcntl_signal_get_handler(SIGQUIT),
+        ];
 
-        $graceSeconds = Config::int('work.shutdown_grace_seconds', 120);
+        try {
+            // Install signal handlers BEFORE starting children. Without
+            // this ordering, a SIGTERM arriving in the microsecond gap
+            // between `startProcesses()` and the handler install would
+            // hit PHP's default disposition ("terminate parent") and
+            // leave already-spawned children as orphans. The handler
+            // closure safely no-ops while iterating not-yet-started
+            // Processes (their `isRunning()` returns false).
+            $this->installSignalHandlers($processes, $exits, $signalReceived, $teardownIssued, $teardownStartedAt);
 
-        while (count($exits) < count($processes)) {
-            $this->reapExitedChildren($processes, $exits, $prefixer, $firstFailure);
+            // Transactional startup: tracks the actually-started subset
+            // and aborts further launches on a mid-loop signal or a
+            // `Process::start()` exception. The wait/teardown loop
+            // operates on the started subset so a partial start can't
+            // hang forever waiting on never-spawned children.
+            $started = $this->startProcesses($processes, $prefixer, $signalReceived);
 
-            if ($firstFailure !== null && ! $teardownIssued) {
-                $teardownIssued = true;
-                $teardownStartedAt = microtime(true);
-                $this->terminateLiveChildren($processes, $exits, SIGTERM);
+            // If a signal landed during install→start, the handler
+            // captured it but workers weren't running yet (or only some
+            // were). Re-issue the same teardown now that we know which
+            // children are alive so we don't spin the wait loop on
+            // workers we already meant to stop.
+            if ($signalReceived !== null) {
+                $this->terminateLiveChildren($started, $exits, $signalReceived);
             }
 
-            if ($teardownIssued && ! $killEscalated && $teardownStartedAt !== null && microtime(true) - $teardownStartedAt > $graceSeconds) {
-                $this->escalateKill($processes, $exits, $graceSeconds);
-                $killEscalated = true;
+            // Nothing started — exit straight through resolveExitCode so
+            // a signal-aborted boot still propagates `128 + signum`.
+            if ($started === []) {
+                return $this->resolveExitCode($firstFailure, $signalReceived);
             }
 
-            if (count($exits) < count($processes)) {
-                Sleep::usleep(100_000);
+            $graceSeconds = Config::int('work.shutdown_grace_seconds', 120);
+
+            while (count($exits) < count($started)) {
+                $this->reapExitedChildren($started, $exits, $prefixer, $firstFailure);
+
+                if ($firstFailure !== null && ! $teardownIssued) {
+                    $teardownIssued = true;
+                    $teardownStartedAt = microtime(true);
+                    $this->terminateLiveChildren($started, $exits, SIGTERM);
+                }
+
+                if ($teardownIssued && ! $killEscalated && $teardownStartedAt !== null && microtime(true) - $teardownStartedAt > $graceSeconds) {
+                    $this->escalateKill($started, $exits, $graceSeconds);
+                    $killEscalated = true;
+                }
+
+                if (count($exits) < count($started)) {
+                    Sleep::usleep(100_000);
+                }
             }
+
+            return $this->resolveExitCode($firstFailure, $signalReceived);
+        } finally {
+            foreach ($previousHandlers as $sig => $handler) {
+                pcntl_signal($sig, $handler);
+            }
+
+            pcntl_async_signals($previousAsync);
         }
-
-        return $this->resolveExitCode($firstFailure, $signalReceived);
     }
 
     /**
+     * Transactional startup: starts each child in order, but stops
+     * immediately on `$signalReceived` so a SIGTERM during boot doesn't
+     * spawn more workers than necessary, and synchronously SIGKILLs
+     * the already-started subset if any `Process::start()` throws so a
+     * mid-boot failure can't leave orphaned workers consuming jobs
+     * under an exiting parent.
+     *
+     * Returns the (possibly partial) subset of children that did start
+     * — the caller's wait loop iterates this subset, not the full
+     * intended set, so a partial start never hangs on a never-spawned
+     * child.
+     *
      * @param  array<string, Process>  $processes
+     * @return array<string, Process>
      */
-    private function startProcesses(array $processes, WorkerOutputPrefixer $prefixer): void
+    private function startProcesses(array $processes, WorkerOutputPrefixer $prefixer, ?int &$signalReceived): array
     {
-        foreach ($processes as $connection => $process) {
-            $process->start(function (string $type, string $buffer) use ($connection, $prefixer): void {
-                $prefixer->append($connection, $type, $buffer);
-            });
+        /** @var array<string, Process> $started */
+        $started = [];
+
+        try {
+            foreach ($processes as $connection => $process) {
+                if ($signalReceived !== null) {
+                    // Operator pulled the plug mid-boot. Don't launch
+                    // any further workers; let the caller forward the
+                    // signal to whatever's already up.
+                    break;
+                }
+
+                $process->start(function (string $type, string $buffer) use ($connection, $prefixer): void {
+                    $prefixer->append($connection, $type, $buffer);
+                });
+                $started[$connection] = $process;
+            }
+        } catch (Throwable $throwable) {
+            // Mid-boot start failure: synchronously SIGKILL the subset
+            // that did spawn before propagating. Without this, the
+            // exception unwinds through `supervise()`'s finally,
+            // restores the previous signal handlers, and leaves the
+            // already-started workers running orphaned under a
+            // crashed/exiting supervisor.
+            foreach ($started as $earlyChild) {
+                try {
+                    if ($earlyChild->isRunning()) {
+                        $earlyChild->signal(SIGKILL);
+                    }
+                } catch (LogicException) {
+                    // Already gone — nothing to do.
+                }
+            }
+
+            throw $throwable;
         }
+
+        return $started;
     }
 
     /**
@@ -287,8 +390,18 @@ final class QueueInsightsWorkCommand extends Command
                 continue;
             }
 
-            if ($process->isRunning()) {
-                $process->signal($signal);
+            // `Process::signal()` throws `LogicException` when the child
+            // exits between our `isRunning()` check and the signal
+            // dispatch. The race window is microseconds but real under
+            // async signal delivery; treat the post-exit no-op as
+            // benign rather than crashing the supervisor mid-teardown.
+            try {
+                if ($process->isRunning()) {
+                    $process->signal($signal);
+                }
+            } catch (LogicException) {
+                // Child already gone; let the next reapExitedChildren()
+                // tick record the exit code.
             }
         }
     }
@@ -306,9 +419,16 @@ final class QueueInsightsWorkCommand extends Command
                 continue;
             }
 
-            if ($process->isRunning()) {
-                $process->signal(SIGKILL);
-                $killed[] = $connection;
+            // Same race-with-exit as `terminateLiveChildren()` — the
+            // child can exit between `isRunning()` and `signal()`.
+            // Treat that as "no need to SIGKILL after all" silently.
+            try {
+                if ($process->isRunning()) {
+                    $process->signal(SIGKILL);
+                    $killed[] = $connection;
+                }
+            } catch (LogicException) {
+                // Child already gone before we landed the kill.
             }
         }
 
@@ -361,7 +481,15 @@ final class QueueInsightsWorkCommand extends Command
                 continue;
             }
 
+            if ($connection === '') {
+                continue;
+            }
+
             if (! is_string($queue)) {
+                continue;
+            }
+
+            if ($queue === '') {
                 continue;
             }
 
@@ -379,6 +507,12 @@ final class QueueInsightsWorkCommand extends Command
      * Resolve `--connection=` into a deduped first-seen list. Accepts
      * both `--connection=foo --connection=bar` (Symfony VALUE_IS_ARRAY)
      * and `--connection=foo,bar` (CSV per value); the two forms compose.
+     *
+     * Returns `null` only when the option was NOT supplied. When it WAS
+     * supplied but parsing produced zero tokens (e.g. `--connection=,`,
+     * `--connection=" "`, an env-expanded empty string in a deploy
+     * script), returns an empty list — `handle()` then fails closed
+     * rather than silently fanning out to every monitored connection.
      *
      * @return list<string>|null
      */
@@ -412,7 +546,7 @@ final class QueueInsightsWorkCommand extends Command
             }
         }
 
-        return $out === [] ? null : $out;
+        return $out;
     }
 
     /**

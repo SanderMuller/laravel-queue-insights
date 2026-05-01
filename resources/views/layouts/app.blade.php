@@ -129,9 +129,11 @@
 </head>
 <body class="bg-gray-50 text-gray-900 antialiased">
     <div class="isolate min-h-dvh">
-        {{-- Horizon-style dark top bar — signature "infra tool" chrome. --}}
+        {{-- Horizon-style dark top bar — signature "infra tool" chrome. The
+             `header-scope` stack lets the dashboard inject a connection-scope
+             picker between the brand and the polling chip. --}}
         <header class="bg-gray-900">
-            <div class="mx-auto flex max-w-7xl items-center justify-between gap-3 px-6 py-4 sm:px-8 lg:px-10">
+            <div class="mx-auto flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4 sm:px-8 lg:max-w-7xl lg:px-10">
                 <a href="/" aria-label="Homepage" class="flex items-center gap-2.5 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400">
                     {{-- Mark — four ascending bars on an emerald gradient, reads as "queue depth". --}}
                     <span class="inline-flex size-8 items-center justify-center rounded-lg bg-linear-to-br from-emerald-400 to-emerald-500 text-white shadow-sm ring-1 ring-emerald-300/20">
@@ -144,8 +146,11 @@
                     </span>
                     <span class="text-base font-semibold tracking-tight text-white">Queue Insights</span>
                 </a>
+
+                @stack('header-scope')
+
                 @php($qiPolling = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true))
-                <div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
+                <div class="ml-auto flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
                     <span class="relative flex size-2">
                         @if($qiPolling)
                             <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>

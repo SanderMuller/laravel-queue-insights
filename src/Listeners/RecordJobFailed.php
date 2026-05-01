@@ -1,11 +1,10 @@
-<?php
-
-declare(strict_types=1);
+<?php declare(strict_types=1);
 
 namespace SanderMuller\QueueInsights\Listeners;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Queue\Events\JobFailed;
+use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
@@ -43,9 +42,7 @@ final readonly class RecordJobFailed
                 ? $bucketStart->startOfHour()->getTimestamp()
                 : $now->startOfHour()->getTimestamp();
 
-            $failedKey = KeyPrefix::make("failed:{$class}:{$bucket}");
-            $redis->command('incr', [$failedKey]);
-            $redis->command('expireat', [$failedKey, $bucketTs + (30 * 86400)]);
+            $this->incrFailedCounters($redis, $class, $connectionName, $bucket, $bucketTs + (30 * 86400));
 
             $uuid = $event->job->uuid();
             if ($uuid !== null && $uuid !== '') {
@@ -86,8 +83,7 @@ final readonly class RecordJobFailed
                 }
             }
 
-            $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
-            $redis->command('setex', [KeyPrefix::make("last_run:{$class}"), 2592000, $isoNow]);
+            $this->stampClassRoster($redis, $class, $connectionName, $nowTs, $isoNow);
 
             // qi:class:{uuid} — uuid → class index for backward-chain lineage
             // resolution. Same write as in RecordJobProcessed; failed jobs
@@ -108,6 +104,35 @@ final readonly class RecordJobFailed
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Dual-write the failed counter under (class) + (class, connection)
+     * keys with matching TTL. Extracted for cognitive complexity.
+     */
+    private function incrFailedCounters(Connection $redis, string $class, string $connectionName, string $bucket, int $expireAt): void
+    {
+        foreach ([$class, "{$class}:{$connectionName}"] as $classSegment) {
+            $key = KeyPrefix::make("failed:{$classSegment}:{$bucket}");
+            $redis->command('incr', [$key]);
+            $redis->command('expireat', [$key, $expireAt]);
+        }
+    }
+
+    /**
+     * Stamp the global + per-connection class rosters and the dual-write
+     * `last_run` keys. Extracted for cognitive complexity.
+     */
+    private function stampClassRoster(Connection $redis, string $class, string $connectionName, int $nowTs, string $isoNow): void
+    {
+        $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
+        $classesConnKey = KeyPrefix::make("classes:{$connectionName}");
+        $redis->command('zadd', [$classesConnKey, $nowTs, $class]);
+        $redis->command('expire', [$classesConnKey, 2592000]);
+
+        foreach ([null, $connectionName] as $conn) {
+            $redis->command('setex', [KeyPrefix::classKey('last_run', $class, $conn), 2592000, $isoNow]);
         }
     }
 
