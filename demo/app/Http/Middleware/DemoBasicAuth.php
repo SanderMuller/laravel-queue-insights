@@ -19,8 +19,11 @@ final readonly class DemoBasicAuth
 {
     public function handle(Request $request, Closure $next): Response
     {
-        $expectedUser = (string) env('DEMO_BASIC_USER', '');
-        $expectedPass = (string) env('DEMO_BASIC_PASS', '');
+        // Read via config() so the values survive `php artisan config:cache`
+        // (Cloud's deploy command). env() in middleware returns null after
+        // config caching, which would silently disable the gate.
+        $expectedUser = (string) config('demo.basic_auth.user', '');
+        $expectedPass = (string) config('demo.basic_auth.password', '');
 
         if ($expectedUser === '' || $expectedPass === '') {
             return $next($request);
