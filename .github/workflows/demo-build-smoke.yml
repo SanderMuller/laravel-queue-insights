@@ -13,6 +13,9 @@ on:
       - 'workbench/**'
       - 'src/**'
       - 'config/**'
+      - 'routes/**'
+      - 'resources/**'
+      - 'composer.json'
       - '.laravel-cloud/**'
       - '.github/workflows/demo-build-smoke.yml'
 

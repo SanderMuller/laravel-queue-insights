@@ -25,8 +25,19 @@ final readonly class DemoBasicAuth
         $expectedUser = (string) config('demo.basic_auth.user', '');
         $expectedPass = (string) config('demo.basic_auth.password', '');
 
-        if ($expectedUser === '' || $expectedPass === '') {
+        $userSet = $expectedUser !== '';
+        $passSet = $expectedPass !== '';
+
+        // Both blank: gate disabled (local dev default).
+        if (! $userSet && ! $passSet) {
             return $next($request);
+        }
+
+        // Exactly one set: fail CLOSED. A typo or partial Cloud env config
+        // would otherwise silently re-open the demo. 503 communicates the
+        // misconfig clearly without revealing which half was missing.
+        if ($userSet xor $passSet) {
+            return response('Demo basic-auth is misconfigured (set both DEMO_BASIC_USER and DEMO_BASIC_PASS, or neither).', 503);
         }
 
         $authUser = $request->getUser() ?? '';

@@ -163,34 +163,42 @@ LUA,
             $rawPrefix . 'qmpreview:*',
         );
 
-        Schema::dropIfExists('failed_jobs');
-        Schema::create('failed_jobs', function (Blueprint $t): void {
-            $t->bigIncrements('id');
-            $t->string('uuid')->unique();
-            $t->text('connection');
-            $t->text('queue');
-            $t->longText('payload');
-            $t->longText('exception');
-            $t->timestamp('failed_at')->useCurrent();
-        });
+        // Idempotent DDL: only create when missing. The earlier
+        // drop+create combo races on shared MySQL — concurrent `/`
+        // requests would interleave the DROP and the CREATE, exposing
+        // brief windows where another connection sees `table not found`.
+        // For SQLite (local dev) this is also faster: no schema thrash
+        // on every page refresh.
+        if (! Schema::hasTable('failed_jobs')) {
+            Schema::create('failed_jobs', function (Blueprint $t): void {
+                $t->bigIncrements('id');
+                $t->string('uuid')->unique();
+                $t->text('connection');
+                $t->text('queue');
+                $t->longText('payload');
+                $t->longText('exception');
+                $t->timestamp('failed_at')->useCurrent();
+            });
+        }
 
         // Laravel's BatchRepository (the source of truth for
         // `Bus::findBatch()` that BatchReader::recentBatches reads
         // through) hydrates from this table. Without it, every seeded
         // batch row collapses to "aged out" and the Batches tab shows 0.
-        Schema::dropIfExists('job_batches');
-        Schema::create('job_batches', function (Blueprint $t): void {
-            $t->string('id')->primary();
-            $t->string('name');
-            $t->integer('total_jobs');
-            $t->integer('pending_jobs');
-            $t->integer('failed_jobs');
-            $t->longText('failed_job_ids');
-            $t->mediumText('options')->nullable();
-            $t->integer('cancelled_at')->nullable();
-            $t->integer('created_at');
-            $t->integer('finished_at')->nullable();
-        });
+        if (! Schema::hasTable('job_batches')) {
+            Schema::create('job_batches', function (Blueprint $t): void {
+                $t->string('id')->primary();
+                $t->string('name');
+                $t->integer('total_jobs');
+                $t->integer('pending_jobs');
+                $t->integer('failed_jobs');
+                $t->longText('failed_job_ids');
+                $t->mediumText('options')->nullable();
+                $t->integer('cancelled_at')->nullable();
+                $t->integer('created_at');
+                $t->integer('finished_at')->nullable();
+            });
+        }
     }
 
     /**
@@ -508,6 +516,13 @@ LUA,
      */
     private function seedFailedJobs(Carbon $now): void
     {
+        // Idempotent: skip when rows already exist. With shared MySQL on the
+        // hosted demo, multiple workers handling concurrent `/` requests
+        // would otherwise duplicate the seed rows on every refresh.
+        if (DB::table('failed_jobs')->count() > 0) {
+            return;
+        }
+
         $rows = [
             [
                 'uuid' => 'preview-uuid-failed-report',
@@ -667,6 +682,14 @@ LUA,
      */
     private function seedBatches(RedisConnection $redis, Carbon $now): void
     {
+        // Idempotent: skip when batches already exist. The Redis-side index
+        // is rebuilt every seed (resetState flushes the prefix), but the
+        // DB-side row would otherwise collide with the primary-key on
+        // re-insertion across concurrent workers on shared MySQL.
+        if (DB::table('job_batches')->count() > 0) {
+            return;
+        }
+
         // Batch 1 — preview-batch-001, in-progress: 1 finished, 1 failed,
         // 1 pending, 1 in-flight-completed. Drives the "Active" badge.
         $batch1 = 'preview-batch-001';
