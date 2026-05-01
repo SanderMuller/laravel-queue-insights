@@ -96,4 +96,17 @@ $app->instance(WorkerProcessFactory::class, $factory);
 
 $kernel = $app->make(ConsoleKernel::class);
 
+// CI matrix-failure diagnostic — surface basic state so the
+// signal-test failure hook can print something even if the supervisor
+// never reaches the buffered "Booting …" line.
+fwrite(STDERR, sprintf(
+    "[launcher] APP_KEY_set=%s pcntl=%s snapshots=%s php=%s php_sapi=%s os=%s\n",
+    getenv('APP_KEY') !== false ? 'yes' : 'no',
+    extension_loaded('pcntl') ? 'yes' : 'no',
+    is_array($snapshots) ? (string) count($snapshots) : 'invalid',
+    PHP_BINARY,
+    PHP_SAPI,
+    PHP_OS_FAMILY,
+));
+
 exit($kernel->call('queue-insights:work'));
