@@ -409,6 +409,12 @@ it('audit log on bulk retry carries scope_connection', function (): void {
             return false;
         });
     Log::shouldReceive('warning')->andReturnNull();
+    // L11/L12 prefer-lowest emit a framework-side deprecation through
+    // Testbench's HandleExceptions bootstrap which routes via Log::channel.
+    // Allow the call (and any chained log methods) so the mock doesn't
+    // BadMethodCallException on an incidental notice unrelated to the
+    // audit-shape assertion below.
+    Log::shouldReceive('channel')->andReturnSelf();
 
     $instance = Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis'])->instance();
     // Drive the private logRetry through reflection — the bulk-retry path
