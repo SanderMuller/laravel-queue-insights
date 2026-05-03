@@ -87,7 +87,7 @@ jobs:
       # to a specific major — setup-node locks the runtime so a future runner image
       # bump can't silently change what the test runs against.
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
