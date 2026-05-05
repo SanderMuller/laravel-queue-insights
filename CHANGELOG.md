@@ -2,6 +2,111 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0 - 2026-05-05
+
+### What's new
+
+#### Multi-connection v2 — per-connection parity for scoped dashboards
+
+After upgrading, scoped dashboards (`/queue-insights/{connection}`) reach feature parity with the un-scoped view for batches, recent completed, and per-class scoped counts.
+
+##### Per-connection batch indexing
+
+Batches dispatched via `Bus::batch([...])` now register on a per-connection roster (`qi:batches:index:{connection}`), populated first-write-wins via `BatchClaimConnection.lua`. Heterogeneous batches (jobs across multiple connections in one batch) land on whichever connection dispatched the FIRST job; other connections' scoped views fall back to the un-scoped dashboard. The aggregate roster (`qi:batches:index`) is preserved, so the un-scoped dashboard's read path is unchanged and rollback to 0.7.0 is safe. The pointer key (`qi:batch:{id}:connection`) refreshes its TTL on every subsequent JobQueued for the same batch so it doesn't age out under continued traffic.
+
+The dashboard's Batches section is no longer hidden under scope. The detail/items view honours scope via the new pointer key — a bookmarked `?batch=` URL with a foreign-connection batch lands on the empty state instead of leaking. The detail view also reads `qi:batch-uuid-conn:{uuid}` (a dedicated uuid → connection side-key, lifetime `batches.ttl_seconds`) so the heterogeneous-batch filter keeps working after members have been processed/failed and their pending hash deleted.
+
+Legacy batches dispatched before the upgrade carry no pointer. To avoid blanking scoped views during the rollout window, `BatchScopeFilter::batchOwnedByConnection()` falls back to a per-connection roster scan on missing pointer — if any monitored connection's roster claims the batch, that connection wins; only batches absent from every per-connection roster pass through as truly-legacy.
+
+##### Per-connection completed stream
+
+`RecordJobProcessed::writeStreams` now writes a third stream alongside the global + per-class streams: `qi:completed:connection:{connection}`. Scoped Recent completed reads consume this directly with no post-filter, so deeply imbalanced traffic splits (e.g. one connection runs 100× more jobs than another) no longer drown the smaller connection's recent rows in the global stream's MAXLEN window.
+
+The new stream is capped independently by `retention.per_connection_stream_max` (default 5000). Per-connection memory cost: ~10 MB for a 10-connection install at the default cap.
+
+`QueueInsights::recentCompleted(int $limit, ?string $class, ?string $connection)` routes:
+
+- `class=null,  connection=null`  → `qi:completed`
+- `class=set,   connection=null`  → `qi:completed:{class}`
+- `class=null,  connection=set`   → `qi:completed:connection:{connection}` (new)
+- `class=set,   connection=set`   → `qi:completed:{class}` then post-filter on the row's `connection` field; reads the full per-class window so a class hot on a foreign connection can't starve scoped rows.
+
+##### Atomic per-connection counter dual-writes
+
+Aggregate + per-connection counter pairs in `RecordJobProcessed::handle` and `RecordJobFailed::handle` now run through a single Lua eval per write group. A listener crash between the aggregate and per-connection write can no longer leave them out of sync.
+
+Five new scripts under `src/Support/Lua/`:
+
+| Script | Replaces | Atomicity guarantee |
+|---|---|---|
+| `IncrPairWithExpire.lua` | `INCR + EXPIREAT` × 2 | Both INCRs land or neither |
+| `DurationPair.lua` | `HINCRBY count + HINCRBYFLOAT sum_ms + max-CAS + EXPIRE` × 2 | Hashes never drift past one event |
+| `SamplesPair.lua` | `RPUSH + LTRIM + EXPIRE` × 2 | Sample lists stay in lockstep |
+| `SetexPair.lua` | `SETEX` × 2 | `last_run` keys updated together |
+| `ClassesRoster.lua` | `ZADD × 2 + EXPIRE per-conn` | Aggregate + per-connection rosters atomic; aggregate intentionally has no whole-key TTL (pruned 30 d by snapshot command) |
+
+Streams are not Lua-bundled — XADD is atomic per call and the per-stream MAXLEN bounds drift to one observation, accepted on the same footing as the existing global-vs-per-class divergence shipping since 0.7.
+
+#### Silenced jobs
+
+Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures** should be suppressed from the dashboard's Failed list, the headline failed-tile, the throughput sparkline's failed series, the `failure_rate` alert detector, and outbound notifications.
+
+```php
+// config/queue-insights.php
+'silenced' => [
+    App\Jobs\IntermittentlyFailingJob::class,
+    App\Jobs\ThirdPartyApiSometimesFlakes::class,
+],
+
+```
+Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `qi:classes`) are preserved — silencing is a read-side filter only, so removing a class from the list immediately re-surfaces its history without any backfill. The class rows table keeps showing throughput / p95 / max for silenced classes with a muted `silenced` badge so you can still triage them.
+
+| Surface | Behaviour under silencing |
+|---|---|
+| Failed list (Failed tab) | Hidden by default. The "Show silenced" checkbox on the failed-pane filter form reveals them; URL-shareable as `?fs=1`. |
+| Completed list (Completed tab) | Hidden by default. Independent "Show silenced" checkbox on the completed-pane filter form; URL-shareable as `?cs=1`. The two toggles are intentionally separate so an operator can dig into silenced failures without unmuting silenced successes (or vice versa). |
+| Silenced tab | Renders when `queue-insights.silenced` is non-empty. Two-section pane: silenced-class failed jobs + silenced-class completed jobs in one place. Roster-style cap at one page per axis. |
+| Classes tab | Per-class 24h volume / runtime / p95 / max table with a muted `silenced` badge inline next to the FQCN of any class in the silenced list. |
+| Headline `failed_past_hour` + throughput sparkline failed series | Silenced classes excluded. Processed series stays exact. |
+| `failure_rate` alert detector | Returns null for silenced classes — no event, no notification, no cooldown burned. |
+| `slow_p95` alert detector | Unchanged — silencing is a failure-noise filter, not a perf filter. Exclude noisy classes from `class_threshold_ms` if you want their perf alerts muted too. |
+| Modal-by-uuid + chain-lineage click-through + batch-detail items | NOT filtered. Silencing is a list-level filter; uuid-addressed lookups always resolve. |
+| Counter writes + `qi:classes` zset | Still written. Silencing is reversible without losing history. |
+
+The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes. Toggle "Show silenced" first if you want them in the bulk set.
+
+#### Classes tab (restored)
+
+The per-class 24h aggregates table — volume, runtime, p95, max, last-run — has been off the dashboard since the v1 layout redesign in April 2026 (the `job-classes-section` partial was orphaned during the table-to-list refactor and never re-mounted). 0.8.0 brings it back as a dedicated **Classes** tab between Failed and Alert rules. Clicking a row filters the Completed list to that class. Classes listed in `queue-insights.silenced` render with a muted `silenced` badge inline next to the FQCN.
+
+#### Silenced tab
+
+When `queue-insights.silenced` is non-empty, a **Silenced** tab appears between Classes and Alert rules. Two-section pane: silenced-class failed jobs + silenced-class completed jobs in one place, capped at one page per axis (PER_PAGE = 25). Reuses the failed-list-row + completed-row partials so retry / chain chip / batch chip behaviour stays identical to the main panes. Empty-state messaging is scope-aware — operators on `/queue-insights/{connection}` see "No silenced-class failures on the {connection} connection" rather than the un-scoped framing.
+
+The tab data fetch is constant-cost regardless of silenced-list size: one `recentFailed` query + one `recentCompleted` read per render, post-filtered to silenced classes in PHP. A 10-class silenced list does not multiply read amplification.
+
+#### Live demo
+
+The hosted demo (`queue-insights-demo-main-wgcmqf.laravel.cloud`) now seeds `App\Jobs\PingThirdPartyVendor` as a silenced class with a 0.45 failure rate (next-noisiest seeded class is at 0.18). The "Show silenced" toggle on the Failed pane, the `silenced` badge in the Classes tab, the dedicated Silenced tab, and the throughput sparkline's drop-out behaviour are all visibly demonstrated against real Redis reads.
+
+#### Configuration
+
+##### `retention.per_connection_stream_max` (new)
+
+Cap for the per-connection completed stream. Default `5000`.
+
+##### `retention.processed_counters_days` / `failed_counters_days` (now live)
+
+Previously dead config keys — listeners hardcoded 7d / 30d. As of 0.8.0 they drive the bucket EXPIREAT directly. Defaults unchanged. Hosts that published `config/queue-insights.php` and edited these keys are now seeing their values applied; review before upgrading if you've customised either.
+
+##### `silenced` (new)
+
+Top-level list of job-class FQCNs whose failures are suppressed. Empty array = feature off.
+
+#### `ConfigValidator::validateRetention` + `validateSilenced` (new)
+
+Type-check the `retention.*` and `silenced` blocks at boot. A typo or a non-positive value fails loudly with a `QueueInsightsConfigException` instead of degrading silently. The silenced validator is wired **outside** the `alerts.enabled` gate — silencing affects dashboard reads regardless of alerts. A non-array `silenced` value (e.g. `'App\\Jobs\\Foo'` instead of `[App\\Jobs\\Foo::class]`) fails boot loudly rather than silently coercing to "feature off".
+
 ## 0.7.0 - 2026-05-01
 
 ### What's new
@@ -22,6 +127,7 @@ Add `viewQueueInsightsConnection` to authorise per connection:
 Gate::define('viewQueueInsightsConnection', function ($user, string $connection): bool {
     return $user->canAccessTenant($connection);
 });
+
 
 ```
 When defined, the dashboard:
@@ -145,6 +251,7 @@ Pre-0.6 hosts that published `config/queue-insights.php` keep working — the le
  ],
 
 
+
 ```
 Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published the config before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
 
@@ -203,6 +310,7 @@ The metadata pill (`Connection: redis`, `Queue: default`, `ID: <uuid>`) used to 
 
 
 
+
 ```
 A second new component, `<x-queue-insights::list-row>`, owns the four main row partials' `role="button"` + `tabindex` + keyboard handler scaffold — one place to fix click + a11y wiring instead of four.
 
@@ -244,6 +352,7 @@ public function render(DashboardData $data): View
 
 
 
+
 ```
 ### Internal — view decomposition
 
@@ -263,6 +372,7 @@ resources/views/partials/
     ├── pane-completed.blade.php
     ├── pane-failed.blade.php
     └── tab-button.blade.php
+
 
 
 
@@ -407,6 +517,7 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
 
 
 
+
 ```
 ### Storage cost
 
@@ -479,6 +590,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -669,6 +781,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
