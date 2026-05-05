@@ -28,9 +28,19 @@
 
 <div x-data="{ tab: 'overview' }"
      x-init="
+        // Tabs that may be conditionally hidden — if the hash points at
+        // one of these and the tab isn't rendered, fall back to overview
+        // so the operator doesn't land on an empty x-show pane.
+        const conditional = {
+            pending: {{ ($pendingEnabled ?? false) ? 'true' : 'false' }},
+            batches: {{ ($batchesEnabled ?? false) ? 'true' : 'false' }},
+            silenced: {{ count($silencedClasses ?? []) > 0 ? 'true' : 'false' }},
+        };
         const apply = () => {
             const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|classes|silenced|alerts)$/);
-            if (m) tab = m[1];
+            if (! m) return;
+            const target = m[1];
+            tab = (target in conditional && ! conditional[target]) ? 'overview' : target;
         };
         apply();
         window.addEventListener('hashchange', apply);

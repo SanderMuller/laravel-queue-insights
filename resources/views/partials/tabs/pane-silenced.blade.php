@@ -14,7 +14,18 @@
      *   $silencedClasses        — list<string> FQCNs in `queue-insights.silenced`
      *   $silencedFailedRows     — RowEnricher::failed() output, capped at PER_PAGE
      *   $silencedCompletedRows  — RowEnricher::completed() output, capped at PER_PAGE
+     *   $scopeConnection        — ?string scope (drives the empty-state message
+     *                             so an operator on /queue-insights/{conn} sees
+     *                             "No silenced-class activity on the {conn} connection"
+     *                             instead of the un-scoped "No silenced-class…
+     *                             recorded" framing).
      */
+    $emptyFailedMessage = $scopeConnection !== null
+        ? "No silenced-class failures on the {$scopeConnection} connection."
+        : 'No silenced-class failures recorded.';
+    $emptyCompletedMessage = $scopeConnection !== null
+        ? "No silenced-class completed jobs on the {$scopeConnection} connection."
+        : 'No silenced-class completed jobs recorded.';
 @endphp
 
 <div class="flex flex-col gap-6">
@@ -45,7 +56,7 @@
         </h3>
         @if(count($silencedFailedRows) === 0)
             <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
-                No silenced-class failures recorded.
+                {{ $emptyFailedMessage }}
             </div>
         @else
             <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">
@@ -72,7 +83,7 @@
         </h3>
         @if(count($silencedCompletedRows) === 0)
             <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
-                No silenced-class completed jobs recorded.
+                {{ $emptyCompletedMessage }}
             </div>
         @else
             <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">

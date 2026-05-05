@@ -510,3 +510,89 @@ it('audit log on bulk retry carries scope_connection', function (): void {
         ->and($captured)->toHaveKey('filters')
         ->and($captured['filters'])->toHaveKey('connection');
 });
+
+it('Silenced tab renders the silenced-class roster + per-axis empty-state messaging that is scope-aware', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'default'],
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy', 'App\\Jobs\\Other']);
+
+    app()->forgetScopedInstances();
+
+    $unscoped = Livewire::test(QueueInsightsDashboard::class)->html();
+    expect($unscoped)->toContain('Silenced classes')
+        ->and($unscoped)->toContain('App\\Jobs\\Noisy')
+        ->and($unscoped)->toContain('App\\Jobs\\Other')
+        ->and($unscoped)->toContain('No silenced-class failures recorded')
+        ->and($unscoped)->toContain('No silenced-class completed jobs recorded');
+
+    $scoped = Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis'])->html();
+    expect($scoped)->toContain('No silenced-class failures on the redis connection')
+        ->and($scoped)->toContain('No silenced-class completed jobs on the redis connection');
+});
+
+it('Silenced tab is hidden when the silenced list is empty', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.silenced', []);
+    app()->forgetScopedInstances();
+
+    $html = Livewire::test(QueueInsightsDashboard::class)->html();
+
+    expect($html)->not->toContain('Silenced classes')
+        ->and($html)->not->toContain('No silenced-class failures');
+});
+
+it('Silenced tab merges + slices to PER_PAGE, dropping non-silenced rows (codex review #2)', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+
+    app()->forgetScopedInstances();
+
+    $r = Redis::connection('default');
+    for ($i = 0; $i < 30; ++$i) {
+        seedStream($r, KeyPrefix::make('completed'), [
+            'class' => 'App\\Jobs\\Noisy',
+            'connection' => 'redis',
+            'queue' => 'webhooks',
+            'uuid' => 'noisy-' . str_pad((string) $i, 3, '0', STR_PAD_LEFT),
+        ]);
+    }
+
+    for ($i = 0; $i < 10; ++$i) {
+        seedStream($r, KeyPrefix::make('completed'), [
+            'class' => 'App\\Jobs\\Quiet',
+            'connection' => 'redis',
+            'queue' => 'mail',
+            'uuid' => 'quiet-' . $i,
+        ]);
+    }
+
+    $rows = Livewire::test(QueueInsightsDashboard::class)->viewData('silencedCompletedRows');
+
+    expect($rows)->toBeArray()->and($rows)->toHaveCount(25);
+    if (! is_array($rows)) {
+        return;
+    }
+
+    foreach ($rows as $row) {
+        if (is_array($row)) {
+            expect($row['class'] ?? null)->toBe('App\\Jobs\\Noisy');
+        }
+    }
+});

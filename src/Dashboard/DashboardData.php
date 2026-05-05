@@ -450,58 +450,54 @@ final readonly class DashboardData
 
     /**
      * Build the Silenced-tab payload — failed_jobs rows + completed-stream
-     * rows for classes listed in `queue-insights.silenced`. One per-class
-     * fetch with `includeSilenced=true` so the silenced exclusion is
-     * bypassed; results are merged in the caller-controlled order
-     * (silenced classes' configured order).
+     * rows for classes listed in `queue-insights.silenced`.
+     *
+     * Two single-shot fetches (one per axis, both with the silenced
+     * exclusion bypassed), then post-filter to silenced classes only. This
+     * collapses what was an O(N) per-class fetch loop into a constant
+     * 2 round-trips regardless of how many classes are silenced — operators
+     * with 10+ silenced classes don't pay N×2 read amplification on every
+     * 10s dashboard poll.
      *
      * Capped at PER_PAGE per axis — the Silenced tab is a roster, not a
-     * paginated list. Operators who need deep history land on the main
-     * Failed/Completed pane and toggle "Show silenced".
+     * paginated archive. Operators who need deep history land on the main
+     * Failed / Completed pane and toggle "Show silenced".
      *
      * @param  list<string>  $silencedClasses
      * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>}
      */
     private function buildSilencedListings(array $silencedClasses, ?string $scope): array
     {
-        $failedRows = [];
-        $completedRows = [];
+        $silencedSet = array_fill_keys($silencedClasses, true);
 
-        foreach ($silencedClasses as $class) {
-            $rowsForClass = $this->svc->recentFailed(
-                self::PER_PAGE,
-                new FailedJobFilters(
-                    connection: $scope ?? '',
-                    class: $class,
-                    includeSilenced: true,
-                ),
-            );
-            foreach ($rowsForClass as $row) {
-                $failedRows[] = $row;
-            }
-
-            $completedForClass = $this->svc->recentCompleted(self::PER_PAGE, $class, $scope);
-            foreach ($completedForClass as $row) {
-                if (($row['class'] ?? null) === $class) {
-                    $completedRows[] = $row;
-                }
-            }
-        }
-
-        // Order by failed_at / processed_at descending, slice to PER_PAGE
-        // so the tab caps at one page per axis.
-        usort($failedRows, static fn (array $a, array $b): int => strcmp(
-            is_string($b['failed_at'] ?? null) ? $b['failed_at'] : '',
-            is_string($a['failed_at'] ?? null) ? $a['failed_at'] : '',
+        $allFailed = RowEnricher::failed($this->svc->recentFailed(
+            self::RECENT_FETCH_LIMIT,
+            new FailedJobFilters(connection: $scope ?? '', includeSilenced: true),
         ));
-        usort($completedRows, static fn (array $a, array $b): int => strcmp(
-            is_string($b['processed_at'] ?? null) ? $b['processed_at'] : '',
-            is_string($a['processed_at'] ?? null) ? $a['processed_at'] : '',
+        $allCompleted = RowEnricher::completed(
+            $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, null, $scope),
+        );
+
+        $silencedFailed = array_values(array_filter(
+            $allFailed,
+            static function (array $row) use ($silencedSet): bool {
+                $class = $row['class'] ?? null;
+
+                return is_string($class) && isset($silencedSet[$class]);
+            },
+        ));
+        $silencedCompleted = array_values(array_filter(
+            $allCompleted,
+            static function (array $row) use ($silencedSet): bool {
+                $class = $row['class'] ?? null;
+
+                return is_string($class) && isset($silencedSet[$class]);
+            },
         ));
 
-        $failedRows = array_slice($failedRows, 0, self::PER_PAGE);
-        $completedRows = array_slice($completedRows, 0, self::PER_PAGE);
-
-        return [RowEnricher::failed($failedRows), RowEnricher::completed($completedRows)];
+        return [
+            array_slice($silencedFailed, 0, self::PER_PAGE),
+            array_slice($silencedCompleted, 0, self::PER_PAGE),
+        ];
     }
 }
