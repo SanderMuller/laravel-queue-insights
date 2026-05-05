@@ -40,8 +40,11 @@ it('PreviewSeeder hydrates the dashboard surface against real Redis state', func
     expect($redis->command('get', ['qmpreview:lineage:preview-uuid-failed-child']))
         ->toBe('preview-uuid-process-import');
 
-    // failed_jobs table — production read path is DB, not Redis.
-    expect(DB::table('failed_jobs')->count())->toBe(3);
+    // failed_jobs table — production read path is DB, not Redis. Three
+    // un-silenced rows + two silenced (`PingThirdPartyVendor`) demonstrate
+    // the silenced-jobs filter — the Failed list hides the latter pair
+    // by default but they still occupy DB rows.
+    expect(DB::table('failed_jobs')->count())->toBe(5);
 
     // Pending + delayed counts calibrated via the live readers so the
     // headline `pendingPreview` strip (cap 5) shows in-flight + pending

@@ -122,6 +122,17 @@ final class PreviewSeeder
         // Backward-chain lineage on by default — the preview demonstrates it.
         config()->set('queue-insights.chain_lineage.enabled', true);
 
+        // Silenced-jobs feature dogfood — `PingThirdPartyVendor` is seeded
+        // with a 45% failure rate (vs the next-noisiest class at 18%) so
+        // an operator who didn't silence it would page on every snapshot
+        // tick. The class still shows up in the class rows table with a
+        // muted `silenced` badge, its failures stay out of the Failed
+        // list by default, and the throughput sparkline's failed series
+        // drops the noise without dropping the processed counts.
+        config()->set('queue-insights.silenced', [
+            'App\\Jobs\\PingThirdPartyVendor',
+        ]);
+
         // Pin Laravel's batch repository to the same connection the seeder
         // writes to. Testbench's default `queue.batching.database` is
         // `sqlite` (file-backed), but the workbench runs on `:memory:`
@@ -298,6 +309,10 @@ LUA,
             'App\\Jobs\\WeeklyDigest',
             'App\\Jobs\\AuditCustomerSync',
             'App\\Jobs\\GenerateInvoicePdf',
+            // Listed in `queue-insights.silenced` — high failure weight
+            // below makes the silenced-vs-not-silenced delta visible on
+            // the throughput sparkline and headline failed-tile.
+            'App\\Jobs\\PingThirdPartyVendor',
         ];
 
         foreach ($classes as $class) {
@@ -310,6 +325,7 @@ LUA,
             // diurnal pattern instead of a single tall bar at "now".
             $base = 30 + ((int) abs(crc32($class)) % 80);
             $failureWeight = match ($class) {
+                'App\\Jobs\\PingThirdPartyVendor' => 0.45,
                 'App\\Jobs\\NotifyImportFinished' => 0.18,
                 'App\\Jobs\\GenerateInvoicePdf' => 0.14,
                 default => 0.02,
@@ -587,6 +603,36 @@ LUA,
                 ]),
                 'exception' => "InvalidArgumentException: Malformed CSV row 482\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subHour()->format('Y-m-d H:i:s'),
+            ],
+            // Silenced-class rows — listed in `queue-insights.silenced` so
+            // the Failed list hides them by default and the "Show silenced"
+            // checkbox on the failed-pane filter form (URL `?fs=1`)
+            // reveals them.
+            [
+                'uuid' => 'preview-uuid-silenced-vendor-1',
+                'connection' => 'redis',
+                'queue' => 'webhooks',
+                'payload' => json_encode([
+                    'uuid' => 'preview-uuid-silenced-vendor-1',
+                    'displayName' => 'App\\Jobs\\PingThirdPartyVendor',
+                    'attempts' => 3,
+                    'maxTries' => 3,
+                ]),
+                'exception' => "GuzzleHttp\\Exception\\ConnectException: cURL error 28: Operation timed out after 5000 ms\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
+                'failed_at' => $now->copy()->subMinutes(4)->format('Y-m-d H:i:s'),
+            ],
+            [
+                'uuid' => 'preview-uuid-silenced-vendor-2',
+                'connection' => 'redis',
+                'queue' => 'webhooks',
+                'payload' => json_encode([
+                    'uuid' => 'preview-uuid-silenced-vendor-2',
+                    'displayName' => 'App\\Jobs\\PingThirdPartyVendor',
+                    'attempts' => 2,
+                    'maxTries' => 3,
+                ]),
+                'exception' => "GuzzleHttp\\Exception\\ServerException: 503 Service Unavailable\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
+                'failed_at' => $now->copy()->subMinutes(11)->format('Y-m-d H:i:s'),
             ],
         ];
 
