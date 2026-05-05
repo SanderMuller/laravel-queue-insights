@@ -101,7 +101,7 @@ final readonly class ModalResolver
      * @param  list<array<string, mixed>>  $batches
      * @return array<string, mixed>|null
      */
-    public function selectedBatch(string $expandedBatchId, array $batches): ?array
+    public function selectedBatch(string $expandedBatchId, array $batches, ?string $connection = null): ?array
     {
         if ($expandedBatchId === '') {
             return null;
@@ -113,6 +113,6 @@ final readonly class ModalResolver
             }
         }
 
-        return BatchReader::detailRow($expandedBatchId);
+        return BatchReader::detailRow($expandedBatchId, $connection);
     }
 }

@@ -54,6 +54,10 @@
     'connectionOptions' => $filterConnectionOptions,
     'queueOptions' => $filterQueueOptions,
     'classOptions' => $filterClassOptions,
+    // Failed-pane only — wire:model property name for the "Show silenced"
+    // toggle. Completed-pane omits this so the checkbox doesn't render
+    // there (silencing applies to failures only).
+    'silenceModel' => 'includeSilenced',
 ])
 
 @if(count($failedRows) === 0)

@@ -23,7 +23,10 @@ use Throwable;
 final class BatchReader
 {
     /**
-     * Recent batches in created-at order (newest first).
+     * Recent batches in created-at order (newest first). When `$connection`
+     * is non-null, reads from the per-connection index `qi:batches:index:{c}`
+     * (first-write-wins under §1 of the v2-gaps spec); otherwise reads the
+     * aggregate index `qi:batches:index`.
      *
      * @return list<array{
      *   id: string,
@@ -38,7 +41,7 @@ final class BatchReader
      *   cancelled_at: ?CarbonInterface,
      * }>
      */
-    public static function recentBatches(int $limit = 50): array
+    public static function recentBatches(int $limit = 50, ?string $connection = null): array
     {
         if ($limit <= 0) {
             return [];
@@ -47,8 +50,11 @@ final class BatchReader
         $effectiveLimit = min($limit, Config::int('batches.max_per_query', 100));
 
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $indexKey = $connection === null || $connection === ''
+            ? KeyPrefix::make('batches:index')
+            : KeyPrefix::make("batches:index:{$connection}");
         $ids = $redis->command('zrevrange', [
-            KeyPrefix::make('batches:index'),
+            $indexKey,
             0,
             $effectiveLimit - 1,
         ]);
@@ -98,7 +104,7 @@ final class BatchReader
      *   uuids: list<string>,
      * }|null
      */
-    public static function batchDetail(string $batchId): ?array
+    public static function batchDetail(string $batchId, ?string $connection = null): ?array
     {
         if ($batchId === '') {
             return null;
@@ -110,6 +116,17 @@ final class BatchReader
         }
 
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
+
+        // Scope gate at the batch level — when a connection scope is set,
+        // the batch's :connection pointer must match. Mismatch returns null
+        // so the modal lands on the empty state instead of leaking another
+        // connection's batch through the detailRow() fallback path. Helper
+        // lives in BatchScopeFilter to keep this class under PHPStan's
+        // cognitive-complexity ceiling.
+        if ($connection !== null && $connection !== '' && ! BatchScopeFilter::batchOwnedByConnection($redis, $batchId, $connection)) {
+            return null;
+        }
+
         $raw = $redis->command('lrange', [KeyPrefix::make("batch:{$batchId}:uuids"), 0, -1]);
 
         $uuids = [];
@@ -119,6 +136,10 @@ final class BatchReader
                     $uuids[] = $u;
                 }
             }
+        }
+
+        if ($connection !== null && $connection !== '' && $uuids !== []) {
+            $uuids = BatchScopeFilter::filterUuidsByConnection($redis, $uuids, $connection);
         }
 
         return self::projectBatch($batch) + ['uuids' => $uuids];
@@ -323,19 +344,19 @@ final class BatchReader
      *
      * @return list<array<string, mixed>>
      */
-    public static function sectionRows(QueueInsights $svc, string $expandedBatchId): array
+    public static function sectionRows(QueueInsights $svc, string $expandedBatchId, ?string $connection = null): array
     {
         if (! Config::bool('batches.enabled', true)) {
             return [];
         }
 
         $rows = [];
-        foreach ($svc->recentBatches() as $batch) {
+        foreach ($svc->recentBatches(50, $connection) as $batch) {
             $isOpen = $expandedBatchId !== '' && $expandedBatchId === $batch['id'];
 
             $items = [];
             if ($isOpen) {
-                $detail = $svc->batchDetail($batch['id']);
+                $detail = $svc->batchDetail($batch['id'], $connection);
                 if ($detail !== null) {
                     $items = self::batchItems($detail['uuids']);
                 }
@@ -363,13 +384,13 @@ final class BatchReader
      *
      * @return array<string, mixed>|null
      */
-    public static function detailRow(string $batchId): ?array
+    public static function detailRow(string $batchId, ?string $connection = null): ?array
     {
         if (! Config::bool('batches.enabled', true) || $batchId === '') {
             return null;
         }
 
-        $detail = self::batchDetail($batchId);
+        $detail = self::batchDetail($batchId, $connection);
         if ($detail === null) {
             return null;
         }

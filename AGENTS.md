@@ -217,6 +217,33 @@ Why legacy wins: hosts setting both are likely mid-migration with legacy still l
 - Don't bypass `Cooldown::acquire()` for "important" alerts. The cooldown key is per-(rule, target) — if you want louder paging for a critical issue, set a shorter `cooldown_seconds` or wire an external pager (PagerDuty channel) that handles its own escalation.
 - Don't extend `Issue` with rule-specific fields. The `context: array<string, mixed>` slot exists to keep the DTO stable across detectors. Strongly-typed events (`QueueStalled`, `OldestPendingAging`, …) are where rule-specific shape lives for host listeners.
 - Don't make any detector depend on a new Redis key family without a migration plan. `backlog_growing` (Phase 7) is the only rule shipping its own samples zset (`samples:depth:{c}:{q}`) — and it ships the writer alongside the detector in the same change, never read-only.
+- Don't add silencing logic in listeners or counter writers. Silencing is a **read-side filter only** — counter writes (`failed:{class}:{bucket}`, `qi:classes`) are preserved so `queue-insights.silenced` is reversible without losing history. If you need to extend silencing to a new surface, add the filter at the read path (detector entry, list builder, SQL query) and never at the writer.
+
+## Silenced jobs
+
+Read-side filter that drops silenced job-class **failures** from dashboard list/aggregate surfaces and the alert pipeline. Mirrors Horizon's `horizon.silenced`. Spec: `internal/specs/silenced-jobs.md`.
+
+Write surfaces (listeners, Redis counters, `qi:classes` roster) are **never** filtered — silencing is reversible without backfill.
+
+Touchpoints (read these before extending):
+
+- `src/Support/SilencedJobs.php` — `app()->scoped()`-bound helper. `isSilenced(string)` / `all()` / `appendExclusion(Builder)`. Snapshots `queue-insights.silenced` once per request; Octane-safe via the scoped binding.
+- `src/Support/DisplayNamePayloadMatch.php` — single-source `LOWER(payload) … ESCAPE '|'` pattern builder, shared between the include filter (class LIKE) and the silenced exclusion (NOT LIKE).
+- `src/Support/ConfigValidator.php::validateSilenced` — list-shape + non-empty + relaxed class-label regex (allows `@:/` for synthetic `Closure@hash` / `Encrypted@hash` labels). Wired in `QueueInsightsServiceProvider::boot` **outside** the `alerts.enabled` gate (silencing affects dashboard reads regardless of alerts).
+- `src/Alerts/Detectors/FailureRateDetector.php` — silence short-circuit before any Redis read.
+- `src/Alerts/IssueDispatcher.php::handle` — belt-and-suspenders silencing guard at the top of `handle()`, **before** `cooldown::acquire`. Scoped to `rule === FailureRateDetector::RULE` only — `slow_p95` also sets `jobClass` but stays unfiltered (silencing is failure-noise, not perf).
+- `src/QueueInsights.php::hourlyThroughput` — silenced classes filtered out of the failed-bucket fan-out only; processed bucket stays exact.
+- `src/QueueInsights.php::applyFailedJobFilters` — calls `SilencedJobs::appendExclusion` when `includeSilenced` is false. Routes through the same builder as `recentFailed` and `FailedJobUuidCollector` (bulk-retry) so they inherit the exclusion.
+- `src/Support/FailedJobFilters.php::$includeSilenced` — DTO toggle. **Default false** treated as "no filter" by `isEmpty()` so the bulk-retry footgun guard still rejects empty-filter retries.
+- `src/Dashboard/ClassRowsBuilder.php` — emits `silenced => bool` per row; the view renders a muted badge.
+- `src/Http/Livewire/QueueInsightsDashboard.php::$includeSilenced` — `#[Url(as: 'fs')]`. Reset in `clearFailedFilters`. `updated()` resets `failedPage` on toggle.
+- `resources/views/partials/filter-form.blade.php` — optional `$silenceModel` arg gates the "Show silenced" checkbox; `pane-failed.blade.php` passes `'silenceModel' => 'includeSilenced'`, `pane-completed.blade.php` doesn't (the form is shared).
+
+What NOT to do (silenced-jobs specific):
+
+- Don't filter modal-by-uuid / batch-detail / chain-lineage click-through paths. Silencing is a list-level filter — once the operator has the uuid in their hand (deep-link, batch item, chain parent), the modal must always open.
+- Don't make `slow_p95` honour silencing without a separate config knob. The current design keeps "failure noise" and "performance noise" orthogonal so operators don't accidentally mute a class's latency alerts when silencing flake.
+- Don't add a writer-side filter "for performance". The aggregate counter cost is a single INCR per event; a silenced-aware listener path would couple read-side config to write-side keys and break the reversibility guarantee.
 
 # Backward chain lineage — internals + edit points
 

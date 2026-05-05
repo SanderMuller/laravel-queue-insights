@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\HourBucket;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
@@ -45,37 +46,20 @@ final readonly class RecordJobProcessed
 
             $durationMs = $this->readAndConsumeStart($redis, $event->job->uuid());
 
-            // Dual-write the (class) + (class, connection) variants — aggregate
-            // readers stay on the (class) keys, scoped readers consume the
-            // (class, connection) keys.
-            $bucketExpireAt = $this->bucketStart($bucket) + (7 * 86400);
-            foreach ([$class, "{$class}:{$connectionName}"] as $classSegment) {
-                $processedKey = KeyPrefix::make("processed:{$classSegment}:{$bucket}");
-                $redis->command('incr', [$processedKey]);
-                $redis->command('expireat', [$processedKey, $bucketExpireAt]);
-            }
+            // Each dual-write group runs as one Lua eval so the aggregate
+            // and per-connection variants can't drift on a listener crash.
+            // An empty connectionName falls back to aggregate-only writes
+            // — otherwise the per-connection key degenerates into a
+            // trailing-colon key (e.g. `processed:{class}::{bucket}`).
+            $counterDays = max(1, Config::int('retention.processed_counters_days', 7));
+            $bucketExpireAt = HourBucket::startTs($bucket) + ($counterDays * 86400);
+            $this->writeProcessedCounters($redis, $class, $connectionName, $bucket, $bucketExpireAt);
 
             if ($durationMs !== null) {
-                foreach ([null, $connectionName] as $conn) {
-                    $durationKey = KeyPrefix::classKey('duration', $class, $conn);
-                    $redis->command('hincrby', [$durationKey, 'count', 1]);
-                    $redis->command('hincrbyfloat', [$durationKey, 'sum_ms', (float) $durationMs]);
-                    RedisEval::exec($redis, LuaScripts::updateMaxDuration(), 1, $durationKey, (string) $durationMs);
-                    $redis->command('expire', [$durationKey, 2592000]);
-
-                    // Per-connection list capped at the same 500 as the
-                    // aggregate so a high-volume connection can't crowd
-                    // out a quiet one in the scoped percentile read.
-                    $sampleKey = KeyPrefix::classKey('duration:samples', $class, $conn);
-                    $redis->command('rpush', [$sampleKey, (string) $durationMs]);
-                    $redis->command('ltrim', [$sampleKey, -500, -1]);
-                    $redis->command('expire', [$sampleKey, 2592000]);
-                }
+                $this->writeDurationMetrics($redis, $class, $connectionName, $durationMs);
             }
 
-            foreach ([null, $connectionName] as $conn) {
-                $redis->command('setex', [KeyPrefix::classKey('last_run', $class, $conn), 2592000, $isoNow]);
-            }
+            $this->writeLastRun($redis, $class, $connectionName, $isoNow);
 
             // qi:class:{uuid} — uuid → class index used by the backward-chain
             // lineage UI to hydrate `parent_uuid` to a class label. Skipped
@@ -92,17 +76,10 @@ final readonly class RecordJobProcessed
                 ]);
             }
 
-            // Classes ZSETs — global aggregate roster + per-connection roster.
-            // The per-connection roster lets `ClassRowsBuilder` and
-            // `hourlyThroughput` resolve "which classes ran on this
-            // connection in the past 30d" without a fan-out scan.
-            $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
-            $classesConnKey = KeyPrefix::make("classes:{$connectionName}");
-            $redis->command('zadd', [$classesConnKey, $nowTs, $class]);
-            // 30d TTL — re-bumped on every event. Gives operators with
-            // dormant connections a clean fall-off without needing the
-            // snapshot command to enumerate per-connection rosters.
-            $redis->command('expire', [$classesConnKey, 2592000]);
+            // Aggregate roster has no whole-key TTL (pruned 30 d by the
+            // snapshot command); per-connection roster bumps EXPIRE on
+            // every event so dormant connections fall off cleanly.
+            $this->writeClassesRoster($redis, $class, $connectionName, $nowTs);
 
             // Streams
             $globalStreamId = $this->writeStreams($redis, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow);
@@ -176,17 +153,6 @@ final readonly class RecordJobProcessed
         return max($ms, 0);
     }
 
-    private function bucketStart(string $bucket): int
-    {
-        $dt = CarbonImmutable::createFromFormat('YmdH', $bucket, 'UTC');
-
-        if (! $dt instanceof CarbonImmutable) {
-            return CarbonImmutable::now('UTC')->startOfHour()->getTimestamp();
-        }
-
-        return $dt->startOfHour()->getTimestamp();
-    }
-
     private function writeStreams(
         RedisConnection $redis,
         JobProcessed $event,
@@ -236,6 +202,7 @@ final readonly class RecordJobProcessed
 
         $globalMax = Config::int('retention.completed_stream_max', 10000);
         $perClassMax = Config::int('retention.per_class_stream_max', 1000);
+        $perConnMax = Config::int('retention.per_connection_stream_max', 5000);
 
         $globalKey = KeyPrefix::make('completed');
         $perClassKey = KeyPrefix::make("completed:{$class}");
@@ -246,6 +213,13 @@ final readonly class RecordJobProcessed
         unset($perClassFields['class']);
 
         $this->xaddApprox($redis, $perClassKey, $perClassMax, $perClassFields);
+
+        // Skip when connectionName is empty so we don't create a
+        // suffix-less `qi:completed:connection:` key.
+        if ($connectionName !== '') {
+            $perConnKey = KeyPrefix::make("completed:connection:{$connectionName}");
+            $this->xaddApprox($redis, $perConnKey, $perConnMax, $baseFields);
+        }
 
         return $globalStreamId;
     }
@@ -353,5 +327,106 @@ final readonly class RecordJobProcessed
         }
 
         return $out;
+    }
+
+    private function writeProcessedCounters(RedisConnection $redis, string $class, string $connectionName, string $bucket, int $bucketExpireAt): void
+    {
+        if ($connectionName === '') {
+            $key = KeyPrefix::make("processed:{$class}:{$bucket}");
+            $redis->command('incr', [$key]);
+            $redis->command('expireat', [$key, $bucketExpireAt]);
+
+            return;
+        }
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::incrPairWithExpire(),
+            2,
+            KeyPrefix::make("processed:{$class}:{$bucket}"),
+            KeyPrefix::make("processed:{$class}:{$connectionName}:{$bucket}"),
+            (string) $bucketExpireAt,
+        );
+    }
+
+    private function writeDurationMetrics(RedisConnection $redis, string $class, string $connectionName, int $durationMs): void
+    {
+        if ($connectionName === '') {
+            $aggDuration = KeyPrefix::classKey('duration', $class);
+            $redis->command('hincrby', [$aggDuration, 'count', 1]);
+            $redis->command('hincrbyfloat', [$aggDuration, 'sum_ms', (float) $durationMs]);
+            RedisEval::exec($redis, LuaScripts::updateMaxDuration(), 1, $aggDuration, (string) $durationMs);
+            $redis->command('expire', [$aggDuration, 2592000]);
+
+            $aggSamples = KeyPrefix::classKey('duration:samples', $class);
+            $redis->command('rpush', [$aggSamples, (string) $durationMs]);
+            $redis->command('ltrim', [$aggSamples, -500, -1]);
+            $redis->command('expire', [$aggSamples, 2592000]);
+
+            return;
+        }
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::durationPair(),
+            2,
+            KeyPrefix::classKey('duration', $class),
+            KeyPrefix::classKey('duration', $class, $connectionName),
+            (string) $durationMs,
+            (string) 2592000,
+        );
+
+        // Per-connection list capped at the same 500 as the aggregate so a
+        // high-volume connection can't crowd out a quiet one in the scoped
+        // percentile read.
+        RedisEval::exec(
+            $redis,
+            LuaScripts::samplesPair(),
+            2,
+            KeyPrefix::classKey('duration:samples', $class),
+            KeyPrefix::classKey('duration:samples', $class, $connectionName),
+            (string) $durationMs,
+            '500',
+            (string) 2592000,
+        );
+    }
+
+    private function writeLastRun(RedisConnection $redis, string $class, string $connectionName, string $isoNow): void
+    {
+        if ($connectionName === '') {
+            $redis->command('setex', [KeyPrefix::classKey('last_run', $class), 2592000, $isoNow]);
+
+            return;
+        }
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::setexPair(),
+            2,
+            KeyPrefix::classKey('last_run', $class),
+            KeyPrefix::classKey('last_run', $class, $connectionName),
+            (string) 2592000,
+            $isoNow,
+        );
+    }
+
+    private function writeClassesRoster(RedisConnection $redis, string $class, string $connectionName, int $nowTs): void
+    {
+        if ($connectionName === '') {
+            $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
+
+            return;
+        }
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::classesRoster(),
+            2,
+            KeyPrefix::make('classes'),
+            KeyPrefix::make("classes:{$connectionName}"),
+            (string) $nowTs,
+            $class,
+            (string) 2592000,
+        );
     }
 }

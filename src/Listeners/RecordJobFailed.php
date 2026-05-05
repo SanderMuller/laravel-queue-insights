@@ -10,8 +10,11 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\HourBucket;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use Throwable;
 
@@ -37,12 +40,8 @@ final readonly class RecordJobFailed
             $bucket = $now->format('YmdH');
             $isoNow = $now->toIso8601String();
 
-            $bucketStart = CarbonImmutable::createFromFormat('YmdH', $bucket, 'UTC');
-            $bucketTs = $bucketStart instanceof CarbonImmutable
-                ? $bucketStart->startOfHour()->getTimestamp()
-                : $now->startOfHour()->getTimestamp();
-
-            $this->incrFailedCounters($redis, $class, $connectionName, $bucket, $bucketTs + (30 * 86400));
+            $counterDays = max(1, Config::int('retention.failed_counters_days', 30));
+            $this->incrFailedCounters($redis, $class, $connectionName, $bucket, HourBucket::startTs($bucket) + ($counterDays * 86400));
 
             $uuid = $event->job->uuid();
             if ($uuid !== null && $uuid !== '') {
@@ -108,32 +107,62 @@ final readonly class RecordJobFailed
     }
 
     /**
-     * Dual-write the failed counter under (class) + (class, connection)
-     * keys with matching TTL. Extracted for cognitive complexity.
+     * Atomic INCR + EXPIREAT on both the aggregate and per-connection
+     * counter keys. Empty `$connectionName` falls back to aggregate-only.
      */
     private function incrFailedCounters(Connection $redis, string $class, string $connectionName, string $bucket, int $expireAt): void
     {
-        foreach ([$class, "{$class}:{$connectionName}"] as $classSegment) {
-            $key = KeyPrefix::make("failed:{$classSegment}:{$bucket}");
+        if ($connectionName === '') {
+            $key = KeyPrefix::make("failed:{$class}:{$bucket}");
             $redis->command('incr', [$key]);
             $redis->command('expireat', [$key, $expireAt]);
+
+            return;
         }
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::incrPairWithExpire(),
+            2,
+            KeyPrefix::make("failed:{$class}:{$bucket}"),
+            KeyPrefix::make("failed:{$class}:{$connectionName}:{$bucket}"),
+            (string) $expireAt,
+        );
     }
 
     /**
-     * Stamp the global + per-connection class rosters and the dual-write
-     * `last_run` keys. Extracted for cognitive complexity.
+     * Stamp the aggregate + per-connection class rosters and the dual-write
+     * `last_run` keys. Empty `$connectionName` falls back to aggregate-only.
      */
     private function stampClassRoster(Connection $redis, string $class, string $connectionName, int $nowTs, string $isoNow): void
     {
-        $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
-        $classesConnKey = KeyPrefix::make("classes:{$connectionName}");
-        $redis->command('zadd', [$classesConnKey, $nowTs, $class]);
-        $redis->command('expire', [$classesConnKey, 2592000]);
+        if ($connectionName === '') {
+            $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
+            $redis->command('setex', [KeyPrefix::classKey('last_run', $class), 2592000, $isoNow]);
 
-        foreach ([null, $connectionName] as $conn) {
-            $redis->command('setex', [KeyPrefix::classKey('last_run', $class, $conn), 2592000, $isoNow]);
+            return;
         }
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::classesRoster(),
+            2,
+            KeyPrefix::make('classes'),
+            KeyPrefix::make("classes:{$connectionName}"),
+            (string) $nowTs,
+            $class,
+            (string) 2592000,
+        );
+
+        RedisEval::exec(
+            $redis,
+            LuaScripts::setexPair(),
+            2,
+            KeyPrefix::classKey('last_run', $class),
+            KeyPrefix::classKey('last_run', $class, $connectionName),
+            (string) 2592000,
+            $isoNow,
+        );
     }
 
     /**

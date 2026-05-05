@@ -208,3 +208,64 @@ it('prunes index entries older than the TTL on each enqueue', function (): void 
         ->and(R::float('zscore', 'qmtest:batches:index', 'fresh-batch'))
         ->toBeGreaterThan(0.0);
 });
+
+it('populates the per-connection batches roster and pointer on first write', function (): void {
+    $batchId = 'batch-conn-redis';
+
+    (new RecordJobQueued())->handle(makeBatchedQueuedEvent('uuid-r1', $batchId, connection: 'redis'));
+
+    expect(R::float('zscore', 'qmtest:batches:index:redis', $batchId))->toBeGreaterThan(0.0)
+        ->and(R::str('get', 'qmtest:batch:' . $batchId . ':connection'))
+        ->toBe('redis');
+});
+
+it('first-write-wins: a second connection cannot claim a batch already pointed at the first', function (): void {
+    $batchId = 'batch-heterogeneous';
+
+    (new RecordJobQueued())->handle(makeBatchedQueuedEvent('uuid-r1', $batchId, connection: 'redis'));
+    // Second JobQueued for the SAME batchId on a DIFFERENT connection — must
+    // NOT land in qi:batches:index:sqs because the :connection pointer
+    // already arbitrates redis as the winner.
+    (new RecordJobQueued())->handle(makeBatchedQueuedEvent('uuid-s1', $batchId, connection: 'sqs'));
+
+    expect(R::float('zscore', 'qmtest:batches:index:redis', $batchId))->toBeGreaterThan(0.0)
+        ->and(R::float('zscore', 'qmtest:batches:index:sqs', $batchId))
+        ->toBe(0.0)
+        ->and(R::str('get', 'qmtest:batch:' . $batchId . ':connection'))
+        ->toBe('redis');
+});
+
+it('sets the configured TTL on the per-connection :connection pointer', function (): void {
+    config()->set('queue-insights.batches.ttl_seconds', 1800);
+    $batchId = 'batch-conn-ttl';
+
+    (new RecordJobQueued())->handle(makeBatchedQueuedEvent('uuid-r1', $batchId, connection: 'redis'));
+
+    $ttl = R::int('ttl', 'qmtest:batch:' . $batchId . ':connection');
+    expect($ttl)->toBeGreaterThan(1790)->toBeLessThanOrEqual(1800);
+});
+
+it('prunes per-connection roster entries older than the TTL on each enqueue', function (): void {
+    config()->set('queue-insights.batches.ttl_seconds', 60);
+
+    $stale = (string) (Date::now()->getTimestamp() - 3600);
+    R::raw('zadd', 'qmtest:batches:index:redis', $stale, 'stale-batch');
+
+    (new RecordJobQueued())->handle(makeBatchedQueuedEvent('uuid-fresh', 'fresh-batch-c', connection: 'redis'));
+
+    expect(R::float('zscore', 'qmtest:batches:index:redis', 'stale-batch'))->toBe(0.0)
+        ->and(R::float('zscore', 'qmtest:batches:index:redis', 'fresh-batch-c'))
+        ->toBeGreaterThan(0.0);
+});
+
+it('skips per-connection write when the JobQueued connectionName is empty', function (): void {
+    $batchId = 'batch-no-conn';
+
+    (new RecordJobQueued())->handle(makeBatchedQueuedEvent('uuid-blank', $batchId, connection: ''));
+
+    // Aggregate index still receives the batch (un-scoped path stays
+    // load-bearing); per-connection index + pointer must NOT exist.
+    expect(R::float('zscore', 'qmtest:batches:index', $batchId))->toBeGreaterThan(0.0)
+        ->and(R::str('get', 'qmtest:batch:' . $batchId . ':connection'))
+        ->toBeNull();
+});

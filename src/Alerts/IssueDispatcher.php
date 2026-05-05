@@ -4,6 +4,7 @@ namespace SanderMuller\QueueInsights\Alerts;
 
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Support\Facades\Log;
+use SanderMuller\QueueInsights\Alerts\Detectors\FailureRateDetector;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertNotification;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
 use SanderMuller\QueueInsights\Events\BacklogGrowing;
@@ -15,6 +16,7 @@ use SanderMuller\QueueInsights\Events\QueueStalled;
 use SanderMuller\QueueInsights\Events\SnapshotErrored;
 use SanderMuller\QueueInsights\Events\StuckInFlight;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 use Throwable;
 
 /**
@@ -106,6 +108,16 @@ final readonly class IssueDispatcher
 
     private function handle(Issue $issue): void
     {
+        // Silencing is failure-noise scoped, not perf — slow_p95 also sets
+        // jobClass but stays unfiltered (silenced-jobs spec §1). Place
+        // BEFORE cooldown::acquire — guarding inside fireEvent burns the
+        // cooldown and notify() still fires.
+        if ($issue->rule === FailureRateDetector::RULE
+            && $issue->jobClass !== null && $issue->jobClass !== ''
+            && $this->container->make(SilencedJobs::class)->isSilenced($issue->jobClass)) {
+            return;
+        }
+
         if (! $this->cooldown->acquire($issue)) {
             return;
         }

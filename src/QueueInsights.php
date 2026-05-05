@@ -11,10 +11,12 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\DisplayNamePayloadMatch;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\HourlyBucketReader;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
@@ -338,9 +340,9 @@ final class QueueInsights
      *   cancelled_at: ?CarbonInterface,
      * }>
      */
-    public function recentBatches(int $limit = 50): array
+    public function recentBatches(int $limit = 50, ?string $connection = null): array
     {
-        return BatchReader::recentBatches($limit);
+        return BatchReader::recentBatches($limit, $connection);
     }
 
     /**
@@ -360,9 +362,9 @@ final class QueueInsights
      *   uuids: list<string>,
      * }|null
      */
-    public function batchDetail(string $batchId): ?array
+    public function batchDetail(string $batchId, ?string $connection = null): ?array
     {
-        return BatchReader::batchDetail($batchId);
+        return BatchReader::batchDetail($batchId, $connection);
     }
 
     /**
@@ -414,13 +416,17 @@ final class QueueInsights
     /**
      * @return list<array<string, string>>
      */
-    public function recentCompleted(int $limit = 100, ?string $class = null): array
+    public function recentCompleted(int $limit = 100, ?string $class = null, ?string $connection = null): array
     {
-        $key = $class === null
-            ? KeyPrefix::make('completed')
-            : KeyPrefix::make("completed:{$class}");
+        // Routing matrix:
+        //   class=null,  connection=null  → qi:completed (aggregate)
+        //   class=set,   connection=null  → qi:completed:{class}
+        //   class=null,  connection=set   → qi:completed:connection:{connection}
+        //   class=set,   connection=set   → qi:completed:{class} then post-filter on the row's `connection` field
+        $hasClass = $class !== null && $class !== '';
+        $hasConnection = $connection !== null && $connection !== '';
 
-        $effectiveLimit = $class === null ? min($limit, 10000) : min($limit, 1000);
+        [$key, $effectiveLimit] = $this->resolveCompletedStreamKey($limit, $class, $connection, $hasClass, $hasConnection);
 
         // 4-arg form works on both phpredis (native) and Predis (auto-injects COUNT token via XRANGE::setArguments).
         $entries = $this->redis()->command('xrevrange', [$key, '+', '-', $effectiveLimit]);
@@ -429,25 +435,84 @@ final class QueueInsights
             return [];
         }
 
+        $postFilterConnection = $hasClass && $hasConnection ? $connection : null;
+
         $out = [];
         foreach ($entries as $id => $fields) {
-            if (! is_array($fields)) {
+            $row = $this->normaliseStreamRow((string) $id, $fields);
+            if ($row === null) {
                 continue;
             }
 
-            $row = ['_id' => (string) $id];
-            foreach ($fields as $k => $v) {
-                if (! is_string($v) && ! is_int($v) && ! is_float($v) && ! is_bool($v)) {
-                    continue;
-                }
-
-                $row[(string) $k] = (string) $v;
+            // Class+connection drilldown — drop rows whose `connection`
+            // field doesn't match. Per-class stream entries carry the
+            // field; a missing field falls through and is dropped.
+            if ($postFilterConnection !== null && ($row['connection'] ?? null) !== $postFilterConnection) {
+                continue;
             }
 
             $out[] = $row;
+
+            // Stop once the class+scope branch has $limit matches — it
+            // read the full class-stream cap upfront for the worst-case
+            // post-filter, but most renders only need $limit.
+            if ($postFilterConnection !== null && count($out) >= $limit) {
+                break;
+            }
         }
 
         return $out;
+    }
+
+    /**
+     * @return array{0: string, 1: int}
+     */
+    private function resolveCompletedStreamKey(
+        int $limit,
+        ?string $class,
+        ?string $connection,
+        bool $hasClass,
+        bool $hasConnection,
+    ): array {
+        if ($hasClass) {
+            // Class+scope reads the full class-stream cap so the
+            // post-filter has the widest possible window — otherwise a
+            // class hot on a foreign connection drops scoped rows out of
+            // the small `min($limit, 1000)` slice. Bounded by
+            // `retention.per_class_stream_max` (default 1000).
+            $effectiveLimit = $hasConnection
+                ? Config::int('retention.per_class_stream_max', 1000)
+                : min($limit, 1000);
+
+            return [KeyPrefix::make("completed:{$class}"), $effectiveLimit];
+        }
+
+        if ($hasConnection) {
+            return [KeyPrefix::make("completed:connection:{$connection}"), min($limit, 10000)];
+        }
+
+        return [KeyPrefix::make('completed'), min($limit, 10000)];
+    }
+
+    /**
+     * @return array<string, string>|null
+     */
+    private function normaliseStreamRow(string $id, mixed $fields): ?array
+    {
+        if (! is_array($fields)) {
+            return null;
+        }
+
+        $row = ['_id' => $id];
+        foreach ($fields as $k => $v) {
+            if (! is_string($v) && ! is_int($v) && ! is_float($v) && ! is_bool($v)) {
+                continue;
+            }
+
+            $row[(string) $k] = (string) $v;
+        }
+
+        return $row;
     }
 
     /**
@@ -464,7 +529,15 @@ final class QueueInsights
         $redis = $this->redis();
 
         $processedCounts = HourlyBucketReader::sumPerBucket($redis, $classes, $bucketIndex, 'processed', $connection);
-        $failedCounts = HourlyBucketReader::sumPerBucket($redis, $classes, $bucketIndex, 'failed', $connection);
+
+        // Silenced classes drop out of the failed-bucket fan-out so the
+        // headline mirrors the visible Failed list. Processed stays exact.
+        $silenced = resolve(SilencedJobs::class);
+        $failedClasses = array_values(array_filter(
+            $classes,
+            static fn (string $c): bool => ! $silenced->isSilenced($c),
+        ));
+        $failedCounts = HourlyBucketReader::sumPerBucket($redis, $failedClasses, $bucketIndex, 'failed', $connection);
 
         $timeline = [];
         for ($i = 0; $i < $hours; ++$i) {
@@ -520,37 +593,9 @@ final class QueueInsights
         }
 
         if ($filters->class !== '') {
-            // Anchored substring LIKE against the raw JSON payload.
-            //
-            // The class FQCN sits in the JSON column as `"displayName":"App\\Jobs\\Foo"`
-            // — `\` JSON-escaped to `\\`. Match that exact byte sequence by
-            // re-running the FQCN through json_encode, which produces the
-            // same `\\` form, then stripping the outer quotes.
-            //
-            // Use `ESCAPE '|'` so the LIKE engine treats '|' as the escape
-            // char instead of the default '\'. Without it, MySQL's default
-            // backslash-as-escape rule consumes the literal `\\` in the
-            // pattern back to a single `\`, which never matches the JSON
-            // column's `\\` (bug report — class filter returned 0 results on
-            // MySQL even when matches existed). PostgreSQL ignores `\` in
-            // LIKE by default; SQLite likewise — `ESCAPE '|'` is portable
-            // across all three.
-            //
-            // Wrap both sides in `LOWER()` so a deep-linked filter with
-            // mismatched casing (e.g. `?fk=app\jobs\foo`) still matches the
-            // canonical-cased payload. Without normalisation PostgreSQL's
-            // case-sensitive LIKE would silently miss while MySQL/SQLite
-            // matched, producing DB-dependent behaviour for URL-bound
-            // input (codex review). ASCII-only class names sidestep the
-            // locale-aware `LOWER()` differences across DB engines.
-            $encoded = json_encode($filters->class, JSON_UNESCAPED_UNICODE);
-            if (is_string($encoded)) {
-                $needleClass = strtolower(trim($encoded, '"'));
-                // Escape LIKE wildcards (and the ESCAPE char itself) in user
-                // input so a class name containing `%` / `_` / `|` doesn't
-                // smuggle a wildcard match.
-                $needleClass = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $needleClass);
-                $query->whereRaw('LOWER(payload) LIKE ? ESCAPE ?', ['%"displayname":"' . $needleClass . '%', '|']);
+            $pattern = DisplayNamePayloadMatch::pattern($filters->class);
+            if ($pattern !== null) {
+                $query->whereRaw('LOWER(payload) LIKE ? ESCAPE ?', $pattern);
             }
         }
 
@@ -560,6 +605,10 @@ final class QueueInsights
 
         if ($filters->to !== '') {
             $query->where('failed_at', '<=', $filters->to . ' 23:59:59');
+        }
+
+        if (! $filters->includeSilenced) {
+            resolve(SilencedJobs::class)->appendExclusion($query);
         }
 
         return $query;

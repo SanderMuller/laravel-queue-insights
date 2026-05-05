@@ -9,6 +9,7 @@ use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 
 /**
  * Per-class failure-rate detector. Reads the **current hour bucket only**
@@ -30,6 +31,11 @@ final class FailureRateDetector
         }
 
         if ($class === '') {
+            return null;
+        }
+
+        // Short-circuit silenced classes before the Redis read.
+        if (resolve(SilencedJobs::class)->isSilenced($class)) {
             return null;
         }
 

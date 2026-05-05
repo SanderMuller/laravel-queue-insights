@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Dashboard;
 
 use SanderMuller\QueueInsights\QueueInsights;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 
 /**
  * Builds the per-class row set the dashboard renders in the class
@@ -27,6 +28,7 @@ final readonly class ClassRowsBuilder
     public function build(?string $scopeConnection = null): array
     {
         $rows = [];
+        $silenced = resolve(SilencedJobs::class);
 
         foreach ($this->svc->jobClasses($scopeConnection) as $class) {
             $m = $this->svc->classMetrics($class, $scopeConnection);
@@ -38,6 +40,7 @@ final readonly class ClassRowsBuilder
                 'p95_ms' => $m->p95DurationMs,
                 'max_ms' => $m->maxDurationMs,
                 'last_run_at' => $m->lastRunAt,
+                'silenced' => $silenced->isSilenced($m->class),
             ];
         }
 

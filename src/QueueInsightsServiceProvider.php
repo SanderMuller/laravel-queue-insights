@@ -29,6 +29,7 @@ use SanderMuller\QueueInsights\Console\WorkerProcessFactory;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
 use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
 use SanderMuller\QueueInsights\Enums\CaptureMode;
+use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Http\Livewire\AlertRulesPanel;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
@@ -39,6 +40,7 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 
 final class QueueInsightsServiceProvider extends ServiceProvider
 {
@@ -70,6 +72,11 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         // clean instance — Laravel's Notifiable trait carries per-instance
         // pending state we don't want to leak across alerts.
         $this->app->bind(QueueInsightsNotifiable::class);
+
+        // `scoped()` resets between requests so a config change to
+        // `queue-insights.silenced` picks up on the next render under
+        // Octane without needing a worker restart.
+        $this->app->scoped(SilencedJobs::class);
 
         $this->app->bind(PayloadSanitizer::class, fn (): PayloadSanitizer => match (Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off)) {
             CaptureMode::Metadata => new MetadataOnlySanitizer(),
@@ -141,6 +148,21 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateCapture($section($cfg, 'capture'));
         ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
         ConfigValidator::validateWork($section($cfg, 'work'));
+        ConfigValidator::validateRetention($section($cfg, 'retention'));
+
+        // Silenced fails loud on a non-array shape rather than coercing
+        // to `[]` like the other section validators — a `silenced =>
+        // 'App\\Jobs\\Foo'` typo (string instead of list) would otherwise
+        // become "feature off" with no error, which is a real foot-gun
+        // for hosts trying to mute a noisy class.
+        $silenced = $cfg['silenced'] ?? [];
+        if (! is_array($silenced)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.silenced must be a list of class-name strings (got ' . get_debug_type($silenced) . ').'
+            );
+        }
+
+        ConfigValidator::validateSilenced($silenced);
 
         $this->registerListeners();
         $this->registerSchedule();

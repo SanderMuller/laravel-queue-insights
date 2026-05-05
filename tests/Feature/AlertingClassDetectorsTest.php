@@ -121,6 +121,44 @@ it('does not fire failure rate when ratio is below threshold', function (): void
     Event::assertNotDispatched(JobClassFailureRateExceeded::class);
 });
 
+it('does not fire failure rate when the class is silenced (no event, no cooldown burned)', function (): void {
+    noopSnapshotConfig();
+    config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 20);
+    config()->set('queue-insights.alerts.rules.failure_rate.ratio', 0.10);
+    config()->set('queue-insights.silenced', ['App\\Jobs\\NoisyButKnown']);
+
+    // Same shape as the happy-path test — would normally fire — but silencing
+    // short-circuits at the detector level.
+    seedClass('App\\Jobs\\NoisyButKnown', processed: 80, failed: 20);
+
+    Event::fake([JobClassFailureRateExceeded::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertNotDispatched(JobClassFailureRateExceeded::class);
+
+    // Cooldown key must not be written either — a silenced class should
+    // never burn the cooldown slot, otherwise un-silencing the class would
+    // wait out the cooldown before firing again.
+    $cooldownKey = 'qmtest:alert:cooldown:failure_rate:class:App\\Jobs\\NoisyButKnown';
+    expect(Redis::connection('default')->command('exists', [$cooldownKey]))->toBe(0);
+});
+
+it('still fires failure rate for non-silenced classes when other classes are silenced', function (): void {
+    noopSnapshotConfig();
+    config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 20);
+    config()->set('queue-insights.alerts.rules.failure_rate.ratio', 0.10);
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Other']);
+
+    seedClass('App\\Jobs\\Loud', processed: 80, failed: 20);
+
+    Event::fake([JobClassFailureRateExceeded::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertDispatched(JobClassFailureRateExceeded::class, fn (JobClassFailureRateExceeded $e): bool => $e->jobClass === 'App\\Jobs\\Loud');
+});
+
 it('only iterates classes present in the qi:classes zset', function (): void {
     noopSnapshotConfig();
     config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 1);

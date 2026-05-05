@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Log;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
+use SanderMuller\QueueInsights\QueueInsightsServiceProvider;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 
 it('accepts a non-colliding snapshot list', function (): void {
@@ -189,4 +190,77 @@ it('rejects ratio outside [0, 1]', function (): void {
             'failure_rate' => ['ratio' => 1.5],
         ],
     ]))->toThrow(QueueInsightsConfigException::class, 'ratio');
+});
+
+it('accepts a well-formed retention block (or empty defaults)', function (): void {
+    // No assertion — both calls returning without exception IS the assertion.
+    // Throwing would fail the test; reaching the end means validation passed.
+    ConfigValidator::validateRetention([]);
+    ConfigValidator::validateRetention([
+        'history_hours' => 24,
+        'processed_counters_days' => 7,
+        'failed_counters_days' => 30,
+        'completed_stream_max' => 10000,
+        'per_class_stream_max' => 1000,
+        'per_connection_stream_max' => 5000,
+    ]);
+})->throwsNoExceptions();
+
+it('rejects a non-int retention.per_connection_stream_max', function (): void {
+    expect(fn () => ConfigValidator::validateRetention(['per_connection_stream_max' => '5000']))
+        ->toThrow(QueueInsightsConfigException::class, 'retention.per_connection_stream_max must be a positive integer');
+});
+
+it('rejects a zero retention.per_connection_stream_max', function (): void {
+    expect(fn () => ConfigValidator::validateRetention(['per_connection_stream_max' => 0]))
+        ->toThrow(QueueInsightsConfigException::class, 'retention.per_connection_stream_max must be a positive integer');
+});
+
+it('rejects a negative retention.completed_stream_max', function (): void {
+    expect(fn () => ConfigValidator::validateRetention(['completed_stream_max' => -1]))
+        ->toThrow(QueueInsightsConfigException::class, 'retention.completed_stream_max must be a positive integer');
+});
+
+it('accepts an empty silenced list (feature off)', function (): void {
+    ConfigValidator::validateSilenced([]);
+})->throwsNoExceptions();
+
+it('accepts well-formed FQCNs and synthetic class labels', function (): void {
+    ConfigValidator::validateSilenced([
+        'App\\Jobs\\Foo',
+        'App\\Jobs\\Reports\\Daily',
+        'Closure@abc123',
+        'Encrypted@deadbeef',
+    ]);
+})->throwsNoExceptions();
+
+it('rejects an associative silenced array', function (): void {
+    expect(fn () => ConfigValidator::validateSilenced(['foo' => 'App\\Jobs\\Foo']))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced must be a list');
+});
+
+it('rejects a non-string silenced entry', function (): void {
+    expect(fn () => ConfigValidator::validateSilenced([42]))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced[0] must be a non-empty string');
+});
+
+it('rejects an empty-string silenced entry', function (): void {
+    expect(fn () => ConfigValidator::validateSilenced(['']))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced[0] must be a non-empty string');
+});
+
+it('rejects a regex-violating silenced entry', function (): void {
+    expect(fn () => ConfigValidator::validateSilenced(['App\\Jobs\\Foo; DROP TABLE']))
+        ->toThrow(QueueInsightsConfigException::class, 'is not a valid job-class label');
+});
+
+it('boot-time silenced shape check fails loud on a non-array config (codex review #2)', function (): void {
+    // The other section validators silently coerce a non-array config to
+    // [], but `silenced` is meant to be a list of FQCNs and a typo like
+    // `'silenced' => 'App\\Jobs\\Foo'` (string instead of list) would
+    // otherwise become "feature off" silently. Boot must throw.
+    config()->set('queue-insights.silenced', 'App\\Jobs\\Foo');
+
+    expect(fn () => app()->register(QueueInsightsServiceProvider::class, true))
+        ->toThrow(QueueInsightsConfigException::class, 'must be a list of class-name strings');
 });

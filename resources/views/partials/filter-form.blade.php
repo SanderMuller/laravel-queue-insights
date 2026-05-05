@@ -8,7 +8,11 @@
      * @var list<string> $connectionOptions
      * @var list<string> $queueOptions
      * @var list<string> $classOptions
+     * @var ?string $silenceModel  Failed-pane only: wire:model name for the
+     *      "Show silenced" toggle. Null/unset on the completed pane so the
+     *      checkbox doesn't render there.
      */
+    $silenceModel = $silenceModel ?? null;
 @endphp
 <details class="mb-4 group" @if($active) open @endif>
     <summary class="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-gray-500 ring-1 ring-inset ring-gray-950/10 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
@@ -65,6 +69,14 @@
             <input type="date" wire:model.live="{{ $models['to'] }}"
                    class="rounded-md border-0 bg-white px-2 py-1.5 text-xs text-gray-900 ring-1 ring-inset ring-gray-950/10 focus:ring-2 focus:ring-inset focus:ring-emerald-500"/>
         </label>
+
+        @if($silenceModel !== null)
+            <label class="sm:col-span-5 inline-flex items-center gap-2 text-xs font-medium text-gray-500">
+                <input type="checkbox" wire:model.live="{{ $silenceModel }}"
+                       class="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"/>
+                Show silenced
+            </label>
+        @endif
 
         @if($active)
             <div class="sm:col-span-5 -mt-1 flex justify-end">

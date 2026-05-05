@@ -1,9 +1,12 @@
 <?php declare(strict_types=1);
 
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
 /**
@@ -67,4 +70,98 @@ it('RedisEval::exec handles KEYS + ARGV correctly across drivers', function (): 
     );
 
     expect($redis->command('get', [KeyPrefix::make('evalprobe')]))->toBe('hello-world');
+});
+
+it('IncrPairWithExpire.lua bumps both counters and stamps EXPIREAT atomically', function (): void {
+    $redis = Redis::connection('default');
+    $expireAt = Date::now()
+        ->getTimestamp() + 7 * 86400;
+
+    RedisEval::exec(
+        $redis,
+        LuaScripts::incrPairWithExpire(),
+        2,
+        KeyPrefix::make('processed:App\\Foo:2026050412'),
+        KeyPrefix::make('processed:App\\Foo:redis:2026050412'),
+        (string) $expireAt,
+    );
+
+    expect(R::int('get', 'qmtest:processed:App\\Foo:2026050412'))->toBe(1)
+        ->and(R::int('get', 'qmtest:processed:App\\Foo:redis:2026050412'))->toBe(1);
+
+    $aggTtl = R::int('ttl', 'qmtest:processed:App\\Foo:2026050412');
+    $perTtl = R::int('ttl', 'qmtest:processed:App\\Foo:redis:2026050412');
+    expect($aggTtl)->toBeGreaterThan(7 * 86400 - 60)->toBeLessThanOrEqual(7 * 86400)
+        ->and($perTtl)->toBeGreaterThan(7 * 86400 - 60)
+        ->toBeLessThanOrEqual(7 * 86400);
+});
+
+it('DurationPair.lua HINCRBYs count + sum_ms and CASes max_ms across both keys', function (): void {
+    $redis = Redis::connection('default');
+
+    RedisEval::exec($redis, LuaScripts::durationPair(), 2,
+        KeyPrefix::make('duration:App\\Foo'), KeyPrefix::make('duration:App\\Foo:redis'),
+        '120', (string) 2592000);
+    RedisEval::exec($redis, LuaScripts::durationPair(), 2,
+        KeyPrefix::make('duration:App\\Foo'), KeyPrefix::make('duration:App\\Foo:redis'),
+        '80', (string) 2592000);
+    // Lower duration must NOT replace the running max.
+    RedisEval::exec($redis, LuaScripts::durationPair(), 2,
+        KeyPrefix::make('duration:App\\Foo'), KeyPrefix::make('duration:App\\Foo:redis'),
+        '50', (string) 2592000);
+
+    foreach (['duration:App\\Foo', 'duration:App\\Foo:redis'] as $k) {
+        expect(R::int('hget', 'qmtest:' . $k, 'count'))->toBe(3)
+            ->and((float) R::str('hget', 'qmtest:' . $k, 'sum_ms'))->toBe(250.0)
+            ->and(R::int('hget', 'qmtest:' . $k, 'max_ms'))->toBe(120);
+    }
+});
+
+it('SamplesPair.lua RPUSHes + LTRIMs both lists to the cap', function (): void {
+    $redis = Redis::connection('default');
+
+    for ($i = 1; $i <= 7; ++$i) {
+        RedisEval::exec($redis, LuaScripts::samplesPair(), 2,
+            KeyPrefix::make('duration:samples:App\\Foo'),
+            KeyPrefix::make('duration:samples:App\\Foo:redis'),
+            (string) ($i * 10), '5', (string) 2592000);
+    }
+
+    // Cap is 5; oldest two entries (10, 20) must be evicted, newest 5 retained.
+    foreach (['duration:samples:App\\Foo', 'duration:samples:App\\Foo:redis'] as $k) {
+        $entries = R::raw('lrange', 'qmtest:' . $k, 0, -1);
+        expect($entries)->toBe(['30', '40', '50', '60', '70']);
+    }
+});
+
+it('SetexPair.lua writes both keys with the requested TTL', function (): void {
+    $redis = Redis::connection('default');
+
+    RedisEval::exec($redis, LuaScripts::setexPair(), 2,
+        KeyPrefix::make('last_run:App\\Foo'),
+        KeyPrefix::make('last_run:App\\Foo:redis'),
+        '900', '2026-05-04T12:00:00+00:00');
+
+    expect(R::str('get', 'qmtest:last_run:App\\Foo'))->toBe('2026-05-04T12:00:00+00:00')
+        ->and(R::str('get', 'qmtest:last_run:App\\Foo:redis'))->toBe('2026-05-04T12:00:00+00:00')
+        ->and(R::int('ttl', 'qmtest:last_run:App\\Foo'))->toBeGreaterThan(890)->toBeLessThanOrEqual(900)
+        ->and(R::int('ttl', 'qmtest:last_run:App\\Foo:redis'))->toBeGreaterThan(890)->toBeLessThanOrEqual(900);
+});
+
+it('ClassesRoster.lua ZADDs both rosters and EXPIREs only the per-connection one', function (): void {
+    $redis = Redis::connection('default');
+    $score = (string) Date::now()
+        ->getTimestamp();
+
+    RedisEval::exec($redis, LuaScripts::classesRoster(), 2,
+        KeyPrefix::make('classes'),
+        KeyPrefix::make('classes:redis'),
+        $score, 'App\\Foo', (string) 2592000);
+
+    expect(R::raw('zrange', 'qmtest:classes', 0, -1))->toContain('App\\Foo')
+        ->and(R::raw('zrange', 'qmtest:classes:redis', 0, -1))->toContain('App\\Foo')
+        // Aggregate roster has NO whole-key TTL — pruned by snapshot command.
+        ->and(R::int('ttl', 'qmtest:classes'))->toBe(-1)
+        ->and(R::int('ttl', 'qmtest:classes:redis'))->toBeGreaterThan(2592000 - 60)
+        ->toBeLessThanOrEqual(2592000);
 });

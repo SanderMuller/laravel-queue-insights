@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Support\ChainLineageClaim;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
@@ -58,7 +59,7 @@ final class RecordJobQueued
             ]);
 
             $this->writePendingTracking($redis, $event, $uuid, $payload);
-            $this->writeBatchTracking($redis, $uuid, $payload);
+            $this->writeBatchTracking($redis, $uuid, $payload, (string) $event->connectionName);
             $this->resolveChainLineage($event, $uuid, $payload);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
@@ -169,14 +170,16 @@ final class RecordJobQueued
      * job). The batchId is plaintext at `data.batchId` — readable even on
      * `ShouldBeEncrypted` jobs whose `data.command` is encrypted.
      *
-     * Three keys per batch:
-     *   - `qi:batches:index`       sorted set of batchIds, score = first-seen ts
-     *   - `qi:batch:{id}:uuids`    list of uuids in the batch (RPUSH order)
-     *   - `qi:batch:uuid:{uuid}`   reverse lookup uuid → batchId (per-row chip)
+     * Five keys per batch:
+     *   - `qi:batches:index`               aggregate sorted set of batchIds, score = first-seen ts
+     *   - `qi:batches:index:{connection}`  per-connection sorted set, first-write-wins via Lua
+     *   - `qi:batch:{id}:connection`       string pointer; arbiter for first-write-wins
+     *   - `qi:batch:{id}:uuids`            list of uuids in the batch (RPUSH order)
+     *   - `qi:batch:uuid:{uuid}`           reverse lookup uuid → batchId (per-row chip)
      *
      * @param  array<array-key, mixed>|null  $payload  Decoded JobQueued payload.
      */
-    private function writeBatchTracking(RedisConnection $redis, string $uuid, ?array $payload): void
+    private function writeBatchTracking(RedisConnection $redis, string $uuid, ?array $payload, string $connectionName): void
     {
         if (! Config::bool('batches.enabled', true)) {
             return;
@@ -216,6 +219,30 @@ final class RecordJobQueued
         // old batchIds would never age out. Score-based pruning is cheap
         // (logarithmic) and self-bounding on each enqueue.
         $redis->command('zremrangebyscore', [$indexKey, '-inf', (string) ($now - $ttl)]);
+
+        // Per-connection roster — first-write-wins via Lua so concurrent
+        // JobQueued events on different connections for the same batchId
+        // can't both claim the batch. The pointer key qi:batch:{id}:connection
+        // is the single arbiter; the per-connection ZADD only runs on the
+        // winning caller. The same script also stamps the per-uuid
+        // connection side-key for BatchScopeFilter (one round-trip vs a
+        // separate SETEX). Skip when connectionName is empty — drivers
+        // without it can't be dropped into a per-connection roster.
+        if ($connectionName !== '') {
+            RedisEval::exec(
+                $redis,
+                LuaScripts::batchClaimConnection(),
+                3,
+                KeyPrefix::make("batch:{$batchId}:connection"),
+                KeyPrefix::make("batches:index:{$connectionName}"),
+                KeyPrefix::make("batch-uuid-conn:{$uuid}"),
+                $connectionName,
+                (string) $ttl,
+                (string) $now,
+                $batchId,
+                (string) ($now - $ttl),
+            );
+        }
 
         $uuidsKey = KeyPrefix::make("batch:{$batchId}:uuids");
         $count = $redis->command('llen', [$uuidsKey]);

@@ -118,6 +118,76 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the silenced-jobs list. Mirrors Horizon's `horizon.silenced`
+     * shape — operators list job-class FQCNs whose failures are suppressed
+     * from dashboards, alert detectors, and notifications. Counter writes
+     * are preserved (silencing is reversible).
+     *
+     * Class names are not `class_exists`-checked: packages may register
+     * lazy-loaded listener classes that don't autoload at boot, and a
+     * typo'd entry should not fail the whole package boot.
+     *
+     * @param  array<array-key, mixed>  $silenced
+     */
+    public static function validateSilenced(array $silenced): void
+    {
+        if (! array_is_list($silenced)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.silenced must be a list of class-name strings, not an associative array.'
+            );
+        }
+
+        foreach ($silenced as $i => $entry) {
+            if (! is_string($entry) || $entry === '') {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.silenced[{$i}] must be a non-empty string."
+                );
+            }
+
+            // Relaxed class-label shape — the extra `@`, `:`, `/` allow
+            // synthetic labels like `Closure@abc123` / `Encrypted@…` that
+            // ResolveJobClass returns for closure / encrypted jobs.
+            if (preg_match('/^[A-Za-z_][A-Za-z0-9_\\\\@:\/]*$/', $entry) !== 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.silenced[{$i}] is not a valid job-class label (`{$entry}`)."
+                );
+            }
+        }
+    }
+
+    /**
+     * Validate the retention block. Type-checks each known stream cap +
+     * counter-bucket day window so a typo at boot fails loudly rather than
+     * silently degrading to a hardcoded fallback.
+     *
+     * @param  array<array-key, mixed>  $retention
+     */
+    public static function validateRetention(array $retention): void
+    {
+        $positiveInts = [
+            'history_hours',
+            'processed_counters_days',
+            'failed_counters_days',
+            'completed_stream_max',
+            'per_class_stream_max',
+            'per_connection_stream_max',
+        ];
+
+        foreach ($positiveInts as $key) {
+            if (! isset($retention[$key])) {
+                continue;
+            }
+
+            $value = $retention[$key];
+            if (! is_int($value) || $value < 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.retention.{$key} must be a positive integer."
+                );
+            }
+        }
+    }
+
+    /**
      * Validate the alerts block. Type-checks the cooldown, every per-rule
      * shape, every threshold entry, and channel feature toggles. Delegates
      * to `AlertsConfigValidator` so this class stays under PHPStan's

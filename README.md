@@ -114,8 +114,8 @@ Per-connection class counters (`processed:{class}:{connection}:{bucket}`, `faile
 
 These v1 gaps surface only on the connection-scoped routes; the un-scoped dashboard is unaffected.
 
-- **Batches section is hidden under scope.** Per-batch metadata isn't yet keyed by connection, so the batches section would otherwise leak other-connection batches into a scoped view. The section reappears the moment scope is removed.
-- **Recent completed list reads from a global stream.** `recentCompleted()` pulls the most recent ~250 entries from a single global stream and then filters by the scoped connection. In deployments with a deeply-imbalanced traffic split (e.g. one connection runs 100x more jobs than another), the scoped Recent completed list can show stale or empty rows even though matching jobs exist. Workaround: raise `recent_fetch_limit` (or contribute per-connection streams as a follow-up). Recent failed is unaffected — it reads from the failed_jobs DB table with explicit WHERE clauses.
+- **Heterogeneous batches are first-write-wins.** A `Bus::batch([...])` whose member jobs span multiple connections is indexed under the connection that dispatched the FIRST job. Other connections' scoped views won't see the batch. The detail/items view under scope reads `qi:batch-uuid-conn:{uuid}` (a dedicated uuid → connection side-key written when the job is queued, lifetime = `batches.ttl_seconds`) so cross-connection member uuids stay filtered even after the member has been processed/failed. Members past `batches.ttl_seconds` from queue time pass through. Operators relying on heterogeneous batches can fall back to the un-scoped view, which still shows every batch.
+- **Recent completed list under a class drilldown post-filters by connection.** When the operator selects a class on a scoped view (`?class=App\\Foo` on `/queue-insights/redis`) the read routes to the per-class stream and post-filters rows by their `connection` field. The class stream caps at 1000 entries so the post-filter is cheap, but in extreme traffic skews a class drilldown may show fewer rows than the un-scoped class view. The plain scoped Recent completed list (no class drilldown) reads the dedicated `qi:completed:connection:{c}` stream and is unaffected.
 - **Per-connection counter dual-write isn't atomic.** Aggregate and per-connection counters are written as separate Redis commands. A listener crash mid-write can leave the per-connection counter behind aggregate; later traffic re-fills it. Same best-effort guarantee the package's existing listeners offer; never produces phantom data.
 
 ### Retry permissions (write actions)
@@ -225,6 +225,9 @@ Every completed, failed, and pending row that belongs to a batch carries a small
 The data is **event-captured into Redis** alongside Laravel's own `BatchRepository`. The `JobQueued` listener writes three keys per batched job:
 
 - `qi:batches:index` (sorted set) — recent batchIds, ordered by first-seen unix timestamp. Used to enumerate batches without `SCAN`. Score-pruned on every enqueue (no whole-key TTL) so the head doesn't accumulate forever.
+- `qi:batches:index:{connection}` (sorted set) — per-connection roster, populated first-write-wins via Lua so a heterogeneous batch lands on exactly one connection. Same score-pruning as the aggregate index. Read by `/queue-insights/{connection}` scoped views.
+- `qi:batch:{id}:connection` (string) — single arbiter for first-write-wins. The atomic `SET … NX` on this key gates the per-connection ZADD inside `BatchClaimConnection.lua`. TTL is refreshed on every subsequent JobQueued for the same batch so the pointer doesn't age out under continued traffic.
+- `qi:batch-uuid-conn:{uuid}` (string) — uuid → connection side-key written for every batched job. Survives the JobProcessed/JobFailed pending-hash deletion so the heterogeneous-batch detail-view scope filter keeps working after members have run.
 - `qi:batch:{id}:uuids` (list) — RPUSH-ordered uuids in the batch. Bounded per batch by `batches.max_uuids_per_batch` (default 5000, best-effort under heavy concurrent dispatch).
 - `qi:batch:uuid:{uuid}` (string) — reverse lookup uuid → batchId, used to render the per-row chip on completed jobs.
 
@@ -512,6 +515,31 @@ The pre-1.0 config exposed a single flat `alerts.thresholds` list. It is still h
 ```
 
 Note: Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published `config/queue-insights.php` before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
+
+#### Silencing noisy jobs
+
+Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures** should be suppressed from the dashboard's Failed list, the headline failed-tile, the throughput sparkline's failed series, the `failure_rate` alert detector, and outbound notifications.
+
+```php
+'silenced' => [
+    App\Jobs\IntermittentlyFailingJob::class,
+    App\Jobs\ThirdPartyApiSometimesFlakes::class,
+],
+```
+
+Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `qi:classes`) are preserved — silencing is a read-side filter only, so removing a class from the list immediately re-surfaces its history without any backfill. The class rows table keeps showing throughput / p95 / max for silenced classes with a muted `silenced` badge so you can still triage them.
+
+| Surface | Behaviour under silencing |
+|---|---|
+| Failed list (Failed tab) | Hidden by default. The "Show silenced" checkbox on the failed-pane filter form reveals them; URL-shareable as `?fs=1`. |
+| Headline `failed_past_hour` + throughput sparkline failed series | Silenced classes excluded. Processed series stays exact. |
+| `failure_rate` alert detector | Returns null for silenced classes — no event, no notification, no cooldown burned. |
+| `slow_p95` alert detector | Unchanged — silencing is a failure-noise filter, not a perf filter. Exclude noisy classes from `class_threshold_ms` if you want their perf alerts muted too. |
+| Class rows table | Row stays, marked with a muted `silenced` badge inline next to the FQCN. Operators still see throughput / p95 / max for silenced classes. |
+| Modal-by-uuid + chain-lineage click-through + batch-detail items | NOT filtered. Silencing is a list-level filter; uuid-addressed lookups always resolve so a batched member or chain parent stays clickable. |
+| `qi:failed:{class}:{bucket}` Redis counters + `qi:classes` zset | Still written by the listeners. Silencing is reversible without losing history. |
+
+The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes for retry. Toggle "Show silenced" first if you want them in the bulk set.
 
 ## License
 

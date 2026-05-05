@@ -58,10 +58,30 @@ return [
         'failed_counters_days' => 30,
         'completed_stream_max' => 10000,
         'per_class_stream_max' => 1000,
+        'per_connection_stream_max' => 5000,
     ],
 
     'schedule' => [
         'enabled' => true,
+    ],
+
+    /*
+     | Job-class FQCNs whose failures are hidden from dashboards and skipped
+     | by the failure_rate detector. Mirrors Horizon's horizon.silenced.
+     |
+     | Counter writes (qi:failed:{class}:{bucket}, qi:classes) are preserved
+     | so silencing is reversible without losing history — silenced classes
+     | drop off the Failed list, throughput failed-bucket sum, and outbound
+     | alert notifications, but stay reachable via uuid-addressed lookups
+     | (modal-by-uuid, batch-detail click-through). Empty list = feature off.
+     |
+     | Exact-match by FQCN. Closure / encrypted jobs surface as synthetic
+     | labels (Closure@<hash>, Encrypted@<hash>) in counter-side reads — list
+     | the synthetic label here to silence those surfaces; the failed-list
+     | match is by displayName so closures may need both forms.
+     */
+    'silenced' => [
+        // App\Jobs\IntermittentlyFailingJob::class,
     ],
 
     'alerts' => [

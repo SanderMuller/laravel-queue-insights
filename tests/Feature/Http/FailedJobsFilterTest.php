@@ -8,6 +8,7 @@ use Livewire\Livewire;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use SanderMuller\QueueInsights\Tests\Support\FailedUuidCollectorProbe;
 
 beforeEach(function (): void {
     Schema::create('failed_jobs', function (Blueprint $table): void {
@@ -215,4 +216,90 @@ it('shows the `filtered` badge on the heading when any filter is set', function 
     Livewire::test(QueueInsightsDashboard::class)
         ->set('filterConnection', 'redis')
         ->assertSeeText('filtered');
+});
+
+it('hides silenced-class failed rows by default', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Noisy', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Quiet', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50);
+    $payload = $rows[0]['payload'] ?? null;
+
+    expect($rows)->toHaveCount(1)
+        ->and(is_string($payload) ? $payload : '')->toContain('App\\\\Jobs\\\\Quiet');
+});
+
+it('reveals silenced-class failed rows when includeSilenced=true', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Noisy', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Quiet', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(includeSilenced: true));
+
+    expect($rows)->toHaveCount(2);
+});
+
+it('silenced exclusion escapes wildcards so a class containing _ does not over-hide', function (): void {
+    // The class `App\Jobs\With_Underscore` is silenced. A class
+    // `App\Jobs\WithXUnderscore` (X = arbitrary char) would match a naive
+    // unescaped LIKE pattern of `%with_underscore%` and get hidden too.
+    // The escape discipline mirrors `applyFailedJobFilters`'s include-side.
+    config()->set('queue-insights.silenced', ['App\\Jobs\\With_Underscore']);
+
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\With_Underscore', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\WithXUnderscore', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50);
+    $payload = $rows[0]['payload'] ?? null;
+
+    expect($rows)->toHaveCount(1)
+        ->and(is_string($payload) ? $payload : '')->toContain('App\\\\Jobs\\\\WithXUnderscore');
+});
+
+it('clearFailedFilters resets includeSilenced back to false', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->set('includeSilenced', true)
+        ->call('clearFailedFilters')
+        ->assertSet('includeSilenced', false);
+});
+
+it('toggling includeSilenced resets the failed page cursor', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->set('failedPage', 4)
+        ->set('includeSilenced', true)
+        ->assertSet('failedPage', 1);
+});
+
+it('Livewire #[Url] binds includeSilenced via the fs query-string key', function (): void {
+    Livewire::withQueryParams(['fs' => '1']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->assertSet('includeSilenced', true);
+});
+
+it('buildFailedFilters propagates includeSilenced into the DTO', function (): void {
+    /** @var QueueInsightsDashboard $component */
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->set('includeSilenced', true)
+        ->instance();
+
+    expect($component->buildFailedFilters()->includeSilenced)->toBeTrue();
+});
+
+it('FailedJobUuidCollector inherits the silenced exclusion (bulk-retry parity)', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+    app()->forgetScopedInstances();
+
+    seedFailedFilterRow(['uuid' => 'uuid-noisy', 'payload' => ['displayName' => 'App\\Jobs\\Noisy', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['uuid' => 'uuid-quiet', 'payload' => ['displayName' => 'App\\Jobs\\Quiet', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $defaultUuids = FailedUuidCollectorProbe::collect(new FailedJobFilters());
+    $revealedUuids = FailedUuidCollectorProbe::collect(new FailedJobFilters(includeSilenced: true));
+
+    expect($defaultUuids)->toBe(['uuid-quiet'])
+        ->and($revealedUuids)->toContain('uuid-noisy')
+        ->and($revealedUuids)->toContain('uuid-quiet');
 });

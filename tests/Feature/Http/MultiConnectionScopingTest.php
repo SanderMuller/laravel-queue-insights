@@ -15,6 +15,7 @@ use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
 it('registers the connection-scoped route by default', function (): void {
@@ -144,11 +145,71 @@ it('only iterates queues matching scope when computing rows', function (): void 
         ->and($rendered)->not->toContain('>work<');
 });
 
-it('disables the Batches section under a connection scope (per-batch keying deferred)', function (): void {
+it('scoped Recent completed reads the per-connection stream even with deeply imbalanced traffic (v2-gap Phase 2)', function (): void {
     if (! RedisAvailability::check()) {
         $this->markTestSkipped('redis not available on this host');
     }
 
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue.connections.redis', ['driver' => 'redis']);
+    config()->set('queue.connections.sqs', ['driver' => 'sqs']);
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'default'],
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+
+    // Imbalanced fixture — 1000 sqs entries crowd the global stream so a
+    // post-filter scoped reader (the v1 behaviour the gap describes) would
+    // exhaust its RECENT_FETCH_LIMIT before reaching any redis row. The
+    // per-connection stream isolates this.
+    $r = Redis::connection('default');
+    for ($i = 0; $i < 1000; ++$i) {
+        seedStream($r, 'qmtest:completed', [
+            'class' => 'App\\Jobs\\NoiseJob',
+            'connection' => 'sqs',
+            'queue' => 'work',
+            'duration_ms' => '5',
+            'attempts' => '1',
+            'processed_at' => '2026-05-04T12:00:00+00:00',
+            'uuid' => 'noise-' . $i,
+        ]);
+    }
+
+    foreach (['signal-1', 'signal-2'] as $uuid) {
+        seedStream($r, 'qmtest:completed:connection:redis', [
+            'class' => 'App\\Jobs\\SignalJob',
+            'connection' => 'redis',
+            'queue' => 'default',
+            'duration_ms' => '12',
+            'attempts' => '1',
+            'processed_at' => '2026-05-04T12:01:00+00:00',
+            'uuid' => $uuid,
+        ]);
+    }
+
+    $component = Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis']);
+    $rows = $component->viewData('completedRows');
+
+    expect($rows)->toBeArray()->and($rows)->not->toBeEmpty();
+    if (! is_array($rows)) {
+        return;
+    }
+
+    $uuids = array_column($rows, 'uuid');
+    expect($uuids)->toContain('signal-1')
+        ->and($uuids)->toContain('signal-2')
+        ->and($uuids)->not->toContain('noise-0')
+        ->and($uuids)->not->toContain('noise-999');
+});
+
+it('Batches section under scope reads the per-connection roster (v2-gap Phase 1)', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
     config()->set('queue.connections.redis', ['driver' => 'redis']);
     config()->set('queue.connections.sqs', ['driver' => 'sqs']);
     config()->set('queue-insights.batches.enabled', true);
@@ -157,15 +218,35 @@ it('disables the Batches section under a connection scope (per-batch keying defe
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
 
+    // Seed two batches into different per-connection rosters via the same
+    // shape `RecordJobQueued`'s BatchClaimConnection.lua produces. The
+    // Bus::findBatch() row hydration is unimportant for this assertion —
+    // missing rows are skipped silently and the section just renders an
+    // empty list.
+    R::raw('zadd', 'qmtest:batches:index', Date::now()
+        ->getTimestamp(), 'batch-redis');
+    R::raw('zadd', 'qmtest:batches:index', Date::now()
+        ->getTimestamp(), 'batch-sqs');
+    R::raw('zadd', 'qmtest:batches:index:redis', Date::now()
+        ->getTimestamp(), 'batch-redis');
+    R::raw('zadd', 'qmtest:batches:index:sqs', Date::now()
+        ->getTimestamp(), 'batch-sqs');
+    R::raw('set', 'qmtest:batch:batch-redis:connection', 'redis');
+    R::raw('set', 'qmtest:batch:batch-sqs:connection', 'sqs');
+
+    // Un-scoped: section enabled, both batches visible (rows resolve to
+    // empty without a job_batches row, but the read path is exercised).
     Livewire::test(QueueInsightsDashboard::class)
         ->assertViewHas('batchesEnabled', true);
 
+    // Scoped: section stays enabled (no longer hidden) and the underlying
+    // reader routes to the per-connection index — only the scope's batch
+    // is reachable.
     Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis'])
-        ->assertViewHas('batchesEnabled', false)
-        ->assertViewHas('batches', []);
+        ->assertViewHas('batchesEnabled', true);
 });
 
-it('CompletedRowFilter is hard-pinned to scope, ignoring completedFilterConnection', function (): void {
+it('CompletedRowFilter no-ops on connection under scope (per-connection stream is the gate, v2-gap Phase 2)', function (): void {
     config()->set('queue-insights.snapshots', [
         ['connection' => 'redis', 'queue' => 'default'],
         ['connection' => 'sqs', 'queue' => 'work'],
@@ -178,15 +259,17 @@ it('CompletedRowFilter is hard-pinned to scope, ignoring completedFilterConnecti
     $component = Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis']);
     $component->set('completedFilterConnection', 'sqs');
 
-    // Drive the private `buildCompletedFilter` through reflection so the
-    // assertion is on the filter's public shape rather than scraping the
-    // rendered HTML for the absence of `sqs` rows.
     $data = resolve(DashboardData::class);
     $reflection = new ReflectionMethod($data, 'buildCompletedFilter');
     /** @var CompletedRowFilter $filter */
     $filter = $reflection->invoke($data, $component->instance());
 
-    expect($filter->connection)->toBe('redis');
+    // Phase 2 — recentCompleted routes by scope to the per-connection
+    // stream, so the post-fetch CompletedRowFilter must not double-gate
+    // on connection. An empty-string connection makes the filter no-op
+    // on that axis, which is exactly what we want.
+    expect($filter->connection)
+        ->toBeEmpty();
 });
 
 it('SnapshotWatchdog suppresses cross-scope deadness', function (): void {

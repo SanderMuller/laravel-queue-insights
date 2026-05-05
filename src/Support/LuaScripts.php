@@ -12,6 +12,18 @@ final class LuaScripts
 
     private static ?string $pushChainClaim = null;
 
+    private static ?string $batchClaimConnection = null;
+
+    private static ?string $incrPairWithExpire = null;
+
+    private static ?string $durationPair = null;
+
+    private static ?string $samplesPair = null;
+
+    private static ?string $setexPair = null;
+
+    private static ?string $classesRoster = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
@@ -25,6 +37,36 @@ final class LuaScripts
     public static function pushChainClaim(): string
     {
         return self::$pushChainClaim ??= self::load(__DIR__ . '/Lua/PushChainClaim.lua');
+    }
+
+    public static function batchClaimConnection(): string
+    {
+        return self::$batchClaimConnection ??= self::load(__DIR__ . '/Lua/BatchClaimConnection.lua');
+    }
+
+    public static function incrPairWithExpire(): string
+    {
+        return self::$incrPairWithExpire ??= self::load(__DIR__ . '/Lua/IncrPairWithExpire.lua');
+    }
+
+    public static function durationPair(): string
+    {
+        return self::$durationPair ??= self::load(__DIR__ . '/Lua/DurationPair.lua');
+    }
+
+    public static function samplesPair(): string
+    {
+        return self::$samplesPair ??= self::load(__DIR__ . '/Lua/SamplesPair.lua');
+    }
+
+    public static function setexPair(): string
+    {
+        return self::$setexPair ??= self::load(__DIR__ . '/Lua/SetexPair.lua');
+    }
+
+    public static function classesRoster(): string
+    {
+        return self::$classesRoster ??= self::load(__DIR__ . '/Lua/ClassesRoster.lua');
     }
 
     private static function load(string $path): string

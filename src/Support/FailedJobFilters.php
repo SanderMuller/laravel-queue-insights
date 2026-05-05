@@ -22,8 +22,15 @@ final readonly class FailedJobFilters
         public string $class = '',
         public string $from = '',
         public string $to = '',
+        public bool $includeSilenced = false,
     ) {}
 
+    /**
+     * `includeSilenced` is intentionally NOT counted here — its default
+     * (`false` = hide silenced) is the resting state, and the bulk-retry
+     * footgun guard refuses to collect uuids when `isEmpty()` returns
+     * true. Including the toggle would defeat that guard on every render.
+     */
     public function isEmpty(): bool
     {
         return $this->connection === ''

@@ -55,6 +55,15 @@ final class QueueInsightsDashboard extends Component
     #[Url(as: 'fto', except: '')]
     public string $filterTo = '';
 
+    /**
+     * "Show silenced" toggle on the failed-pane filter form. Default false
+     * mirrors the SQL filter's default — silenced classes are hidden until
+     * the operator opts in. URL-shareable so a deep-linked debug session
+     * (`?fs=1`) reveals the silenced rows.
+     */
+    #[Url(as: 'fs', except: false)]
+    public bool $includeSilenced = false;
+
     /*
      * Recent-completed filter state. Class filter routes through `selectedClass`
      * (existing pre-fetch namespacing in QueueInsights::recentCompleted); the
@@ -361,6 +370,7 @@ final class QueueInsightsDashboard extends Component
         $this->filterClass = '';
         $this->filterFrom = '';
         $this->filterTo = '';
+        $this->includeSilenced = false;
         $this->failedPage = 1;
     }
 
@@ -383,7 +393,7 @@ final class QueueInsightsDashboard extends Component
     {
         if (str_starts_with($name, 'completedFilter') || $name === 'selectedClass') {
             $this->completedPage = 1;
-        } elseif (str_starts_with($name, 'filter')) {
+        } elseif (str_starts_with($name, 'filter') || $name === 'includeSilenced') {
             $this->failedPage = 1;
         }
     }
@@ -445,6 +455,7 @@ final class QueueInsightsDashboard extends Component
             class: $this->filterClass,
             from: $this->filterFrom,
             to: $this->filterTo,
+            includeSilenced: $this->includeSilenced,
         );
     }
 

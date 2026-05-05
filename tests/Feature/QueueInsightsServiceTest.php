@@ -169,6 +169,84 @@ it('reads recent completed entries scoped to a class', function (): void {
     expect($entries)->toHaveCount(2);
 });
 
+it('routes recentCompleted to the per-connection stream when only $connection is set', function (): void {
+    $r = Redis::connection('default');
+    // Aggregate stream — must NOT be read under scope (would leak the
+    // imbalanced fixture's other-connection entries).
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'X', 'connection' => 'sqs']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'Y', 'connection' => 'sqs']);
+    // Per-connection stream for redis — only this should be read.
+    seedStream($r, KeyPrefix::make('completed:connection:redis'), ['class' => 'A', 'connection' => 'redis']);
+    seedStream($r, KeyPrefix::make('completed:connection:redis'), ['class' => 'B', 'connection' => 'redis']);
+
+    $entries = resolve(QueueInsights::class)->recentCompleted(10, null, 'redis');
+
+    expect($entries)->toHaveCount(2)
+        ->and($entries[0]['class'])->toBe('B')
+        ->and($entries[1]['class'])->toBe('A');
+});
+
+it('class+connection drilldown reads the per-class stream and post-filters by connection', function (): void {
+    $r = Redis::connection('default');
+    $class = 'App\\Jobs\\Drill';
+    // Per-class stream carries entries for both connections (single class
+    // can run on multiple connections in the wild).
+    seedStream($r, KeyPrefix::make("completed:{$class}"), ['connection' => 'redis', 'queue' => 'r1']);
+    seedStream($r, KeyPrefix::make("completed:{$class}"), ['connection' => 'sqs', 'queue' => 's1']);
+    seedStream($r, KeyPrefix::make("completed:{$class}"), ['connection' => 'redis', 'queue' => 'r2']);
+
+    $entries = resolve(QueueInsights::class)->recentCompleted(10, $class, 'redis');
+
+    expect($entries)->toHaveCount(2)
+        ->and($entries[0]['connection'])->toBe('redis')
+        ->and($entries[1]['connection'])->toBe('redis');
+});
+
+it('class+connection drilldown surfaces scoped rows even when the class is hot on a foreign connection', function (): void {
+    // Codex review #2 — without widening the read window, a class hot on
+    // sqs would push redis rows out of the small `min($limit, 1000)`
+    // slice and the scoped drilldown would silently return fewer than
+    // $limit rows. Now reads the full per_class_stream_max window.
+    $r = Redis::connection('default');
+    $class = 'App\\Jobs\\Mixed';
+
+    // 50 sqs entries first, then 5 redis entries on top (newer XADD ids).
+    for ($i = 0; $i < 50; ++$i) {
+        seedStream($r, KeyPrefix::make("completed:{$class}"), [
+            'connection' => 'sqs',
+            'queue' => 'work',
+            'uuid' => 'sqs-' . $i,
+        ]);
+    }
+
+    for ($i = 0; $i < 5; ++$i) {
+        seedStream($r, KeyPrefix::make("completed:{$class}"), [
+            'connection' => 'redis',
+            'queue' => 'default',
+            'uuid' => 'redis-' . $i,
+        ]);
+    }
+
+    // Caller asks for 10; the read widens to 1000 so all 5 redis rows
+    // make it past the post-filter.
+    $entries = resolve(QueueInsights::class)->recentCompleted(10, $class, 'redis');
+
+    expect($entries)->toHaveCount(5);
+    foreach ($entries as $row) {
+        expect($row['connection'])->toBe('redis');
+    }
+});
+
+it('un-scoped recentCompleted still reads the aggregate stream', function (): void {
+    $r = Redis::connection('default');
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'A', 'connection' => 'redis']);
+    seedStream($r, KeyPrefix::make('completed'), ['class' => 'B', 'connection' => 'sqs']);
+
+    $entries = resolve(QueueInsights::class)->recentCompleted(10);
+
+    expect($entries)->toHaveCount(2);
+});
+
 it('hourlyThroughput returns a 24-bucket timeline of zeros by default', function (): void {
     $series = resolve(QueueInsights::class)->hourlyThroughput();
 
@@ -268,4 +346,29 @@ it('hourlyThroughput sums processed + failed counters across classes per hour bu
     // Oldest first → current hour is last, previous hour second-to-last.
     expect($series[23])->toMatchArray(['processed' => 8, 'failed' => 1])
         ->and($series[22])->toMatchArray(['processed' => 10, 'failed' => 0]);
+});
+
+it('hourlyThroughput excludes silenced classes from the failed series but keeps processed exact', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Loud']);
+    app()->forgetScopedInstances();
+
+    $r = Redis::connection('default');
+    $now = Date::now('UTC');
+    $thisHour = $now->format('YmdH');
+
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\Loud']);
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\Quiet']);
+    $r->command('set', [KeyPrefix::make("processed:App\\Loud:{$thisHour}"), '7']);
+    $r->command('set', [KeyPrefix::make("processed:App\\Quiet:{$thisHour}"), '4']);
+    $r->command('set', [KeyPrefix::make("failed:App\\Loud:{$thisHour}"), '50']);
+    $r->command('set', [KeyPrefix::make("failed:App\\Quiet:{$thisHour}"), '2']);
+
+    $series = resolve(QueueInsights::class)->hourlyThroughput();
+
+    // Processed sums BOTH classes (silencing applies to failure noise only).
+    // Failed sums only the non-silenced class — the 50 noisy failures drop.
+    expect($series[23])->toMatchArray([
+        'processed' => 11,
+        'failed' => 2,
+    ]);
 });

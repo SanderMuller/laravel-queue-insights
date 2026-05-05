@@ -78,7 +78,15 @@
                                     x-on:keydown.space.prevent="$wire.selectClass(@js($c['class']))">
                                     {{-- Job: class FQCN + (optional) fail-rate subtitle --}}
                                     <td class="max-w-md py-3 pr-3 align-top">
-                                        <p class="truncate font-mono text-xs font-medium text-gray-900">{{ $c['class'] }}</p>
+                                        <div class="flex items-center gap-1.5">
+                                            <p class="truncate font-mono text-xs font-medium text-gray-900">{{ $c['class'] }}</p>
+                                            @if(($c['silenced'] ?? false) === true)
+                                                {{-- Muted badge — class is in `queue-insights.silenced`. Failures
+                                                     hidden from the Failed list + alert pipeline; throughput / p95
+                                                     stats stay visible so the operator can still triage. --}}
+                                                <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 ring-1 ring-inset ring-gray-950/10" title="Failures silenced via queue-insights.silenced">silenced</span>
+                                            @endif
+                                        </div>
                                         @if($failed > 0)
                                             <p class="mt-0.5 text-[10px] font-medium tabular-nums text-red-600">{{ number_format($failRate, 1) }}% fail rate</p>
                                         @endif

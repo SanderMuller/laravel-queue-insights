@@ -41,9 +41,30 @@ it('build returns one row per registered class with metrics flattened to scalars
             'p95_ms' => 820,
             'max_ms' => 1200,
             'last_run_at' => $now,
+            'silenced' => false,
         ])
         ->and($rows[1]['class'])->toBe('App\\Jobs\\Beta')
-        ->and($rows[1]['last_run_at'])->toBeNull();
+        ->and($rows[1]['last_run_at'])->toBeNull()
+        ->and($rows[1]['silenced'])->toBeFalse();
+});
+
+it('build flags only matching classes as silenced', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Beta']);
+    app()->forgetScopedInstances();
+
+    $svc = Mockery::mock(QueueInsights::class);
+    $svc->shouldReceive('jobClasses')->with(null)->once()->andReturn(['App\\Jobs\\Alpha', 'App\\Jobs\\Beta']);
+    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Alpha', null)->once()->andReturn(
+        new JobClassMetrics('App\\Jobs\\Alpha', 1, 0, 1.0, 1, 1, null),
+    );
+    $svc->shouldReceive('classMetrics')->with('App\\Jobs\\Beta', null)->once()->andReturn(
+        new JobClassMetrics('App\\Jobs\\Beta', 1, 0, 1.0, 1, 1, null),
+    );
+
+    $rows = classRowsBuilder($svc)->build();
+
+    expect($rows[0]['silenced'])->toBeFalse()
+        ->and($rows[1]['silenced'])->toBeTrue();
 });
 
 it('build returns an empty list when no classes are registered', function (): void {

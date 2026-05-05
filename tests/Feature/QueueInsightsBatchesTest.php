@@ -174,3 +174,143 @@ it('recentBatches returns an empty list when no batches are tracked', function (
     expect((new QueueInsights())->recentBatches())
         ->toBeEmpty();
 });
+
+/**
+ * Seed the per-connection batches index + :connection pointer for v2-gap
+ * scoped reads. Mirrors what `RecordJobQueued::writeBatchTracking`'s
+ * BatchClaimConnection.lua call writes at runtime.
+ *
+ * @param  list<string>  $uuids
+ */
+function seedScopedBatchIndex(string $batchId, string $connection, array $uuids, int $score): void
+{
+    seedBatchIndex($batchId, $uuids, $score);
+    R::raw('zadd', 'qmtest:batches:index:' . $connection, $score, $batchId);
+    R::raw('set', 'qmtest:batch:' . $batchId . ':connection', $connection);
+}
+
+it('recentBatches under scope reads only the per-connection index', function (): void {
+    seedBatch('batch-redis');
+    seedBatch('batch-sqs');
+
+    seedScopedBatchIndex('batch-redis', 'redis', [], Date::now()->getTimestamp() - 60);
+    seedScopedBatchIndex('batch-sqs', 'sqs', [], Date::now()->getTimestamp());
+
+    $redisRows = (new QueueInsights())->recentBatches(50, 'redis');
+    $sqsRows = (new QueueInsights())->recentBatches(50, 'sqs');
+
+    expect(array_column($redisRows, 'id'))->toBe(['batch-redis'])
+        ->and(array_column($sqsRows, 'id'))->toBe(['batch-sqs']);
+});
+
+it('recentBatches without scope still reads the aggregate index', function (): void {
+    seedBatch('batch-redis');
+    seedBatch('batch-sqs');
+
+    seedScopedBatchIndex('batch-redis', 'redis', [], Date::now()->getTimestamp() - 60);
+    seedScopedBatchIndex('batch-sqs', 'sqs', [], Date::now()->getTimestamp());
+
+    $rows = (new QueueInsights())->recentBatches();
+
+    expect(array_column($rows, 'id'))->toBe(['batch-sqs', 'batch-redis']);
+});
+
+it('batchDetail under scope returns null when the :connection pointer mismatches', function (): void {
+    seedBatch('batch-redis-only');
+    seedScopedBatchIndex('batch-redis-only', 'redis', ['uuid-a'], Date::now()->getTimestamp());
+
+    $detail = (new QueueInsights())->batchDetail('batch-redis-only', 'sqs');
+
+    expect($detail)->toBeNull();
+});
+
+it('batchDetail under scope returns the batch when the :connection pointer matches', function (): void {
+    seedBatch('batch-redis-match');
+    seedScopedBatchIndex('batch-redis-match', 'redis', ['uuid-a'], Date::now()->getTimestamp());
+
+    $detail = (new QueueInsights())->batchDetail('batch-redis-match', 'redis');
+
+    expect($detail)->not->toBeNull();
+    if ($detail === null) {
+        return;
+    }
+
+    expect($detail['id'])->toBe('batch-redis-match')
+        ->and($detail['uuids'])->toBe(['uuid-a']);
+});
+
+it('batchDetail under scope passes through when the pointer is missing AND no per-connection roster claims the batch (truly-legacy)', function (): void {
+    // Pre-existing data written before the v2-gap upgrade — neither the
+    // pointer nor a per-connection roster has the batch, so the legacy
+    // passthrough applies and the batch stays readable from any scope.
+    seedBatch('batch-legacy');
+    seedBatchIndex('batch-legacy', ['uuid-a'], Date::now()->getTimestamp());
+
+    $detail = (new QueueInsights())->batchDetail('batch-legacy', 'redis');
+
+    expect($detail)->not->toBeNull();
+    if ($detail === null) {
+        return;
+    }
+
+    expect($detail['uuids'])->toBe(['uuid-a']);
+});
+
+it('batchDetail under scope rejects when the pointer aged out but the batch is still in another connection roster', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'default'],
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+
+    // Pointer absent but the per-connection roster still has the batch
+    // under sqs. A redis-scoped read must NOT pass through the legacy
+    // gate — sqs still owns this batch via its roster claim.
+    seedBatch('batch-aged-pointer');
+    seedBatchIndex('batch-aged-pointer', ['uuid-x'], Date::now()->getTimestamp());
+    R::raw('zadd', 'qmtest:batches:index:sqs', Date::now()->getTimestamp(), 'batch-aged-pointer');
+
+    $detail = (new QueueInsights())->batchDetail('batch-aged-pointer', 'redis');
+
+    expect($detail)->toBeNull();
+});
+
+it('batchDetail under scope drops uuids whose batch-uuid-conn side-key mismatches', function (): void {
+    seedBatch('batch-mixed');
+    seedScopedBatchIndex('batch-mixed', 'redis', ['uuid-r', 'uuid-s', 'uuid-orphan'], Date::now()->getTimestamp());
+
+    // uuid-r → redis (matches scope), uuid-s → sqs (cross-connection,
+    // should drop), uuid-orphan has no side-key so it passes through
+    // (legacy batches + members past batches.ttl_seconds).
+    R::raw('set', 'qmtest:batch-uuid-conn:uuid-r', 'redis');
+    R::raw('set', 'qmtest:batch-uuid-conn:uuid-s', 'sqs');
+
+    $detail = (new QueueInsights())->batchDetail('batch-mixed', 'redis');
+
+    expect($detail)->not->toBeNull();
+    if ($detail === null) {
+        return;
+    }
+
+    expect($detail['uuids'])->toBe(['uuid-r', 'uuid-orphan']);
+});
+
+it('batchDetail under scope still filters uuids after a member has been processed (side-key outlives pending hash)', function (): void {
+    // The pending hash gets deleted on JobProcessed/JobFailed. The
+    // dedicated side-key has a longer TTL so the scope filter keeps
+    // working long after members have run.
+    seedBatch('batch-after-run');
+    seedScopedBatchIndex('batch-after-run', 'redis', ['uuid-redis', 'uuid-sqs-done'], Date::now()->getTimestamp());
+
+    R::raw('set', 'qmtest:batch-uuid-conn:uuid-redis', 'redis');
+    R::raw('set', 'qmtest:batch-uuid-conn:uuid-sqs-done', 'sqs');
+    // No pending hashes — both members have already run.
+
+    $detail = (new QueueInsights())->batchDetail('batch-after-run', 'redis');
+
+    expect($detail)->not->toBeNull();
+    if ($detail === null) {
+        return;
+    }
+
+    expect($detail['uuids'])->toBe(['uuid-redis']);
+});

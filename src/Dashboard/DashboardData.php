@@ -136,7 +136,7 @@ final readonly class DashboardData
 
         $failedFilters = $component->buildFailedFilters();
 
-        $recentCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, $component->selectedClass);
+        $recentCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, $component->selectedClass, $scope);
         $recentFailed = $this->svc->recentFailed(self::RECENT_FETCH_LIMIT, $failedFilters);
         $throughput = $this->svc->hourlyThroughput(24, $scope);
 
@@ -205,11 +205,7 @@ final readonly class DashboardData
 
         $filterOptions = $this->filterOptionsBuilder->build($classes, $scope);
 
-        // Batches are not yet keyed by connection — until they are, a scoped
-        // view would otherwise leak other-connection batches.
-        $batches = $scope === null
-            ? BatchReader::sectionRows($this->svc, $component->expandedBatchId)
-            : [];
+        $batches = BatchReader::sectionRows($this->svc, $component->expandedBatchId, $scope);
 
         $pendingEnabled = Config::bool('pending.enabled', true);
         $scopedQueues = $this->svc->configuredQueues($scope);
@@ -233,7 +229,7 @@ final readonly class DashboardData
             $selectedPending['parent_target'] = $this->resolveParentTargetFor($selectedPending['parent_uuid'] ?? null);
         }
 
-        $selectedBatch = $this->modals->selectedBatch($component->expandedBatchId, $batches);
+        $selectedBatch = $this->modals->selectedBatch($component->expandedBatchId, $batches, $scope);
 
         // Drive `inert` from the same booleans that actually mount the
         // modals — codex review #1. Routing it off raw selection ids
@@ -323,9 +319,7 @@ final readonly class DashboardData
             'canRetry' => $canRetry,
             'bulkRetryCount' => $bulkRetryCount,
             'batches' => $batches,
-            // Section hidden under a scope until per-batch connection
-            // keying lands — see the `$batches` build block above.
-            'batchesEnabled' => Config::bool('batches.enabled', true) && $scope === null,
+            'batchesEnabled' => Config::bool('batches.enabled', true),
             'expandedBatchId' => $component->expandedBatchId,
             'selectedBatch' => $selectedBatch,
             'selectedPending' => $selectedPending,
@@ -344,10 +338,11 @@ final readonly class DashboardData
 
     private function buildCompletedFilter(QueueInsightsDashboard $component): CompletedRowFilter
     {
-        // Same hard-pin pattern as `buildFailedFilters()` — when scope is
-        // active the connection axis is forced to scope so the completed
-        // panel cannot reach rows outside the scoped connection.
-        $connection = $component->scopeConnection ?? $component->completedFilterConnection;
+        // Under scope, `recentCompleted` already gates by connection at the
+        // stream level — pass empty so the filter doesn't double-gate.
+        $connection = $component->scopeConnection !== null
+            ? ''
+            : $component->completedFilterConnection;
 
         return new CompletedRowFilter(
             connection: $connection,
