@@ -146,6 +146,34 @@ it('selects a class and filters the recent completed table', function (): void {
         ->assertSee('Clear filter');
 });
 
+it('Classes tab mounts the per-class table and renders the silenced badge for a silenced class', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+    app()->forgetScopedInstances();
+
+    $r = Redis::connection('default');
+    $now = Date::now();
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\Jobs\\Noisy']);
+    $r->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), 'App\\Jobs\\Quiet']);
+
+    $html = Livewire::test(QueueInsightsDashboard::class)->html();
+
+    // Tab strip carries the Classes button + both class FQCNs render in the
+    // pane, with the silenced badge gated to the silenced class.
+    expect($html)->toContain('Classes')
+        ->and($html)->toContain('App\\Jobs\\Noisy')
+        ->and($html)->toContain('App\\Jobs\\Quiet')
+        ->and($html)->toContain('>silenced<');
+
+    // The badge only renders for the silenced class. Confirm by slicing
+    // a window around the badge and checking the nearest preceding FQCN
+    // is the silenced one.
+    $badgePos = strpos($html, '>silenced<');
+    expect($badgePos)->toBeInt();
+    $window = substr($html, max(0, (int) $badgePos - 500), 500);
+    expect($window)->toContain('App\\Jobs\\Noisy')
+        ->and($window)->not->toContain('App\\Jobs\\Quiet');
+});
+
 it('selectClass with a FQCN populates the filtered completed table', function (): void {
     // Higher-level regression: after the selectClass call lands server-side with the
     // correct FQCN (backslashes intact), the per-class stream read must return rows.

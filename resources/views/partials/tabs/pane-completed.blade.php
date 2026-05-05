@@ -7,6 +7,7 @@
      *   $completedPage, $completedTotalPages, $completedTotal, $completedPerPage
      *   $filterConnectionOptions, $filterQueueOptions, $filterClassOptions
      */
+    $amountCompletedRows = count($completedRows);
 @endphp
 @if($completedFiltersActive)
     <div class="mb-3">
@@ -27,9 +28,13 @@
     'connectionOptions' => $filterConnectionOptions,
     'queueOptions' => $filterQueueOptions,
     'classOptions' => $filterClassOptions,
+    // "Show silenced" toggle (URL `?cs=1`) — independent from the failed-pane
+    // toggle so operators can dig into silenced failures without unmuting
+    // silenced successes (or vice versa).
+    'silenceModel' => 'completedIncludeSilenced',
 ])
 
-@if(count($completedRows) === 0)
+@if($amountCompletedRows === 0)
     <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
         @if($completedFiltersActive)
             No completed jobs match the current filters.
@@ -54,8 +59,8 @@
         @include('queue-insights::partials.pagination-controls', [
             'page' => $completedPage ?? 1,
             'totalPages' => $completedTotalPages ?? 1,
-            'total' => $completedTotal ?? count($completedRows),
-            'perPage' => $completedPerPage ?? count($completedRows),
+            'total' => $completedTotal ?? $amountCompletedRows,
+            'perPage' => $completedPerPage ?? $amountCompletedRows,
             'gotoMethod' => 'gotoCompletedPage',
         ])
     </div>

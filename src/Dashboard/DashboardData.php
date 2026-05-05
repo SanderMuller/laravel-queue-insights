@@ -12,11 +12,13 @@ use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
 use SanderMuller\QueueInsights\Support\RowEnricher;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 use SanderMuller\QueueInsights\Support\UuidResolver;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
@@ -105,6 +107,9 @@ final readonly class DashboardData
         'selectedPendingUuid',
         'hasOpenModal',
         'chainBackTop',
+        'silencedClasses',
+        'silencedFailedRows',
+        'silencedCompletedRows',
     ];
 
     public function __construct(
@@ -271,6 +276,15 @@ final readonly class DashboardData
         $completedPreview = array_slice($completedAll, 0, 5);
         $failedPreview = array_slice($failedAll, 0, 5);
 
+        // Silenced tab — pre-filtered failed + completed rows for classes
+        // listed in `queue-insights.silenced`. Skips work entirely when
+        // the silenced list is empty so the tab + its data stay zero-cost
+        // for hosts that don't use the feature.
+        $silencedClasses = resolve(SilencedJobs::class)->all();
+        [$silencedFailedRows, $silencedCompletedRows] = $silencedClasses === []
+            ? [[], []]
+            : $this->buildSilencedListings($silencedClasses, $scope);
+
         $aggregates = QueueAggregates::aggregate($queues);
 
         return [
@@ -333,6 +347,9 @@ final readonly class DashboardData
             'chainBackTop' => $component->chainBackStack === []
                 ? null
                 : $component->chainBackStack[array_key_last($component->chainBackStack)],
+            'silencedClasses' => $silencedClasses,
+            'silencedFailedRows' => $silencedFailedRows,
+            'silencedCompletedRows' => $silencedCompletedRows,
         ];
     }
 
@@ -349,6 +366,7 @@ final readonly class DashboardData
             queue: $component->completedFilterQueue,
             from: $component->completedFilterFrom,
             to: $component->completedFilterTo,
+            includeSilenced: $component->completedIncludeSilenced,
         );
     }
 
@@ -428,5 +446,62 @@ final readonly class DashboardData
         }
 
         return [$parentUuid, ParentClassResolver::resolve($parentUuid)];
+    }
+
+    /**
+     * Build the Silenced-tab payload — failed_jobs rows + completed-stream
+     * rows for classes listed in `queue-insights.silenced`. One per-class
+     * fetch with `includeSilenced=true` so the silenced exclusion is
+     * bypassed; results are merged in the caller-controlled order
+     * (silenced classes' configured order).
+     *
+     * Capped at PER_PAGE per axis — the Silenced tab is a roster, not a
+     * paginated list. Operators who need deep history land on the main
+     * Failed/Completed pane and toggle "Show silenced".
+     *
+     * @param  list<string>  $silencedClasses
+     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>}
+     */
+    private function buildSilencedListings(array $silencedClasses, ?string $scope): array
+    {
+        $failedRows = [];
+        $completedRows = [];
+
+        foreach ($silencedClasses as $class) {
+            $rowsForClass = $this->svc->recentFailed(
+                self::PER_PAGE,
+                new FailedJobFilters(
+                    connection: $scope ?? '',
+                    class: $class,
+                    includeSilenced: true,
+                ),
+            );
+            foreach ($rowsForClass as $row) {
+                $failedRows[] = $row;
+            }
+
+            $completedForClass = $this->svc->recentCompleted(self::PER_PAGE, $class, $scope);
+            foreach ($completedForClass as $row) {
+                if (($row['class'] ?? null) === $class) {
+                    $completedRows[] = $row;
+                }
+            }
+        }
+
+        // Order by failed_at / processed_at descending, slice to PER_PAGE
+        // so the tab caps at one page per axis.
+        usort($failedRows, static fn (array $a, array $b): int => strcmp(
+            is_string($b['failed_at'] ?? null) ? $b['failed_at'] : '',
+            is_string($a['failed_at'] ?? null) ? $a['failed_at'] : '',
+        ));
+        usort($completedRows, static fn (array $a, array $b): int => strcmp(
+            is_string($b['processed_at'] ?? null) ? $b['processed_at'] : '',
+            is_string($a['processed_at'] ?? null) ? $a['processed_at'] : '',
+        ));
+
+        $failedRows = array_slice($failedRows, 0, self::PER_PAGE);
+        $completedRows = array_slice($completedRows, 0, self::PER_PAGE);
+
+        return [RowEnricher::failed($failedRows), RowEnricher::completed($completedRows)];
     }
 }

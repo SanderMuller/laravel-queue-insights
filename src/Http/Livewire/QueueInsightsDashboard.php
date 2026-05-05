@@ -82,6 +82,15 @@ final class QueueInsightsDashboard extends Component
     #[Url(as: 'cto', except: '')]
     public string $completedFilterTo = '';
 
+    /**
+     * "Show silenced" toggle on the completed-pane filter form. Mirrors
+     * the failed-pane `$includeSilenced` (URL `?fs=1`). Independent toggle
+     * so an operator can dig into silenced failures without unmuting
+     * silenced successes (or vice versa). URL key `?cs=1`.
+     */
+    #[Url(as: 'cs', except: false)]
+    public bool $completedIncludeSilenced = false;
+
     /*
      * Pagination — completed + failed lists. URL-shareable (`cp`/`fp`) so a
      * deep-linked page survives refresh. Per-page is owned by
@@ -391,7 +400,7 @@ final class QueueInsightsDashboard extends Component
      */
     public function updated(string $name): void
     {
-        if (str_starts_with($name, 'completedFilter') || $name === 'selectedClass') {
+        if (str_starts_with($name, 'completedFilter') || $name === 'selectedClass' || $name === 'completedIncludeSilenced') {
             $this->completedPage = 1;
         } elseif (str_starts_with($name, 'filter') || $name === 'includeSilenced') {
             $this->failedPage = 1;
@@ -430,6 +439,7 @@ final class QueueInsightsDashboard extends Component
         $this->completedFilterQueue = '';
         $this->completedFilterFrom = '';
         $this->completedFilterTo = '';
+        $this->completedIncludeSilenced = false;
         $this->completedPage = 1;
     }
 

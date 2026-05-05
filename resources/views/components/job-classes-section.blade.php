@@ -5,10 +5,13 @@
     'selectedClass' => null,
 ])
 
-{{-- Job classes — secondary drill-down. Collapsed by default; opens to a per-class
-    volume + runtime breakdown that filters the completed list above when clicked. --}}
+{{-- Job classes — per-class 24h volume / runtime / p95 / max breakdown. Mounted
+    inside the Classes tab (`pane-classes`); rows are clickable to filter the
+    Completed list. The `<details>` wrapper is kept (vs a flat <section>) so the
+    `summary` block keeps the chevron + clear-filter pattern; always-open here
+    because the user already chose to land on this tab. --}}
 <section>
-    <details class="group" @if($selectedClass) open @endif>
+    <details class="group" open>
         <summary class="flex cursor-pointer list-none items-center justify-between gap-4 rounded-lg px-3 py-2.5 -mx-3 hover:bg-gray-950/[0.03] focus-visible:bg-gray-950/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
             <div class="flex items-center gap-2.5">
                 <span class="h-5 w-1 rounded bg-gray-300 group-open:bg-emerald-500" aria-hidden="true"></span>

@@ -21,6 +21,10 @@ final readonly class CompletedRowFilter
         public string $queue = '',
         public string $from = '',
         public string $to = '',
+        // When false (default), `apply()` drops rows whose `class` field
+        // is in `queue-insights.silenced`. The "Show silenced" toggle on
+        // the completed-pane filter form (URL `?cs=1`) flips this.
+        public bool $includeSilenced = false,
     ) {}
 
     public function isEmpty(): bool
@@ -37,15 +41,16 @@ final readonly class CompletedRowFilter
      */
     public function apply(array $rows): array
     {
-        if ($this->isEmpty()) {
+        if ($this->isEmpty() && $this->includeSilenced) {
             return $rows;
         }
 
         [$fromTs, $toTs] = $this->parseRange();
+        $silenced = $this->includeSilenced ? null : resolve(SilencedJobs::class);
 
         return array_values(array_filter(
             $rows,
-            fn (array $row): bool => $this->matches($row, $fromTs, $toTs),
+            fn (array $row): bool => $this->matches($row, $fromTs, $toTs, $silenced),
         ));
     }
 
@@ -67,8 +72,15 @@ final readonly class CompletedRowFilter
     /**
      * @param  array<string, mixed>  $row
      */
-    private function matches(array $row, ?CarbonInterface $fromTs, ?CarbonInterface $toTs): bool
+    private function matches(array $row, ?CarbonInterface $fromTs, ?CarbonInterface $toTs, ?SilencedJobs $silenced): bool
     {
+        if ($silenced instanceof SilencedJobs) {
+            $rowClass = $row['class'] ?? '';
+            if (is_string($rowClass) && $silenced->isSilenced($rowClass)) {
+                return false;
+            }
+        }
+
         if ($this->connection !== '') {
             $rowConn = $row['connection'] ?? '';
             if (! is_string($rowConn) || stripos($rowConn, $this->connection) === false) {

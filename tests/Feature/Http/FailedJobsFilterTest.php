@@ -7,6 +7,7 @@ use Illuminate\Support\Str;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\QueueInsights;
+use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Tests\Support\FailedUuidCollectorProbe;
 
@@ -287,6 +288,45 @@ it('buildFailedFilters propagates includeSilenced into the DTO', function (): vo
         ->instance();
 
     expect($component->buildFailedFilters()->includeSilenced)->toBeTrue();
+});
+
+it('CompletedRowFilter drops silenced-class rows by default and keeps them when includeSilenced=true', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+    app()->forgetScopedInstances();
+
+    $rows = [
+        ['class' => 'App\\Jobs\\Noisy', 'connection' => 'redis', 'queue' => 'webhooks'],
+        ['class' => 'App\\Jobs\\Quiet', 'connection' => 'redis', 'queue' => 'mail'],
+    ];
+
+    $defaultFilter = new CompletedRowFilter();
+    $defaultClasses = array_map(static fn (array $r): string => is_string($r['class'] ?? null) ? $r['class'] : '', $defaultFilter->apply($rows));
+    expect($defaultClasses)->toBe(['App\\Jobs\\Quiet']);
+
+    $revealFilter = new CompletedRowFilter(includeSilenced: true);
+    $revealClasses = array_map(static fn (array $r): string => is_string($r['class'] ?? null) ? $r['class'] : '', $revealFilter->apply($rows));
+    expect($revealClasses)->toBe(['App\\Jobs\\Noisy', 'App\\Jobs\\Quiet']);
+});
+
+it('clearCompletedFilters resets completedIncludeSilenced back to false', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->set('completedIncludeSilenced', true)
+        ->call('clearCompletedFilters')
+        ->assertSet('completedIncludeSilenced', false);
+});
+
+it('toggling completedIncludeSilenced resets the completed page cursor', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->set('completedPage', 4)
+        ->set('completedIncludeSilenced', true)
+        ->assertSet('completedPage', 1);
+});
+
+it('Livewire #[Url] binds completedIncludeSilenced via the cs query-string key', function (): void {
+    Livewire::withQueryParams(['cs' => '1']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->assertSet('completedIncludeSilenced', true);
 });
 
 it('FailedJobUuidCollector inherits the silenced exclusion (bulk-retry parity)', function (): void {

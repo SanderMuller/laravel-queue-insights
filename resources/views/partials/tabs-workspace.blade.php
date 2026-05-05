@@ -1,6 +1,6 @@
 @php
     /**
-     * Tabbed dashboard workspace. Six tabs:
+     * Tabbed dashboard workspace. Tabs:
      *
      *   Overview (default)  — mission-grid summary cards. Each card shows a
      *                          handful of clickable preview rows that open the
@@ -11,6 +11,9 @@
      *   Batches             — batch list (only when batches enabled).
      *   Completed           — full completed-jobs list with filters.
      *   Failed              — full failed-jobs list with filters + bulk-retry.
+     *   Classes             — per-class 24h volume / runtime / p95 / max with
+     *                          silenced badge for classes in `queue-insights.silenced`.
+     *   Alert rules         — read-only listing of configured detector thresholds.
      *
      * Tab persists in `window.location.hash` (`#qi-overview`, `#qi-queues`, …)
      * so refreshes and bookmarks land back where the user left off, and the
@@ -26,7 +29,7 @@
 <div x-data="{ tab: 'overview' }"
      x-init="
         const apply = () => {
-            const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|alerts)$/);
+            const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|classes|silenced|alerts)$/);
             if (m) tab = m[1];
         };
         apply();
@@ -49,6 +52,10 @@
             @endif
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'completed', 'label' => 'Completed', 'badge' => $completedTotal ?? count($completedRows)])
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'failed', 'label' => 'Failed', 'badge' => $failedTotal ?? count($failedRows)])
+            @include('queue-insights::partials.tabs.tab-button', ['name' => 'classes', 'label' => 'Classes', 'badge' => count($classes)])
+            @if(count($silencedClasses ?? []) > 0)
+                @include('queue-insights::partials.tabs.tab-button', ['name' => 'silenced', 'label' => 'Silenced', 'badge' => count($silencedClasses)])
+            @endif
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'alerts', 'label' => 'Alert rules', 'badge' => null])
         </nav>
     </div>
@@ -75,6 +82,14 @@
     <div x-show="tab==='failed'" x-cloak>
         @include('queue-insights::partials.tabs.pane-failed')
     </div>
+    <div x-show="tab==='classes'" x-cloak>
+        @include('queue-insights::partials.tabs.pane-classes')
+    </div>
+    @if(count($silencedClasses ?? []) > 0)
+        <div x-show="tab==='silenced'" x-cloak>
+            @include('queue-insights::partials.tabs.pane-silenced')
+        </div>
+    @endif
     <div x-show="tab==='alerts'" x-cloak>
         <livewire:queue-insights-alert-rules-panel :scope-connection="$scopeConnection ?? null" />
     </div>
