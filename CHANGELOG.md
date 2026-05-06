@@ -2,6 +2,30 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0 - 2026-05-06
+
+Opt-in **Prometheus exposition** — a scrapeable `/metrics` endpoint plus a one-shot `queue-insights:prometheus-push` artisan command for short-lived workers. Default-off; existing installs see no behavioural change until `QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true` flips the gate. No breaking API changes.
+
+### Highlights
+
+- New `/metrics` endpoint covering queue depth, in-flight, pending/delayed, oldest-age, monotonic processed/failed counters, duration aggregates, alert state, and snapshot liveness — Prometheus 0.0.4 + OpenMetrics 1.0.0 via `Accept` negotiation.
+- Fail-closed auth by default — bearer token (constant-time) or IP CIDR allow-list; no silent open default. Hosts behind outer infra auth opt out with `prometheus.middleware = []`.
+- Per-class metrics off by default. `class_filter` modes `allow_all` / `allow_list` (default) / `top_n_by_recency` bound cardinality; explicit FQCN list dedupes to rule out duplicate Prometheus series.
+- True monotonic counters (`processed-total:*`, `failed-total:*`) shipped alongside the existing hourly buckets so `rate()` / `increase()` are safe across retention rotation. Refreshing 30-day EXPIRE per INCR ages dormant classes out without a prune sweep.
+- `queue-insights:prometheus-push` for short-lived workers — fail-closed on missing `pushgateway.instance` to prevent silent overwrite between clustered pushers; INVALID (2) for config errors, FAILURE (1) for HTTP errors.
+
+See the new **Prometheus** section in `README.md` for the full metric catalogue, configuration block, and scrape-config example.
+
+### What's Changed
+
+* feat(prometheus): scrapeable `/metrics` + push gateway + monotonic counters — [b927a1a](https://github.com/SanderMuller/laravel-queue-insights/commit/b927a1ae1ea9d748acf920797d840d05ab23ad4c)
+* fix(prometheus): wrap `mget` / `hmget` args for phpredis splat compatibility — [d937f35](https://github.com/SanderMuller/laravel-queue-insights/commit/d937f35eee8e40e31a32f09bd414e5f78919cc14)
+* chore(deps): bump `sandermuller/package-boost` to `^0.11.0` — [e0122da](https://github.com/SanderMuller/laravel-queue-insights/commit/e0122da8a81bfb987249da7f091943073c756629)
+* chore(skills): delegate README + release-notes drafting to the new dedicated skills — [96dca8f](https://github.com/SanderMuller/laravel-queue-insights/commit/96dca8f52a9312aa98f3ff99683eec9cc2d406ea)
+* chore(tooling): fix pre-release CI-watch deadlock + auto-sync on install — [d893963](https://github.com/SanderMuller/laravel-queue-insights/commit/d8939632a923edad463cc8f13512178935ee0458)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.8.0...0.9.0
+
 ## 0.8.0 - 2026-05-05
 
 ### What's new
@@ -57,6 +81,7 @@ Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures
     App\Jobs\IntermittentlyFailingJob::class,
     App\Jobs\ThirdPartyApiSometimesFlakes::class,
 ],
+
 
 ```
 Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `qi:classes`) are preserved — silencing is a read-side filter only, so removing a class from the list immediately re-surfaces its history without any backfill. The class rows table keeps showing throughput / p95 / max for silenced classes with a muted `silenced` badge so you can still triage them.
@@ -127,6 +152,7 @@ Add `viewQueueInsightsConnection` to authorise per connection:
 Gate::define('viewQueueInsightsConnection', function ($user, string $connection): bool {
     return $user->canAccessTenant($connection);
 });
+
 
 
 ```
@@ -252,6 +278,7 @@ Pre-0.6 hosts that published `config/queue-insights.php` keep working — the le
 
 
 
+
 ```
 Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published the config before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
 
@@ -311,6 +338,7 @@ The metadata pill (`Connection: redis`, `Queue: default`, `ID: <uuid>`) used to 
 
 
 
+
 ```
 A second new component, `<x-queue-insights::list-row>`, owns the four main row partials' `role="button"` + `tabindex` + keyboard handler scaffold — one place to fix click + a11y wiring instead of four.
 
@@ -353,6 +381,7 @@ public function render(DashboardData $data): View
 
 
 
+
 ```
 ### Internal — view decomposition
 
@@ -372,6 +401,7 @@ resources/views/partials/
     ├── pane-completed.blade.php
     ├── pane-failed.blade.php
     └── tab-button.blade.php
+
 
 
 
@@ -518,6 +548,7 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
 
 
 
+
 ```
 ### Storage cost
 
@@ -590,6 +621,7 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -781,6 +813,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
