@@ -56,10 +56,18 @@ abstract readonly class PerClassMonotonicCounterCollector implements Collector
                     $chunk,
                 );
 
-                $values = $redis->command('mget', $keys);
+                // Wrap `$keys` in an outer array — `Connection::command`
+                // splats `$parameters`, and phpredis's `mget(array)`
+                // signature rejects the variadic-string form Predis
+                // tolerates (matches the pattern in `QueueInsights.php`).
+                $values = $redis->command('mget', [$keys]);
                 if (! is_array($values)) {
                     continue;
                 }
+                // phpredis returns positional; Predis can return
+                // associative-by-key. `array_values` normalises so the
+                // positional `$values[$i]` access below is driver-safe.
+                $values = array_values($values);
 
                 foreach ($chunk as $i => $class) {
                     $raw = $values[$i] ?? null;

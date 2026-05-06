@@ -49,10 +49,17 @@ final readonly class DurationAggregateCollector implements Collector
         foreach (ConfiguredConnections::all() as $connection) {
             foreach ($this->classFilter->classesFor($connection) as $class) {
                 $key = KeyPrefix::classKey('duration', $class, $connection);
-                $values = $redis->command('hmget', [$key, 'count', 'sum_ms', 'max_ms']);
+                // Pass the field list as a single array argument —
+                // phpredis's `hMget(string, array)` signature rejects
+                // the splatted-variadic form Predis tolerates. Mirrors
+                // `QueueInsights.php` line 175.
+                $values = $redis->command('hmget', [$key, ['count', 'sum_ms', 'max_ms']]);
                 if (! is_array($values)) {
                     continue;
                 }
+                // phpredis returns associative-by-field; Predis returns
+                // positional. `array_values` collapses both to positional.
+                $values = array_values($values);
 
                 $count = $values[0] ?? null;
                 $sumMs = $values[1] ?? null;
