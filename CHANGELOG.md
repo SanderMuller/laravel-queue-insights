@@ -2,6 +2,8 @@
 
 All notable changes to `laravel-queue-insights` are documented here. Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
+New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
+
 ## 0.9.0 - 2026-05-06
 
 Opt-in **Prometheus exposition** — a scrapeable `/metrics` endpoint plus a one-shot `queue-insights:prometheus-push` artisan command for short-lived workers. Default-off; existing installs see no behavioural change until `QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true` flips the gate. No breaking API changes.
@@ -28,236 +30,97 @@ See the new **Prometheus** section in `README.md` for the full metric catalogue,
 
 ## 0.8.0 - 2026-05-05
 
-### What's new
+Multi-connection v2 — scoped dashboards reach parity with the un-scoped view; silenced-jobs read-side filter; Classes tab restored.
 
-#### Multi-connection v2 — per-connection parity for scoped dashboards
+### Added
+- Per-connection batch indexing. Roster `qi:batches:index:{connection}` populated first-write-wins via `BatchClaimConnection.lua`. Heterogeneous batches land on the dispatching connection; uuid → connection side-key `qi:batch-uuid-conn:{uuid}` keeps scope filter working after pending hashes expire.
+- Per-connection completed stream `qi:completed:connection:{connection}`. Scoped Recent completed reads it directly — no post-filter starvation under imbalanced traffic. Cap: `retention.per_connection_stream_max` (default 5000, ~10 MB per 10-connection install).
+- Five Lua scripts that atomically dual-write aggregate + per-connection counters in `RecordJobProcessed::handle` / `RecordJobFailed::handle`:
 
-After upgrading, scoped dashboards (`/queue-insights/{connection}`) reach feature parity with the un-scoped view for batches, recent completed, and per-class scoped counts.
+  | Script | Replaces | Guarantee |
+  |---|---|---|
+  | `IncrPairWithExpire.lua` | `INCR + EXPIREAT` × 2 | Both INCRs land or neither |
+  | `DurationPair.lua` | `HINCRBY count + HINCRBYFLOAT sum_ms + max-CAS + EXPIRE` × 2 | Hashes never drift past one event |
+  | `SamplesPair.lua` | `RPUSH + LTRIM + EXPIRE` × 2 | Sample lists in lockstep |
+  | `SetexPair.lua` | `SETEX` × 2 | `last_run` keys updated together |
+  | `ClassesRoster.lua` | `ZADD × 2 + EXPIRE per-conn` | Aggregate + per-connection rosters atomic |
 
-##### Per-connection batch indexing
+- `silenced` config (top-level list of FQCNs). Read-side filter — mirrors Horizon's `horizon.silenced`. Suppresses silenced classes from Failed list, headline failed-tile, throughput sparkline failed series, `failure_rate` detector, and notifications. Counter writes preserved → reversible without backfill. `slow_p95` deliberately not filtered (perf ≠ failure noise). Modal-by-uuid / chain-lineage / batch-detail click-through always resolve.
+- "Show silenced" toggles on Failed (`?fs=1`) and Completed (`?cs=1`) panes — independent, URL-shareable.
+- **Silenced** dashboard tab (renders when `silenced` is non-empty). Two-section pane: silenced failed + silenced completed. Constant-cost regardless of list size.
+- **Classes** tab restored — per-class 24h volume / runtime / p95 / max / last-run table; click row to filter Completed by class. Silenced classes show muted `silenced` badge.
+- `ConfigValidator::validateRetention` + `validateSilenced` — fail loudly on bad shape. Silenced validator wired outside the `alerts.enabled` gate.
+- Live demo seeds `App\Jobs\PingThirdPartyVendor` as silenced @ 0.45 failure rate.
 
-Batches dispatched via `Bus::batch([...])` now register on a per-connection roster (`qi:batches:index:{connection}`), populated first-write-wins via `BatchClaimConnection.lua`. Heterogeneous batches (jobs across multiple connections in one batch) land on whichever connection dispatched the FIRST job; other connections' scoped views fall back to the un-scoped dashboard. The aggregate roster (`qi:batches:index`) is preserved, so the un-scoped dashboard's read path is unchanged and rollback to 0.7.0 is safe. The pointer key (`qi:batch:{id}:connection`) refreshes its TTL on every subsequent JobQueued for the same batch so it doesn't age out under continued traffic.
+### Changed
+- `retention.processed_counters_days` / `failed_counters_days` now drive bucket EXPIREAT (previously dead config — listeners hardcoded 7 d / 30 d). Defaults unchanged. **Hosts that customised these values will see them applied — review before upgrading.**
+- Bulk-retry uuid collector inherits silenced exclusion via shared SQL path; default-filter view never queues silenced classes.
+- Aggregate batches roster + un-scoped dashboard read path unchanged → rollback to 0.7.0 is safe.
 
-The dashboard's Batches section is no longer hidden under scope. The detail/items view honours scope via the new pointer key — a bookmarked `?batch=` URL with a foreign-connection batch lands on the empty state instead of leaking. The detail view also reads `qi:batch-uuid-conn:{uuid}` (a dedicated uuid → connection side-key, lifetime `batches.ttl_seconds`) so the heterogeneous-batch filter keeps working after members have been processed/failed and their pending hash deleted.
-
-Legacy batches dispatched before the upgrade carry no pointer. To avoid blanking scoped views during the rollout window, `BatchScopeFilter::batchOwnedByConnection()` falls back to a per-connection roster scan on missing pointer — if any monitored connection's roster claims the batch, that connection wins; only batches absent from every per-connection roster pass through as truly-legacy.
-
-##### Per-connection completed stream
-
-`RecordJobProcessed::writeStreams` now writes a third stream alongside the global + per-class streams: `qi:completed:connection:{connection}`. Scoped Recent completed reads consume this directly with no post-filter, so deeply imbalanced traffic splits (e.g. one connection runs 100× more jobs than another) no longer drown the smaller connection's recent rows in the global stream's MAXLEN window.
-
-The new stream is capped independently by `retention.per_connection_stream_max` (default 5000). Per-connection memory cost: ~10 MB for a 10-connection install at the default cap.
-
-`QueueInsights::recentCompleted(int $limit, ?string $class, ?string $connection)` routes:
-
-- `class=null,  connection=null`  → `qi:completed`
-- `class=set,   connection=null`  → `qi:completed:{class}`
-- `class=null,  connection=set`   → `qi:completed:connection:{connection}` (new)
-- `class=set,   connection=set`   → `qi:completed:{class}` then post-filter on the row's `connection` field; reads the full per-class window so a class hot on a foreign connection can't starve scoped rows.
-
-##### Atomic per-connection counter dual-writes
-
-Aggregate + per-connection counter pairs in `RecordJobProcessed::handle` and `RecordJobFailed::handle` now run through a single Lua eval per write group. A listener crash between the aggregate and per-connection write can no longer leave them out of sync.
-
-Five new scripts under `src/Support/Lua/`:
-
-| Script | Replaces | Atomicity guarantee |
-|---|---|---|
-| `IncrPairWithExpire.lua` | `INCR + EXPIREAT` × 2 | Both INCRs land or neither |
-| `DurationPair.lua` | `HINCRBY count + HINCRBYFLOAT sum_ms + max-CAS + EXPIRE` × 2 | Hashes never drift past one event |
-| `SamplesPair.lua` | `RPUSH + LTRIM + EXPIRE` × 2 | Sample lists stay in lockstep |
-| `SetexPair.lua` | `SETEX` × 2 | `last_run` keys updated together |
-| `ClassesRoster.lua` | `ZADD × 2 + EXPIRE per-conn` | Aggregate + per-connection rosters atomic; aggregate intentionally has no whole-key TTL (pruned 30 d by snapshot command) |
-
-Streams are not Lua-bundled — XADD is atomic per call and the per-stream MAXLEN bounds drift to one observation, accepted on the same footing as the existing global-vs-per-class divergence shipping since 0.7.
-
-#### Silenced jobs
-
-Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures** should be suppressed from the dashboard's Failed list, the headline failed-tile, the throughput sparkline's failed series, the `failure_rate` alert detector, and outbound notifications.
-
-```php
-// config/queue-insights.php
-'silenced' => [
-    App\Jobs\IntermittentlyFailingJob::class,
-    App\Jobs\ThirdPartyApiSometimesFlakes::class,
-],
-
-
-```
-Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `qi:classes`) are preserved — silencing is a read-side filter only, so removing a class from the list immediately re-surfaces its history without any backfill. The class rows table keeps showing throughput / p95 / max for silenced classes with a muted `silenced` badge so you can still triage them.
-
-| Surface | Behaviour under silencing |
-|---|---|
-| Failed list (Failed tab) | Hidden by default. The "Show silenced" checkbox on the failed-pane filter form reveals them; URL-shareable as `?fs=1`. |
-| Completed list (Completed tab) | Hidden by default. Independent "Show silenced" checkbox on the completed-pane filter form; URL-shareable as `?cs=1`. The two toggles are intentionally separate so an operator can dig into silenced failures without unmuting silenced successes (or vice versa). |
-| Silenced tab | Renders when `queue-insights.silenced` is non-empty. Two-section pane: silenced-class failed jobs + silenced-class completed jobs in one place. Roster-style cap at one page per axis. |
-| Classes tab | Per-class 24h volume / runtime / p95 / max table with a muted `silenced` badge inline next to the FQCN of any class in the silenced list. |
-| Headline `failed_past_hour` + throughput sparkline failed series | Silenced classes excluded. Processed series stays exact. |
-| `failure_rate` alert detector | Returns null for silenced classes — no event, no notification, no cooldown burned. |
-| `slow_p95` alert detector | Unchanged — silencing is a failure-noise filter, not a perf filter. Exclude noisy classes from `class_threshold_ms` if you want their perf alerts muted too. |
-| Modal-by-uuid + chain-lineage click-through + batch-detail items | NOT filtered. Silencing is a list-level filter; uuid-addressed lookups always resolve. |
-| Counter writes + `qi:classes` zset | Still written. Silencing is reversible without losing history. |
-
-The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes. Toggle "Show silenced" first if you want them in the bulk set.
-
-#### Classes tab (restored)
-
-The per-class 24h aggregates table — volume, runtime, p95, max, last-run — has been off the dashboard since the v1 layout redesign in April 2026 (the `job-classes-section` partial was orphaned during the table-to-list refactor and never re-mounted). 0.8.0 brings it back as a dedicated **Classes** tab between Failed and Alert rules. Clicking a row filters the Completed list to that class. Classes listed in `queue-insights.silenced` render with a muted `silenced` badge inline next to the FQCN.
-
-#### Silenced tab
-
-When `queue-insights.silenced` is non-empty, a **Silenced** tab appears between Classes and Alert rules. Two-section pane: silenced-class failed jobs + silenced-class completed jobs in one place, capped at one page per axis (PER_PAGE = 25). Reuses the failed-list-row + completed-row partials so retry / chain chip / batch chip behaviour stays identical to the main panes. Empty-state messaging is scope-aware — operators on `/queue-insights/{connection}` see "No silenced-class failures on the {connection} connection" rather than the un-scoped framing.
-
-The tab data fetch is constant-cost regardless of silenced-list size: one `recentFailed` query + one `recentCompleted` read per render, post-filtered to silenced classes in PHP. A 10-class silenced list does not multiply read amplification.
-
-#### Live demo
-
-The hosted demo (`queue-insights-demo-main-wgcmqf.laravel.cloud`) now seeds `App\Jobs\PingThirdPartyVendor` as a silenced class with a 0.45 failure rate (next-noisiest seeded class is at 0.18). The "Show silenced" toggle on the Failed pane, the `silenced` badge in the Classes tab, the dedicated Silenced tab, and the throughput sparkline's drop-out behaviour are all visibly demonstrated against real Redis reads.
-
-#### Configuration
-
-##### `retention.per_connection_stream_max` (new)
-
-Cap for the per-connection completed stream. Default `5000`.
-
-##### `retention.processed_counters_days` / `failed_counters_days` (now live)
-
-Previously dead config keys — listeners hardcoded 7d / 30d. As of 0.8.0 they drive the bucket EXPIREAT directly. Defaults unchanged. Hosts that published `config/queue-insights.php` and edited these keys are now seeing their values applied; review before upgrading if you've customised either.
-
-##### `silenced` (new)
-
-Top-level list of job-class FQCNs whose failures are suppressed. Empty array = feature off.
-
-#### `ConfigValidator::validateRetention` + `validateSilenced` (new)
-
-Type-check the `retention.*` and `silenced` blocks at boot. A typo or a non-positive value fails loudly with a `QueueInsightsConfigException` instead of degrading silently. The silenced validator is wired **outside** the `alerts.enabled` gate — silencing affects dashboard reads regardless of alerts. A non-array `silenced` value (e.g. `'App\\Jobs\\Foo'` instead of `[App\\Jobs\\Foo::class]`) fails boot loudly rather than silently coercing to "feature off".
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.7.0...0.8.0
 
 ## 0.7.0 - 2026-05-01
 
-### What's new
+Multi-connection scoping — `/queue-insights/{connection}` narrows every panel to the named connection.
 
-#### Multi-connection scoping
+### Added
+- `/queue-insights/{connection}` route. Scopes queue rows, alerts strip, snapshot watchdog, pending/delayed/in-flight inspectors, recent lists, headline stats, per-class metrics, alert-rules panel. Batches are intentionally hidden under scope in 0.7.x — see Known limitations below; restored in 0.8.0.
+- Connection nav strip above headline cards — auto-suppresses for single-connection installs.
+- Optional `viewQueueInsightsConnection` gate. When defined: 403s denied scopes, hides them from nav, renames "All" → "All allowed". Without it, scope is reachable to anyone passing `viewQueueInsights` (pre-spec behaviour).
+- Per-connection counter dual-writes (`processed:{class}:{connection}:{bucket}`, `failed:{class}:{connection}:{bucket}`, `duration:{class}:{connection}`, `last_run:{class}:{connection}`, `classes:{connection}` zset). Aggregate keys unchanged → rollback safe. Scoped per-class metrics fill in as new events flow.
+- `scope_connection` field on `queue-insights.retry` audit log lines.
+- `alerts.channels.slack.channel` / `QUEUE_INSIGHTS_SLACK_CHANNEL` — informational label (Slack webhooks bind destination server-side).
+- Laravel Cloud demo app under `demo/` with build script, basic-auth gate (`DEMO_*` env), idempotent preview seeder.
 
-`/queue-insights` aggregates every monitored connection into one view (unchanged). `/queue-insights/{connection}` narrows every panel to the named connection: queue rows, alerts strip, snapshot watchdog, pending / delayed / in-flight inspectors, batches, recent completed / failed lists, headline stats (jobs / min, throughput sparkline, p95 wait, max runtime), per-class metrics, and the alert-rules panel's depth thresholds.
+### Known limitations under scope (resolved in 0.8.0)
+- Batches section hidden under scope (no per-batch connection key in 0.7.x).
+- Recent completed reads global stream + filters → can starve scoped rows under imbalanced traffic.
+- Per-connection counter dual-write is non-atomic.
 
-A connection nav strip above the headline cards renders one tab per allowed connection plus an "All" tab. The strip auto-suppresses when only one connection is monitored, so single-connection installs see no UI change.
-
-The `{connection}` segment is validated against the configured `snapshots.*.connection` names in the dashboard's `mount()`. A typo 404s rather than mounting an empty dashboard.
-
-##### Per-connection authorisation (optional)
-
-Add `viewQueueInsightsConnection` to authorise per connection:
-
-```php
-Gate::define('viewQueueInsightsConnection', function ($user, string $connection): bool {
-    return $user->canAccessTenant($connection);
-});
-
-
-
-```
-When defined, the dashboard:
-
-- 403s direct visits to `/queue-insights/{connection}` the user can't access.
-- Hides denied connections from the nav strip.
-- Renames the "All" tab to "All allowed" with a tooltip listing only the connections the user can already open (denied tenants are never named).
-
-If the gate isn't defined, every monitored connection is reachable to anyone who passes `viewQueueInsights` — same behaviour as pre-spec versions.
-
-##### Audit log carries scope
-
-Every retry log line (`queue-insights.retry`) gains a `scope_connection` field alongside the existing filter snapshot, so retries that span tenants are distinguishable from scoped retries.
-
-##### Per-connection class metrics need traffic to warm
-
-Per-connection counters (`processed:{class}:{connection}:{bucket}`, `failed:{class}:{connection}:{bucket}`, `duration:{class}:{connection}`, `last_run:{class}:{connection}`, `classes:{connection}` zset) are dual-written alongside the existing aggregate keys. Aggregate dashboards (`/queue-insights`) render correctly from second 0 after upgrade. Scoped views (`/queue-insights/{connection}`) for per-class p95 / throughput / 24h totals fill in as new events flow — the first hour after deploy will show `0` for class counts on a scoped view. Aggregate keys are unchanged so rolling back the package version is safe.
-
-##### Known limitations under scope
-
-These v1 gaps surface only on the connection-scoped routes; the un-scoped dashboard is unaffected.
-
-- **Batches section is hidden under scope.** Per-batch metadata isn't yet keyed by connection, so the batches section would otherwise leak other-connection batches into a scoped view. The section reappears the moment scope is removed.
-- **Recent completed list reads from a global stream.** `recentCompleted()` pulls the most recent ~250 entries from a single global stream and then filters by the scoped connection. In deployments with a deeply imbalanced traffic split (one connection running 100x more jobs than another), the scoped Recent completed list can show stale or empty rows even though matching jobs exist. Workaround: raise `recent_fetch_limit`, or contribute per-connection streams as a follow-up. Recent failed is unaffected — it reads from the failed_jobs DB table with explicit WHERE clauses.
-- **Per-connection counter dual-write isn't atomic.** Aggregate and per-connection counters are written as separate Redis commands. A listener crash mid-write can leave the per-connection counter behind aggregate; later traffic re-fills it. Same best-effort guarantee the package's existing listeners offer; never produces phantom data.
-
-#### Slack channel label (informational)
-
-`alerts.channels.slack.channel` (env: `QUEUE_INSIGHTS_SLACK_CHANNEL`) lets you record a display name for the destination channel — useful when one notifiable routes to multiple webhooks and you want the source-of-truth config to show where each one lands. Slack incoming webhooks bind the channel server-side at creation time, so the value is informational only and does not override the webhook's destination.
-
-#### Live demo
-
-A Laravel Cloud demo app now ships under `demo/` with a Phase-1 build script, basic-auth gate (configurable via `DEMO_*` env vars), and an idempotent preview seeder so the dashboard renders sample data on first paint. The README links to the live URL. Internal-facing only at this release; no public API surface lives under `demo/`.
-
-### New publishable assets
-
-Hosts that published the views (`php artisan vendor:publish --tag=queue-insights-views`) should re-publish to pick up the connection nav strip in `partials/tabs-workspace.blade.php` and the layout slot in `layouts/app.blade.php`. Existing publishable partials are untouched.
+### Publishable assets
+Re-publish views (`--tag=queue-insights-views`) for `partials/tabs-workspace.blade.php` + `layouts/app.blade.php`.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.6.0...0.7.0
 
 ## 0.6.0 - 2026-04-30
 
-### What's new
+Alerting subsystem + backward chain lineage.
 
-#### Alerting subsystem
-
-Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Eight detectors run every snapshot tick against live Redis state:
+### Added — alerting
+Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Eight detectors run per snapshot tick:
 
 | Rule | Scope | Fires when |
 |---|---|---|
-| `depth` | per-queue | `live:depth` ≥ a configured threshold (highest matching severity wins) |
-| `stalled` | per-queue | depth ≥ `min_depth` AND no worker pickups in `idle_seconds` |
-| `oldest_pending` | per-queue | the oldest runnable pending job has been waiting `seconds` (skips not-yet-due delayed jobs) |
-| `stuck_inflight` | per-queue | the longest-running in-flight job has been executing `seconds` |
-| `failure_rate` | per-class | `failed/(processed+failed)` ≥ `ratio` over the current hour bucket AND total ≥ `min_jobs` |
-| `slow_p95` | per-class | per-class p95 duration ≥ `class_threshold_ms[$class]` (opt-in per class) |
-| `snapshot_errored` | per-queue | the snapshot driver threw on the most recent tick (auto-clears on success / 10-min TTL) |
-| `backlog_growing` | per-queue | least-squares depth slope over the recent samples ≥ `min_slope_per_minute` (opt-in, warms up after `min_samples`) |
+| `depth` | per-queue | `live:depth` ≥ configured threshold (highest matching severity wins) |
+| `stalled` | per-queue | depth ≥ `min_depth` AND no pickups in `idle_seconds` |
+| `oldest_pending` | per-queue | oldest runnable pending job waited `seconds` (skips not-yet-due delayed) |
+| `stuck_inflight` | per-queue | longest in-flight job running for `seconds` |
+| `failure_rate` | per-class | `failed/(processed+failed) ≥ ratio` over current hour AND total ≥ `min_jobs` |
+| `slow_p95` | per-class | per-class p95 ≥ `class_threshold_ms[$class]` (opt-in per class) |
+| `snapshot_errored` | per-queue | snapshot driver threw on most recent tick (10-min TTL) |
+| `backlog_growing` | per-queue | least-squares depth slope ≥ `min_slope_per_minute` (opt-in, warms after `min_samples`) |
 
-A dashboard-only `snapshot_command_dead` watchdog renders a top-level red banner when `live:depth` keys are absent for every configured queue — i.e. the snapshot command itself has gone silent for ≥ 90 s.
+Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:depth` keys absent for ≥ 90 s.
 
-**Cooldown is per-(rule, target).** Keys are namespaced as `alert:cooldown:{rule}:{c}:{q}` and `alert:cooldown:{rule}:class:{class}`, so one rule's cooldown never suppresses another rule's alert on the same queue. Cooldown gates outbound notifications only — the dashboard always reflects live state.
+- Cooldown is per-(rule, target). Keys: `alert:cooldown:{rule}:{c}:{q}` / `alert:cooldown:{rule}:class:{class}`. Gates outbound notifications only — dashboard always live.
+- Three notification channels via `Illuminate\Notifications`: `log` (zero-dep, default on), `slack` (Block Kit, Slack/Mattermost/Rocket.Chat, plain-text fallback), `mail` (subject `[Queue Insights] {severity}: {rule} on {target}`). `slack` + `mail` feature-detect their bindings → `mail`/`guzzle` stay in `composer suggest`.
+- Typed events fire regardless of channel config: `QueueDepthExceeded` (gained `?string $severity`), `QueueStalled`, `OldestPendingAging`, `StuckInFlight`, `SnapshotErrored`, `JobClassFailureRateExceeded`, `JobClassP95Exceeded`, `BacklogGrowing`.
+- Active-rules panel — read-only summary of `alerts.rules` + `alerts.channels`. `#[Lazy]` Livewire child → -25–30 ms cold first-page.
 
-**Three built-in notification channels** route through Laravel's first-party `Illuminate\Notifications` stack — exactly as Spatie's alerting packages and Horizon do — so you can extend with any `laravel-notification-channels/*` package without forking the dispatcher:
+### Added — backward chain lineage
+- `↰ From {parent}` row on completed/failed modals + failed-job markdown export.
+- Capture: parent drops a claim ticket into Redis on entering processing keyed `(connection, queue, next-class, tail-fingerprint)`; child's `JobQueued` pops it and stamps `parent_uuid` on lineage hash.
+- Click-through to parent modal via `openByUuid` action; parent modal gets `Back to {class}` button.
+- Disable: `QUEUE_INSIGHTS_CHAIN_LINEAGE=false`. Encrypted parents (`ShouldBeEncrypted`) silently skipped both sides. Class label best-effort past `chain_lineage.lineage_ttl_seconds` (default 7 d).
+- Cross-worker collision tolerance: identical-shape concurrent chains can attribute in dispatch order rather than identity. Within one worker: exact.
+- `queue:retry` preserves chained-job lineage — the existing `qi:lineage:{uuid}` is never overwritten with null on re-fire, and the eventual completed-stream entry of a retried chained job still carries the correct `chain` field.
 
-- **`log`** — zero-dep, on by default; one structured log line per issue.
-- **`slack`** — Block Kit `Http::post` to a Slack-compatible incoming webhook (Slack, Mattermost, Rocket.Chat); falls back to plain `text` if Block Kit is rejected.
-- **`mail`** — first-party mail channel; subject prefix `[Queue Insights] {severity}: {rule} on {target}`.
+### Changed
+- `QueueInsightsServiceProvider` is now a `DeferrableProvider` — singleton/bind chain paid lazily.
+- `boot()` reads merged config block once; `validateAlerts` only runs when `alerts.enabled === true`.
 
-`slack` and `mail` feature-detect `Illuminate\Http\Client\Factory` and `mail.manager` respectively — if the binding is missing they're silently skipped, so the `mail` and `guzzle` packages stay opt-in via `composer suggest`.
-
-**Typed events fire regardless of channel config**, so hosts can wire any custom routing via `Event::listen(...)`:
-
-- `QueueDepthExceeded` (existing — gained a trailing nullable `?string $severity`)
-- `QueueStalled`, `OldestPendingAging`, `StuckInFlight`, `SnapshotErrored`
-- `JobClassFailureRateExceeded`, `JobClassP95Exceeded`
-- `BacklogGrowing`
-
-**Active-rules panel.** The dashboard footer renders a read-only summary of `alerts.rules` + `alerts.channels` so operators can verify what's monitored without SSH'ing into the server. Config is the source of truth; there is no runtime mutation surface by design. The panel is now a `#[Lazy]` Livewire child component, so the parent dashboard's initial render skips the panel builder + 98-line blade until the operator actually opens the tab — shaving roughly 25–30 ms off cold first-page latency.
-
-#### Backward chain lineage — `↰ From {parent}`
-
-Completed and failed modals (and the failed-job markdown export) gain a backward lineage row next to the existing `↳ Next` chip. Capture works by dropping a short-lived **claim ticket** into Redis as the parent enters processing, keyed by `(connection, queue, next-class, tail-fingerprint)`; the next link's `JobQueued` listener pops a ticket and stamps `parent_uuid` onto the child's lineage hash. Both writers and readers short-circuit when `chain_lineage.enabled = false`, so cost is zero for hosts that opt out.
-
-- Disable via `QUEUE_INSIGHTS_CHAIN_LINEAGE=false` (or `chain_lineage.enabled = false`).
-- Encrypted parents (`ShouldBeEncrypted`) are silently skipped on both sides — the serialized command body is opaque base64, so neither the parent's chain context nor the child's tail can be decoded.
-- Cross-worker collision tolerance: two parents with identical chain shape (same connection/queue/next-class/remaining-tail) running concurrently on different workers can attribute their children to each other in dispatch order rather than dispatch identity. Within a single worker chain dispatch is synchronous, so attribution is exact.
-- Class label is best-effort. `qi:class:{uuid}` (TTL = `chain_lineage.lineage_ttl_seconds`, default 7 d) is the side-channel that hydrates a parent UUID to a class name. Past that horizon the UUID still renders, just without `(ClassName)`.
-- Click-through to the parent's modal is **in** for v1: clicking the `↰ From` row opens the parent's modal via the `openByUuid` action, which dispatches to `openPayload` / `openFailed` / `openPending` based on where the parent currently lives. A "Back to {class}" button on the parent modal pops the chain stack so navigation back to the original modal is a single click.
-
-`queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job still carries the correct `chain` field. Backward lineage is keyed by uuid and survives the retry too: the existing `qi:lineage:{uuid}` is never overwritten with null.
-
-#### Deferred service provider + cold-boot wiring tweaks
-
-The package's `QueueInsightsServiceProvider` now implements `DeferrableProvider` and advertises its bound services via `provides()`, so the singleton/bind chain is paid lazily when the first consumer resolves. Combined with the lazy alert-rules panel, hosts that boot the package but never render the dashboard during the request pay roughly nothing.
-
-Also:
-
-- `boot()` fetches the merged config block once and walks it locally instead of issuing six separate facade hops.
-- `validateAlerts` only runs when `alerts.enabled === true`, so the 424-LOC `AlertsConfigValidator` no longer autoloads on the cold-boot path of hosts that don't use alerting.
-
-#### Migration: `alerts.thresholds` → `alerts.rules.depth.thresholds`
-
-Pre-0.6 hosts that published `config/queue-insights.php` keep working — the legacy `alerts.thresholds` list still wins over the new `alerts.rules.depth.thresholds` (so prod alerts never silently drop), and a one-off boot warning logs the deprecation. Migrate when convenient:
+### Deprecated
+`alerts.thresholds` → `alerts.rules.depth.thresholds`. Backwards-compatible: legacy `alerts.thresholds` still wins (loud deprecation logged on boot) so prod alerts never silently drop. Migrate at convenience:
 
 ```diff
  'alerts' => [
@@ -275,264 +138,92 @@ Pre-0.6 hosts that published `config/queue-insights.php` keep working — the le
 +        ],
 +    ],
  ],
-
-
-
-
 ```
-Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published the config before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
 
-#### Custom payload sanitizer signature
+`mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
-No change. The `Contracts\PayloadSanitizer` surface is unchanged in this release.
-
-### New publishable assets
-
-Hosts that published the views (`php artisan vendor:publish --tag=queue-insights-views`) should re-publish to pick up:
-
-- `partials/alerts-strip.blade.php` — top-of-dashboard issue strip.
-- `partials/snapshot-watchdog-banner.blade.php` — red banner when the snapshot command is silent.
-- `partials/parent-lineage-row.blade.php` — `↰ From` block on the modal.
-- `partials/chain-back-button.blade.php` — back navigation button when the user opened a parent via `↰ From`.
-- `livewire/alert-rules-panel.blade.php`, `livewire/alert-rules-panel-placeholder.blade.php` — the lazy alert-rules tab + its skeleton.
+### Publishable assets
+Re-publish for `partials/alerts-strip.blade.php`, `partials/snapshot-watchdog-banner.blade.php`, `partials/parent-lineage-row.blade.php`, `partials/chain-back-button.blade.php`, `livewire/alert-rules-panel.blade.php`, `livewire/alert-rules-panel-placeholder.blade.php`.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.5.0...0.6.0
 
 ## 0.5.0 - 2026-04-28
 
-Minor release. Two user-visible UX changes — a tabbed dashboard with an Overview pane and server-side pagination on Completed/Failed — plus an internal cleanup sprint that decomposes the Livewire dashboard component into focused, testable support classes.
+Tabbed dashboard + server-side pagination + internal decomposition. No public API breaks; no config changes.
 
-No public API breaks. No config changes, no schema, no published-asset moves.
+### Added
+- Six dashboard tabs: Overview (default), Queues, Pending, Batches, Completed, Failed. Active tab persists in `window.location.hash` (`#qi-overview`, …).
+- Overview pane: 4-card mission grid (Queues / Pending / Recent completed / Recent failed). Click rows to open the same modals as full tables; "See all N →" footer switches tab.
+- Persistent hero (sparkline + 6-KPI panel) sits above tab strip.
+- Server-side pagination on Completed (`?cp=`) + Failed (`?fp=`) — 25 rows/page, 10 pages over the most-recent 250-row window. Filter changes auto-reset to page 1. Out-of-range page clamps to last available.
+- `<x-queue-insights::meta-pill>` Blade component — replaces 15 hand-coded `<dl>` blocks across modals. Fixes the `bg-gray-950/[0.04]` dt + `bg-white` dd transparent-`<dd>` styling drift.
+- `<x-queue-insights::list-row>` Blade component — owns `role="button"` + `tabindex` + keyboard handler scaffold across the four row partials.
+- `Support\WaitTimeMetrics::format(?int $ms): string` — public ms-to-human formatter (exposed as `$fmtMs` in view data).
 
-### What's new
+### Changed (internal)
+- Livewire dashboard component shrunk 964 → ~510 LOC. `render()` is a one-liner over `Dashboard\DashboardData::build($component)`.
+- New `@internal` `Dashboard\` namespace: `DashboardData` (orchestrator; owns `PER_PAGE=25`, `RECENT_FETCH_LIMIT=250`), `ModalResolver`, `HeadlineStatsBuilder`, `FilterOptionsBuilder`, `ClassRowsBuilder`, `QueueRowsBuilder`.
+- New `@internal` Support helpers: `QueueAggregates`, `FailedJobUuidCollector`.
+- `tabs-workspace.blade.php` (was 507 LOC, 6 inline panes) split into `partials/tabs/pane-*.blade.php` + `tab-button` + `card-mini-row` + `pagination-controls` + `persistent-hero`. `dashboard.blade.php` reduced to a 44-line shell.
 
-#### Tabbed dashboard with an Overview pane
-
-The dashboard reorganises into six tabs — Overview (default), Queues, Pending, Batches, Completed, Failed — anchored by a sticky tab strip. The active tab persists in `window.location.hash` (`#qi-overview`, `#qi-queues`, …) so refreshes and bookmarks land where the operator left off.
-
-The new Overview pane is a 4-card mission grid:
-
-- **Queues card** — top-N queues (at-risk first, padded by deepest), backlog + in-flight totals, "needs attention" / "all healthy" status pill.
-- **Pending card** — top-N rows across in-flight / pending-now / delayed (in-flight tagged so the dot pulses), with a sub-counter row.
-- **Recent completed card** — top-5 most-recent completions with the past-hour throughput badge.
-- **Recent failed card** — top-5 most-recent failures with the past-hour failure badge.
-
-Each card row is the same clickable + keyboard-accessible affordance as the full table — opening the same modal — and a "See all N →" footer button switches to the matching tab via the URL hash.
-
-The persistent hero (sparkline + 6-KPI panel) sits above the tab strip so the throughput trend stays visible across tabs.
-
-#### Server-side pagination on Completed and Failed
-
-Completed and Failed lists paginate at 25 rows per page. Page state lives in URL-shareable Livewire props (`?cp=`/`?fp=`) so a deep-linked page survives refresh; bookmarking page 5 of a list that's since shrunk to 2 pages clamps gracefully to the last available page. Filter changes auto-reset to page 1 via a single `updated()` hook keyed off prop-name prefix.
-
-Pagination paginates over the most-recent 250-row window per tab (10 pages of 25). Older history is not paginated by design — the dashboard remains a recency view, not a historical archive.
-
-#### Compact metadata pills + unified row scaffolding
-
-The metadata pill (`Connection: redis`, `Queue: default`, `ID: <uuid>`) used to be a divergent two-half `<dl>` open-coded fifteen times across the four modal components. The styling-drift bug where the `<dd>` half rendered transparent (`bg-gray-950/[0.04]` dt + `bg-white` dd → recent UI noise) is fixed and the markup lifted into a single component:
-
-```blade
-<x-queue-insights::meta-pill label="Connection" :value="$payload['connection'] ?? null"/>
-<x-queue-insights::meta-pill label="Queue" :value="$payload['queue'] ?? null" size="sm"/>
-
-
-
-
-
-```
-A second new component, `<x-queue-insights::list-row>`, owns the four main row partials' `role="button"` + `tabindex` + keyboard handler scaffold — one place to fix click + a11y wiring instead of four.
-
-#### Modal stacking-context fix
-
-The four modal overlays (details / failed / pending / batch) gain `z-50` on the `fixed inset-0` wrapper so the modal sits above any portaled UI regardless of source order. Existing modal interaction is unchanged.
-
-#### Workbench preview — `openBatch` + paged seed data
-
-The workbench `PreviewDashboard` mirrors production's `openBatch` cross-modal navigation and pads its seed data so the preview exercises multi-page pagination state.
-
-### Internal — `Dashboard\` namespace + `DashboardData` orchestrator
-
-Six `@internal` classes consolidate logic that used to live inline inside the 964-line Livewire component:
-
-| Class | Role |
-|---|---|
-| `Dashboard\DashboardData` | Orchestrator. `build($component)` returns the full view-data array; the component's `render()` is now a one-liner. Owns `PER_PAGE` (25) and `RECENT_FETCH_LIMIT` (250). `EXPECTED_KEYS` enumerates the contract. |
-| `Dashboard\ModalResolver` | Resolves the open modal target (payload / failed / pending / batch). Pure scans for the first two; `findPendingByUuid` + `BatchReader::detailRow` fallbacks for the latter two so deep-linked selections outside the loaded window still mount. |
-| `Dashboard\HeadlineStatsBuilder` | jobs/min, past-hour totals, max wait, max runtime — one shape, derived from data already loaded. |
-| `Dashboard\FilterOptionsBuilder` | Connection/queue/class option lists for the filter dropdowns. |
-| `Dashboard\ClassRowsBuilder` | Per-class row set with 24h aggregate metrics. |
-| `Dashboard\QueueRowsBuilder` | Per-queue rows with live depth/in-flight/delayed, staleness flag, wait percentiles, pending-inspector fields. |
-
-Two more `@internal` Support classes lift cross-cutting helpers:
-
-- `Support\QueueAggregates` — `aggregate()` partition + total, `queuePreview()` + `pendingPreview()` for the Overview cards.
-- `Support\FailedJobUuidCollector` — pluck the bulk-retry uuid set; lives outside the Livewire component on purpose so the query isn't part of the client-callable action surface.
-
-`Support\WaitTimeMetrics::format(?int)` — public formatter for ms → human strings. The dashboard exposes it as a `$fmtMs` callable in view data.
-
-The Livewire component shrinks from 964 → ~510 LOC. `render()`:
-
-```php
-public function render(DashboardData $data): View
-{
-    return ViewFactory::make('queue-insights::dashboard', $data->build($this));
-}
-
-
-
-
-
-```
-### Internal — view decomposition
-
-`tabs-workspace.blade.php` (formerly 507 lines hosting six panes) splits into:
-
-```
-resources/views/partials/
-├── tabs-workspace.blade.php       (~80 LOC: tab strip + Alpine state + 6 @includes)
-├── persistent-hero.blade.php
-├── pagination-controls.blade.php
-├── card-mini-row.blade.php
-└── tabs/
-    ├── pane-overview.blade.php
-    ├── pane-queues.blade.php
-    ├── pane-pending.blade.php
-    ├── pane-batches.blade.php
-    ├── pane-completed.blade.php
-    ├── pane-failed.blade.php
-    └── tab-button.blade.php
-
-
-
-
-
-```
-`dashboard.blade.php` is now a 44-line shell: flash banner, hero, tabs-workspace, modal mounts. The 47-line `@php` derivation block at the top of `dashboard.blade.php` is gone — `$queuePreview`, `$pendingPreview`, `$totalDepth`, `$totalInFlight`, `$atRisk`, `$healthy`, `$fmtMs` are computed in the component layer.
-
-### Diagnostics noise floor
-
-- Drop unused `use Illuminate\Support\Facades\Redis` from the dashboard component.
-- Rename the unused override param `$artisan` → `$_artisan` in `tests/Support/RecordingConsoleKernel`.
-- Add the `int` type to the `PER_PAGE` typed-constant.
-
-### Public API surface (additive)
-
-- `<x-queue-insights::meta-pill>` — new publishable Blade component.
-- `<x-queue-insights::list-row>` — new publishable Blade component.
-- `Support\WaitTimeMetrics::format(?int $ms): string` — new public static formatter.
-
-All `Dashboard\*` and the new `Support\QueueAggregates` / `Support\FailedJobUuidCollector` classes are `@internal` and not part of the supported surface.
+### Fixed
+- Modal overlays gain `z-50` on `fixed inset-0` wrapper — modals no longer get covered by portaled UI.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.4.1...0.5.0
 
 ## 0.4.1 - 2026-04-28
 
-### Bug fixes
+### Fixed
+- **Failed-jobs class filter returned 0 results on MySQL.** `addslashes('App\Jobs\Foo')` doubled `\` to `\\`; MySQL's default LIKE escape (`\`) collapsed it back to `\` while the JSON column stored `\\` (json_encode persists `\` as `\\`). Fix: derive needle from `json_encode($filters->class)` + `ESCAPE '|'` (portable across MySQL/PostgreSQL/SQLite). `LOWER()` kept on both sides so deep-linked URLs with mismatched casing still match. User-supplied `%`/`_`/`|` escaped to block wildcard smuggling.
+- **Boundary-case test flake on prefer-stable.** `pending vs delayed by available_at <= now` test seeded `d1 = now + 1`; second-rollover between test capturing `$now` and `pendingJobs()` re-reading `Date::now()` flipped buckets on slow runners. Pinned via `Date::setTestNow()`.
 
-#### Failed-jobs class filter returned 0 results on MySQL
+### Added
+- `<x-queue-insights::nested-data :data="$value">` Blade component — recursive tree renderer for nested-array Other-fields (`illuminate:log:context`, etc.) on completed/failed Raw tab. Uses `<template x-if>` (not `x-show`) so collapsed subtrees don't materialize. Depth-cap 6. Container header summarises (`object · 3 keys` / `array · 12 items`).
 
-`Recent failed → filter → class → pick any` came back empty even when matches existed. Root cause was a backslash-in-LIKE collision inside `applyFailedJobFilters`:
-
-- `addslashes('App\Jobs\Foo')` doubled each `\` to `\\`.
-- MySQL's default LIKE escape (`\`) then consumed the doubled backslash back to a single `\`.
-- The pattern looked for `App\Jobs\Foo` while the JSON column actually stored `App\\Jobs\\Foo` (json_encode persists `\` as `\\`). No match.
-
-Fix: derive the needle from `json_encode($filters->class)` so it produces the exact byte sequence stored in the column, plus `ESCAPE '|'` so the LIKE engine treats `|` (not `\`) as the escape char — portable across MySQL, PostgreSQL, and SQLite. `LOWER()` stays on both sides so deep-linked URLs with mismatched casing still match (without it, PostgreSQL's case-sensitive LIKE would silently miss while MySQL/SQLite matched). User-supplied `%` / `_` / `|` are escaped so a hostile FQCN can't smuggle a wildcard match.
-
-Three new regression tests cover backslash matching, mixed-case input, and wildcard escape.
-
-#### Boundary-case test flake on the prefer-stable cell
-
-The `pending vs delayed by available_at <= now boundary` test seeded `d1 = now + 1` and asserted it landed in `delayedJobs()` only. On a slow runner a second-rollover between the test capturing `$now` and `QueueInsights::pendingJobs()` re-reading `Date::now()` flipped the boundary case into the pending bucket. Pinned via `Date::setTestNow()` so both reads see the same timestamp.
-
-### What's new
-
-#### Sentry-style nested-data renderer for Other fields
-
-`illuminate:log:context` and any other non-standard top-level payload key whose value is a nested array used to render as a single opaque JSON-blob line with truncate-and-expand. The completed-job and failed-job payload Raw tab now drills container values through a recursive tree component:
-
-- Container header summarises shape (`object · 3 keys` / `array · 12 items`).
-- Click-to-expand chevron, key/value rows, scalars inline.
-- Depth-capped at 6 to bound DOM weight on pathological inputs.
-- Uses `<template x-if>` (not `x-show`) so collapsed subtrees never materialize into the DOM — browser skips layout/style cost on hidden branches.
-- XSS-safe: keys and values flow through Blade's `{{ }}` auto-escape.
-
-Reuses the same component pattern (`serialized-properties`) operators are already familiar with from the Job-instance panel, so no new mental model.
-
-#### Public API surface (additive)
-
-- `<x-queue-insights::nested-data :data="$value">` — new publishable Blade component for rendering arbitrary tree-shaped data.
-
-### Install / upgrade
-
-If you've previously published the views (`php artisan vendor:publish --tag=queue-insights-views`), re-publish to pick up the new `nested-data` component, or rebase your fork onto the new file. The class-filter fix is in `src/`, no view re-publish required for that part.
+Re-publish views for the new `nested-data` component. Class-filter fix is in `src/` only.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.4.0...0.4.1
 
 ## 0.4.0 - 2026-04-27
 
-Batches, in-flight, and chained-job inspector release. Closes the visibility gaps around `Bus::batch([...])`, jobs currently being processed, and `Bus::chain([...])` continuations — all driver-agnostic, all sourced from event capture so the same view works on Redis, database, and SQS. Cross-modal navigation lets operators move between a batch view, individual job modals, and the chain detail without losing context.
+Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no schema, no API breaks.
 
-Drop-in upgrade from `0.3.x`. No schema, no API breaks. Two new opt-in defaults (`batches.enabled`, the new in-flight sub-section), each opt-out via one env flag.
+### Added — batches
+- Top-level **Batches** section. Row: name (or `Batch <short-id>`), progress bar from `Bus::findBatch()`, counts triplet (`processed/total · failed · pending`), `cancelled` / `finished` chips.
+- Batch modal: per-uuid items in enqueue order, status icon (✓ / ✗ / ▶ / ⌛), `← Back to batch`. Expand state URL-shareable as `?batch=<batchId>`.
+- Authoritative counts come live from `Bus::findBatch()` per render — package only stores index/uuid-list/reverse-lookup.
+- Storage: ~50 bytes/uuid amortised. Per-batch keys TTL via `batches.ttl_seconds` (default 7 d). Index self-prunes via `ZREMRANGEBYSCORE` on enqueue.
+- Disable: `QUEUE_INSIGHTS_BATCHES_ENABLED=false`.
 
-### Highlights
+### Added — in-flight
+- Third sub-group above Pending now / Delayed, longest-running first via dedicated `inflight-zset`.
+- Pending → in-flight transition wrapped in `MarkInFlight.lua` so the dashboard never sees a job missing from both groups during handoff.
+- In-flight modal variant with `Started` + `Running for` tiles. ~30 bytes per running job, cleared on `JobProcessed`/`JobFailed`.
+- Disable shares the `pending:{uuid}` hash: `QUEUE_INSIGHTS_PENDING_ENABLED=false`.
 
-#### Batches
+### Added — chained jobs
+- `↳ NextJob (+N)` chip on completed/failed list rows; full FQCN + total count on hover.
+- `Chain` block in completed/failed modals — clickable, swaps modal into "Chained jobs" detail view listing every link with per-link routing + `← Back` (or `Esc`).
+- Failed-modal chain detail also shows constructor properties extracted from persisted serialized payload (framework internals filtered). Completed stays metadata-only.
+- Source: `failed_jobs.payload.data.command` for failed; JSON `chain` field on stream entry for completed (independent of `capture.payloads`). Encrypted jobs (`ShouldBeEncrypted`) silently omit chip + section.
 
-Top-level **Batches** section above the Queues panel for jobs dispatched via `Bus::batch([...])->dispatch()`. Each row shows the batch name (or `Batch <short-id>` when unnamed), a progress bar driven by Laravel's authoritative `Bus::findBatch()` counts, and a counts triplet (`processed/total · failed · pending`). Cancelled batches show a red `cancelled` chip; finished + no-failures show a gray `finished` chip.
+### Added — cross-modal navigation
+- Item modals stack on top of batch modal (don't unmount). `← Back to batch` returns to batch view.
+- Batch chip on every completed/failed/pending row + inside modal heroes.
+- `openBatch(string $id)` Livewire action — closes any open item modal in the same round-trip.
+- Direct-by-uuid pending hydration + direct batch lookup as fallbacks for items outside top-50 window.
 
-Clicking a row opens a batch modal with the per-uuid item list in enqueue order, status icon per item (✓ processed / ✗ failed / ▶ in-flight / ⌛ pending), and a `← Back to batch` exit. The expand state is URL-shareable (`?batch=<batchId>`).
+### Fixed
+- **`RecordJobFailed` indexed wrong row on retry-then-fail.** `DatabaseUuidFailedJobProvider::log()` inserts a fresh row per `JobFailed`; `where('uuid', $uuid)->value('id')` returned the OLDEST. Now sorts `id desc`.
+- **`Batch::progress()` cross-Laravel parity.** Returns float on Laravel 11/12 (PHP `round()` defaults float), int on Laravel 13. Cast to int in `BatchReader::projectBatch()`.
 
-Authoritative counts come live from `Bus::findBatch()` on every render — the package only stores the index/uuid-list/reverse-lookup needed to enumerate batches and resolve uuid → display row.
-
-#### In-flight sub-section
-
-Pending now / Delayed already existed; **In-flight** is the third sub-group above them, ordered longest-running-first via a dedicated `inflight-zset` so stuck jobs surface at the top. The pending → in-flight transition is wrapped in a Lua script (`MarkInFlight.lua`) so the dashboard never sees a job missing from both groups during the handoff. Each row shows when the worker picked the job up and how long it's been running; the modal flips to an in-flight variant with `Started` + `Running for` tiles.
-
-#### Chained jobs
-
-Jobs dispatched through `Bus::chain([...])->dispatch()` (or `$job->chain([...])`) carry the remaining chain inside the serialized command body. The dashboard surfaces it in two places:
-
-- **List rows** — completed and failed rows that have a follow-up job render a small `↳ NextJob (+N)` chip. Hover reveals the full FQCN and the total chained count.
-- **Modal Chain section** — the completed and failed modals include a `Chain` block with the next job's FQCN, the `+N more chained` count, and the chain's queue/connection. The block is clickable: it swaps the modal into a "Chained jobs" detail view that lists every chained link in order with per-link routing, and a `← Back` button (or `Esc`) returns to the job view.
-
-Drilling into a single chained job inside the **failed-job modal** also surfaces its constructor properties (extracted at render time from the persisted serialized payload, framework internals filtered out) — same renderer used by the parent job's payload section. The completed-modal chain view stays metadata-only since the slim chain summary persisted on the stream entry doesn't retain user-bound data.
-
-For **failed jobs** the source is `failed_jobs.payload.data.command` — Laravel always persists this column. For **completed jobs** the listener writes a JSON-encoded `chain` field on the stream entry at the time the job runs, also independent of `capture.payloads`. Per-link `connection`/`queue` overrides set on individual jobs are preserved. Encrypted jobs (`ShouldBeEncrypted`) carry an opaque base64 blob in `data.command`, so the chip and section are silently omitted for those rows — no error, just no signal.
-
-#### Cross-modal navigation
-
-Item modals (details / failed / pending) now stack on top of the batch modal instead of unmounting it. A `← Back to batch` button in the item modal header returns to the batch view without losing context. The batch chip — present on every completed/failed/pending list row — also renders inside the modal heroes, so an operator drilling into a single job can jump to its batch in one click. New `openBatch(string $id)` Livewire action handles the routing and closes any open item modal in the same round-trip.
-
-Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and links work for items that sit outside the top-50 aggregate window or for batches older than the section cap. Without these, an operator clicking a batched-job chip on a backed-up queue could land on a misleading "no longer pending" / "Batch no longer tracked" empty state even though the data was still tracked.
-
-### Bug fixes
-
-- **`RecordJobFailed` indexed the wrong row on retry-then-fail.** `DatabaseUuidFailedJobProvider::log()` inserts a fresh row on every JobFailed, so a uuid that retried and failed again has multiple rows. The prior `where('uuid', $uuid)->value('id')` returned the OLDEST row by query default order; clicking the batch-detail item then opened the stale failure. Now sorts by `id desc`.
-- **`Batch::progress()` cross-Laravel parity.** Returns float on Laravel 11/12 (PHP `round()` defaults to float), int on Laravel 13. Cast to int in `BatchReader::projectBatch()` so the row-shape contract holds across the supported matrix.
-
-### Public API surface (additive)
-
-- `QueueInsights::recentBatches(int $limit = 50): array`
-- `QueueInsights::batchDetail(string $batchId): ?array`
-- `QueueInsights::allInFlightJobs(int $limit = 50): array`
-- `QueueInsights::allPendingJobs(int $limit = 50): array` (cross-queue aggregator — was per-queue only)
-- `QueueInsights::allDelayedJobs(int $limit = 50): array`
-- `QueueInsights::findPendingByUuid(string $uuid): ?array`
-- `Support\BatchReader` — new helper class
-- `Support\RowEnricher` — new helper class (decode chain JSON, enrich completed/failed rows with batch_id + chain)
-- `Support\Lua\MarkInFlight.lua` — new Lua script (atomic pending → in-flight transition)
-- `Support\PendingJobsReader::findByUuid(string $uuid): ?array`
-- `Support\SerializedCommandReader::extractChainContext(string $serialized): ?array` — now includes per-job `properties` map (framework internals filtered)
-- `QueueInsightsDashboard::openBatch(string $id): void` — Livewire action
-- `QueueInsightsDashboard::closeBatch(): void`
-- `QueueInsightsDashboard::openPending(string $uuid): void`
-- `QueueInsightsDashboard::closePending(): void`
-- `QueueInsightsDashboard::toggleBatchInspector(string $id): void`
-- `QueueInsightsDashboard::$expandedBatchId` — new `#[Url(as: 'batch')]` prop
-- `QueueInsightsDashboard::$selectedPendingUuid` — Livewire prop
-- New publishable Blade components: `batch-modal`, `pending-modal`, `hint`
-- New publishable partials: `batch-row`, `batch-chip`, `pending-row`
+### Public API (additive)
+- `QueueInsights::recentBatches`, `batchDetail`, `allInFlightJobs`, `allPendingJobs` (cross-queue, was per-queue), `allDelayedJobs`, `findPendingByUuid`.
+- `Support\BatchReader`, `Support\RowEnricher`, `Support\Lua\MarkInFlight.lua`.
+- `Support\PendingJobsReader::findByUuid`.
+- `Support\SerializedCommandReader::extractChainContext` — now includes per-job `properties` map.
+- `QueueInsightsDashboard`: `openBatch`, `closeBatch`, `openPending`, `closePending`, `toggleBatchInspector`. Props: `$expandedBatchId` (`#[Url(as: 'batch')]`), `$selectedPendingUuid`.
+- New publishable Blade components: `batch-modal`, `pending-modal`, `hint`. Partials: `batch-row`, `batch-chip`, `pending-row`.
 - New config block:
 
 ```php
@@ -542,76 +233,30 @@ Direct-by-uuid pending hydration + direct batch lookup as fallbacks: chips and l
     'max_per_query' => 100,
     'ttl_seconds' => 604800,
 ],
-
-
-
-
-
-
-
 ```
-### Storage cost
-
-- Batches: ~50 bytes per uuid (per-batch list entry + reverse pointer + index entry, amortised). Per-batch keys TTL-aged via `batches.ttl_seconds` (default 7d). Index self-prunes via `ZREMRANGEBYSCORE` on each enqueue.
-- In-flight zset: ~30 bytes per running job, cleared on JobProcessed/JobFailed.
-- Authoritative batch counts come from `Bus::findBatch()` — the package's keys exist only to enumerate and resolve, not to count.
-
-### Opt-out
-
-- `QUEUE_INSIGHTS_BATCHES_ENABLED=false` — listener writes become no-ops, the Batches section disappears, chips stop rendering on existing rows.
-- `QUEUE_INSIGHTS_PENDING_ENABLED=false` — also disables the in-flight sub-section (shares the same `pending:{uuid}` hash for state).
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
 ## 0.3.0 - 2026-04-26
 
-### Highlights
+Pending & delayed-jobs inspector — driver-agnostic via event capture (works on SQS).
 
-#### Pending & delayed jobs
+### Added
+- Per-queue collapsible inspector with two mini-tables: **Pending** (`available_at <= now`) + **Delayed** (`available_at > now`). Each row: class FQCN + humanized timestamp. Expand state URL-shareable as `?qopen=connection:queue`.
+- `JobQueued` listener stamps per-uuid hash + per-queue zset on every queued job. `JobProcessing` clears on pending → in-flight; `JobProcessed` + `JobFailed` belt-and-suspenders cleanup.
+- All four listeners route queue value through `CanonicalQueueKey` so SQS producers (queue URL) and workers (queue name) write/clean the same key.
+- **Tracking-gap drift signal.** When event-derived zset diverges from `Driver::depth() + Driver::delayed()` by more than `pending.gap_warn_threshold` (default 5): `+N gap` badge on toggle + banner inside inspector telling operators the lists are a *sample*, not enumeration. Snapshot count up top remains authoritative.
+- Disable: `QUEUE_INSIGHTS_PENDING_ENABLED=false`. Listener writes become no-ops; residual data ages via TTL.
 
-Each queue row in the dashboard gets a collapsible inspector. The toggle next to the queue's badges shows a tracked-count chip; click it to open. Inside: two compact-list mini-tables, **Pending** (`available_at <= now`) and **Delayed** (`available_at > now`), each row showing the job's class FQCN and a humanized timestamp (`queued 4s ago` / `runs in 2m 14s`).
+### Storage bounds
+- Per-queue cap `pending.max_per_queue` (default 10000) — `ZREMRANGEBYRANK` evicts lowest `available_at` first.
+- TTL safety net `pending.ttl_seconds` (default 24 h) for orphans (worker crash, raw `Queue::push()`).
+- Worst case: ~5 MB Redis per queue at default cap.
 
-The expand state is URL-shareable (`?qopen=connection:queue`) — paste a dashboard URL to a peer and they land on your expanded inspector view.
-
-#### Driver-agnostic — including SQS
-
-The data is **event-captured into Redis**, not peeked from the underlying queue driver. The `JobQueued` listener stamps a per-uuid hash + per-queue sorted set on every queued job. `JobProcessing` clears on the pending → in-flight transition; `JobProcessed` and `JobFailed` do belt-and-suspenders cleanup for the rare case the processing listener was missed.
-
-Native driver-peek would have worked for Redis (`LRANGE`) and database (`SELECT FROM jobs`), but SQS doesn't expose individual queued messages without consuming them. Capturing into our Redis namespace gives the same view across all three.
-
-All four listeners route the queue value through `CanonicalQueueKey` so an SQS producer (which sees a queue URL) and the matching worker (which reports just the queue name) write to and clean from the same zset key.
-
-#### Bounded storage
-
-- **Per-queue cap** (`pending.max_per_queue`, default 10000) — `ZREMRANGEBYRANK` evicts by score (lowest `available_at` first) when capped. Per-queue zset stays at exactly the cap.
-- **TTL safety net** (`pending.ttl_seconds`, default 24h) — clears orphans whose cleanup listener never fired (worker crash, raw `Queue::push()` outside Laravel's standard event flow).
-- **Storage cost** — ~500 bytes per pending job (uuid + class FQCN + connection + queue + queued_at + available_at). 10K cap = ~5MB Redis per queue worst case. Bounded.
-
-#### Tracking-gap drift signal
-
-Our zset is event-derived; `Driver::depth() + Driver::delayed()` is the queue-of-truth. When they diverge by more than `pending.gap_warn_threshold` (default 5), a `+N gap` badge appears on the toggle and a banner inside the inspector body reads:
-
-> **Tracking gap.** N jobs on the queue are not in our pending tracking — the lists below are a sample, not a complete enumeration. Trust the queue counters (above) for totals.
-
-Operators always have a truth signal — the snapshot count up top is authoritative; the lists below are a *sample* when the gap is non-zero. Common gap causes:
-
-- Worker crash mid-pickup, `JobProcessing` listener didn't fire (TTL eventually cleans).
-- Jobs pushed via raw `Queue::push()` outside Laravel's dispatch path (no `JobQueued` event raised).
-- High-volume queue exceeding `max_per_queue` (more in the queue than the tracked sample).
-
-#### Opt-out
-
-Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-ops, the inspector toggle disappears, residual data ages out via TTL.
-
-### Public API surface (additive)
-
-- `QueueInsights::pendingJobs(string $connection, string $queue, int $limit = 50): array`
-- `QueueInsights::delayedJobs(string $connection, string $queue, int $limit = 50): array`
-- `QueueInsights::pendingTrackedCount(string $connection, string $queue): int`
-- `Support\PendingJobsReader` — new helper class (mirrors the existing `Support\WaitTimeMetrics` pattern)
-- `Support\ConfigValidator::validatePending(array $pending): void`
-- `QueueInsightsDashboard::$expandedQueueKey` — new `#[Url(as: 'qopen')]` prop
-- `QueueInsightsDashboard::toggleQueueInspector(string $key): void` — Livewire action
+### Public API (additive)
+- `QueueInsights::pendingJobs`, `delayedJobs`, `pendingTrackedCount`.
+- `Support\PendingJobsReader`, `Support\ConfigValidator::validatePending`.
+- `QueueInsightsDashboard::$expandedQueueKey` (`#[Url(as: 'qopen')]`), `toggleQueueInspector`.
 - New config block:
 
 ```php
@@ -621,210 +266,104 @@ Set `QUEUE_INSIGHTS_PENDING_ENABLED=false`. All four listener writes become no-o
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
-
-
-
-
-
-
-
-
 ```
+
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.2.1...0.3.0
 
 ## 0.2.1 - 2026-04-26
 
-### Highlights
+### Added
+- **Laravel 13 support.** `illuminate/console`, `illuminate/contracts`, `illuminate/queue`, `illuminate/redis`, `illuminate/support` accept `^13.0` alongside `^11.0` + `^12.0`. Dev: `orchestra/testbench` accepts `^11.0`; `pestphp/pest` + plugins accept `^4.0` (Pest plugin Laravel v4.1.0 is the first with `laravel/framework: ^13.0`).
+- CI matrix: `13.* × testbench 11.* × prefer-lowest|prefer-stable × PHP 8.3|8.4 × predis|phpredis`. Laravel 11 + 12 legs continue.
 
-#### Laravel 13 support
-
-Composer constraints widened so the package installs cleanly into Laravel 13 host applications:
-
-- `illuminate/console`, `illuminate/contracts`, `illuminate/queue`, `illuminate/redis`, `illuminate/support` now accept `^13.0` alongside the existing `^11.0` and `^12.0`.
-- `orchestra/testbench` (dev) accepts `^11.0`.
-- `pestphp/pest`, `pestphp/pest-plugin-arch`, `pestphp/pest-plugin-laravel` (dev) accept `^4.0` — Pest plugin Laravel v4.1.0 is the first version with `laravel/framework: ^13.0` in its constraints, and v4.x in turn requires Pest v4.x.
-
-CI matrix gains a `13.*` row paired with `testbench: '11.*'`, exercised under both `prefer-lowest` and `prefer-stable` × PHP 8.3 + 8.4 × predis + phpredis. Laravel 11 and 12 legs continue to run.
-
-#### Documents publishable view partials (carry-over from 0.2.0)
-
-The README now documents the row partials added in 0.2.0 — `partials/queue-row`, `partials/completed-row`, `partials/failed-list-row`, `partials/filter-form`, `partials/stat-tile` — and shows that hosts can publish them individually to override row markup without forking the whole `dashboard.blade.php` view.
+### Documentation
+- README documents the row partials added in 0.2.0 (`partials/queue-row`, `completed-row`, `failed-list-row`, `filter-form`, `stat-tile`) — publishable individually to override row markup without forking `dashboard.blade.php`.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.2.0...0.2.1
 
 ## 0.2.0 - 2026-04-26
 
-### Highlights
+Dashboard redesign — denser rows, Horizon-inspired headline stats, completed-list filtering.
 
-#### Dashboard redesign
+### Added
+- Compact divider lists for Queues / Recent completed / Recent failed (replaces white-on-white card stacks). Shared `partials/*-row.blade.php` keeps spacing and column geometry identical.
+- Body palette → `bg-gray-50` so panels read as defined cards. Section headings use `text-lg` + monochrome Heroicon prefix.
+- Column headers on every list (e.g. completed: `Job · Queue · Runtime · Completed`).
+- Headline stats panel — six tiles beside throughput sparkline as `lg:col-span-2 + 1` grid (no completed/failed pushdown). All values derived from data already loaded:
 
-- White-on-white card stacks replaced with **compact divider lists** for Queues, Recent completed, and Recent failed. Rows are denser, scan faster, and use a shared `partials/*-row.blade.php` so the three lists keep identical spacing and column geometry.
-- **Body palette** flips to `bg-gray-50` so the white panels read as defined cards instead of floating on white-on-white. No section bars — each section is prefixed by a monochrome Heroicon (`gray-400`) plus a `text-lg` heading. Visual identity stays calm, scan stays fast.
-- **Column headers** anchor each list. Recent completed now has `Job · Queue · Runtime · Completed`; Recent failed has `Job · Queue · Failed`; Queues has `Queue · Depth · In-flight · Delayed · Wait · Status`. Fixes the floaty-numbers feel where a runtime value had no obvious label nearby.
-- **Chevron** on Recent completed rows so the click affordance matches Recent failed (operator no longer wonders whether the row is interactive).
+  | Metric | Source |
+  |---|---|
+  | Jobs / min | `latest_hour.processed / 60` |
+  | Jobs past hour | `latest_hour.processed` |
+  | Failed past hour | `latest_hour.failed` (red when > 0) |
+  | Max throughput | `max(throughput[*].processed)` over 24 h |
+  | Max wait p95 | `max(queues[*].wait_p95_ms)` (amber when > 5 s) |
+  | Max runtime p95 | `max(classes[*].p95_ms)` from 24 h class roster |
 
-#### Headline stats panel
+- Recent completed filter — five fields, URL-persistent state:
 
-Six Horizon-inspired stats sit beside the throughput sparkline as a `lg:col-span-2` + `1` grid — same total height as the sparkline alone, no completed/failed pushdown:
+  | Field | Query key | Match |
+  |---|---|---|
+  | Connection | `cc` | Case-insensitive substring |
+  | Queue | `cqu` | Case-insensitive substring |
+  | Class | `ck` | Exact FQCN — picks per-class Redis stream |
+  | From | `cfrom` | `processed_at >= <Y-m-d> 00:00:00` |
+  | To | `cto` | `processed_at <= <Y-m-d> 23:59:59` |
 
-| Metric             | Source                                                |
-| ------------------ | ----------------------------------------------------- |
-| Jobs / min         | `latest_hour.processed / 60`                          |
-| Jobs past hour     | `latest_hour.processed`                               |
-| Failed past hour   | `latest_hour.failed` (red when > 0)                   |
-| Max throughput     | `max(throughput[*].processed)` over 24h               |
-| Max wait p95       | `max(queues[*].wait_p95_ms)` (amber when > 5s)        |
-| Max runtime p95    | `max(classes[*].p95_ms)` from the 24h class roster    |
+- Filter dropdowns instead of free-text on Connection / Queue / Class (both completed + failed). Options come from configured snapshots + 24 h class roster. Dates stay as native `<input type="date">`. Shared `partials/filter-form.blade.php` prevents drift.
+- At-risk queues group — two ringed panels: **Needs attention** (red ring, `error` + `stale`) above **Healthy** (gray ring). Single-row tints retained.
+- Workbench preview — `vendor/bin/testbench serve` boots a Livewire-mounted seeded dashboard at `/`. `public/index.php` (Herd entry), `workbench/app/Http/Livewire/PreviewDashboard.php`, `workbench/app/Providers/WorkbenchServiceProvider.php`. `testbench.yaml` now tracked.
+- Chevron on Recent completed rows — click affordance matches Recent failed.
 
-All values derived from data already loaded for the dashboard render — zero new Redis round-trips.
+### Removed
+- Standalone Job classes section. Per-class metrics still feed the Class dropdown, so scoping by class still works.
 
-#### Recent completed filter
-
-Recent completed picks up the same filter row pattern Recent failed has. Five fields, URL-persistent state, narrows the 50-row default cap.
-
-| Field      | Query-string key | Match semantics                              |
-| ---------- | ---------------- | -------------------------------------------- |
-| Connection | `cc`             | Case-insensitive substring                   |
-| Queue      | `cqu`            | Case-insensitive substring                   |
-| Class      | `ck`             | Exact FQCN — picks a per-class Redis stream  |
-| From       | `cfrom`          | `processed_at >= <Y-m-d> 00:00:00`           |
-| To         | `cto`            | `processed_at <= <Y-m-d> 23:59:59`           |
-
-Class is pre-filtered at the storage layer (already-existing per-class `completed:{FQCN}` stream key); the other four narrow the fetched rows in PHP via a new `Support\CompletedRowFilter` value object.
-
-The Job classes section is dropped — the same per-class metric data still feeds the Class dropdown, so operators can still scope by class without scrolling to a separate panel.
-
-#### Filter dropdowns instead of free-text
-
-Connection, Queue, and Class are `<select>` dropdowns now in both Recent completed and Recent failed. Options come from the configured snapshots and the 24h class roster — no typo-prone free-text entry. Date inputs stay as native `<input type="date">`. The shared `partials/filter-form.blade.php` is included by both sections so they can never drift again.
-
-#### At-risk queues group
-
-Queues are split into two ringed panels:
-
-- **Needs attention** — queues with `error` or `stale` status. Red-ringed panel above the rest, sub-heading shows the count. A broken queue can't hide on page 2 of a long list.
-- **Healthy** — everything else. Same column header geometry, neutral gray ring.
-
-Rows still tint individually (red for error, amber for stale) so single-row state is visible after a glance, but the panel-level grouping makes the at-a-glance "is anything wrong?" answer one heading away.
-
-#### Workbench preview for contributors
-
-Adds a Testbench `Workbench/` scaffold so the dashboard can be previewed locally without wiring it up in a host application. `vendor/bin/testbench serve` (or pointing Herd at the package directory) boots a Livewire-mounted seeded dashboard at `/` with 6 example queues mixing healthy / backlog / stale / errored, 24h throughput, 5 completed rows, 4 failed rows, and 4 classes.
-
-- `public/index.php` — Herd entry that defines `TESTBENCH_WORKING_PATH` and delegates to `vendor/orchestra/testbench-core/laravel/bootstrap`.
-- `workbench/app/Http/Livewire/PreviewDashboard.php` — fresh Livewire component that renders `queue-insights::dashboard` with hardcoded seeded data; action methods are no-op stubs so modal opens / filter clears don't error during preview.
-- `workbench/app/Providers/WorkbenchServiceProvider.php` — registers the preview component and a `/` route.
-- `testbench.yaml` is now tracked (was previously gitignored), so contributors get the wired provider + array cache/session env out of the box.
-
-### Public API surface
-
-- New `#[Url]`-bound props on `QueueInsightsDashboard`: `completedFilterConnection` (`cc`), `completedFilterQueue` (`cqu`), `completedFilterFrom` (`cfrom`), `completedFilterTo` (`cto`). Existing `selectedClass` picks up `#[Url(as: 'ck')]` so it shares to the query string like its peers.
-- New public method `QueueInsightsDashboard::clearCompletedFilters()`.
-- New `Support\CompletedRowFilter` value object — immutable, mirrors the shape of the existing `Support\FailedJobFilters`. Exposes `apply(array $rows): array` and `isEmpty(): bool`.
-- New view partials under `resources/views/partials/` — `queue-row`, `completed-row`, `failed-list-row`, `filter-form`, `stat-tile`. Publishable by hosts that want to override row markup without forking the whole dashboard view.
+### Public API (additive)
+- `QueueInsightsDashboard` `#[Url]` props: `completedFilterConnection` (`cc`), `completedFilterQueue` (`cqu`), `completedFilterFrom` (`cfrom`), `completedFilterTo` (`cto`). Existing `selectedClass` → `#[Url(as: 'ck')]`.
+- `QueueInsightsDashboard::clearCompletedFilters()`.
+- `Support\CompletedRowFilter` — immutable value object mirroring `Support\FailedJobFilters`. `apply(array $rows): array`, `isEmpty(): bool`.
+- New publishable partials: `queue-row`, `completed-row`, `failed-list-row`, `filter-form`, `stat-tile`.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.1.0...0.2.0
 
 ## 0.1.0 - 2026-04-26
 
-First public release of `sandermuller/laravel-queue-insights` — self-hosted, driver-agnostic queue observability for Laravel. Horizon-style dashboard without the Redis-queue lock-in.
+First public release of `sandermuller/laravel-queue-insights` — self-hosted, driver-agnostic queue observability for Laravel. Horizon-style dashboard without Redis-queue lock-in.
 
-### Highlights
-
-#### Live queue gauges (driver-agnostic)
-
-- Per-queue **depth / in-flight / delayed** sampled across SQS, Redis, and database queues.
-- 24h history per metric, surfaced in queue cards.
-- Stale-snapshot indicator + per-queue snapshot-error badge.
-
-#### Per-job-class metrics
-
-- Last 24h **processed / failed / avg + p95 + max duration / last run**.
-- Click-through filter on the Recent completed table.
-
-#### Throughput sparkline
-
-- 24h hourly rollup of processed + failed counts across all classes.
-- Per-hour Alpine-driven hover tooltip (no 500ms native-`<title>` lag), colour-banded for the failed series.
-
-#### Recent completed + Recent failed lists
-
-- Stream-backed completed list with metadata-only by default; opt-in payload capture (`metadata` or `full`) with a pluggable `PayloadSanitizer`.
-- Failed list reads Laravel's standard `failed_jobs` table.
-- Both tables: full-row click opens the details modal, keyboard-accessible (Enter / Space), focus-visible outlines.
-
-#### Structured details modal
-
-- Identity hero (class FQCN + connection + queue), metrics row (duration / attempts / processed-at), grouped raw-fields panel.
-- **JSON tab** with syntax highlighter for the sanitized payload body, **Raw fields** tab for KV display.
-- Decoded `data.command` properties via a safe `unserialize(allowed_classes: false)` reader — recursive Blade renderer with click-to-expand for nested objects.
-- Capture-mode badge surfaces the active retention level so operators don't misread "no payload" as "no job".
-- Parsed stack-trace component (vendor frames toggleable) on the failed-job modal.
-- **Copy buttons** with click feedback (bg flash + check icon swap) for stream id / UUID / stack trace / a Markdown export of the full failed-job context (intended hand-off to AI agents and trackers — uses dynamic fence length so embedded triple-backticks don't break the export).
-
-#### Wait-time capture (new)
-
-- Records enqueue → worker pickup latency via a `JobQueued` listener that decodes `payload.uuid` and stamps a Redis `pushed:{uuid}` key, then computes `wait_ms` on `JobProcessing`.
-- Per-queue **p50 / p95** surfaces in queue cards (rolling 1000 most-recent samples; renders `—` until 10 samples accumulate).
-- Per-job **Wait** line in completed + failed modals next to Duration.
-- 7-day clock-skew guard rejects implausible samples — a producer host with bad NTP can't poison the percentile pool indefinitely.
-
-#### Failed-jobs filter (new)
-
-- Live Livewire filter row (collapsed by default) over connection / queue / class FQCN / date range.
-- URL-persistent via Livewire `#[Url]` attribute — share / bookmark a narrowed view.
-- Class filter is anchored prefix substring on `payload.displayName`, wrapped in `LOWER(...)` to produce the same match set across MySQL / Postgres / SQLite.
-- Filtered view drives the bulk-retry scope (see below).
-
-#### Retry failed jobs (new)
-
-- **Single retry** button in the failed-job modal, **bulk retry** button next to the Recent failed table when filters are active.
-- Goes through Laravel's first-party `queue:retry` Artisan command — works across all queue drivers, idempotent against already-retried rows.
-- Two-click in-button confirm pattern (no modal-on-modal).
-- Server-enforced safety contract:
-  - Distinct `retryFailedJobs` Gate (read-only `viewQueueInsights` Gate is intentionally separate).
+### Added
+- **Live queue gauges** — per-queue depth / in-flight / delayed across SQS, Redis, database. 24 h history per metric. Stale-snapshot indicator + per-queue snapshot-error badge.
+- **Per-job-class metrics** — last 24 h processed / failed / avg + p95 + max duration / last run. Click-through filter on Recent completed.
+- **Throughput sparkline** — 24 h hourly rollup of processed + failed across all classes. Alpine hover tooltip (no 500 ms native-`<title>` lag), failed series colour-banded.
+- **Recent completed + failed lists.** Completed is stream-backed, metadata-only by default; opt-in payload capture (`metadata` or `full`) with pluggable `PayloadSanitizer`. Failed reads `failed_jobs` table. Full-row click opens modal; keyboard-accessible (Enter / Space), focus-visible outlines.
+- **Structured details modal** — identity hero (FQCN + connection + queue), metrics row, grouped raw-fields panel. JSON tab + Raw fields tab. Decoded `data.command` properties via safe `unserialize(allowed_classes: false)` — recursive Blade renderer with click-to-expand for nested objects. Capture-mode badge surfaces active retention level. Parsed stack-trace component (vendor frames toggleable) on failed modal. Copy buttons (bg flash + check swap) for stream id / UUID / stack trace / Markdown export of failed-job context (dynamic fence length so embedded triple-backticks don't break export).
+- **Wait-time capture** — `JobQueued` listener decodes `payload.uuid`, stamps `pushed:{uuid}`; `JobProcessing` computes `wait_ms`. Per-queue p50 / p95 (rolling 1000 most-recent samples; renders `—` until 10 samples). Per-job Wait line in modals next to Duration. 7-day clock-skew guard rejects implausible samples.
+- **Failed-jobs filter** — Livewire filter row (collapsed default) over connection / queue / class FQCN / date range. URL-persistent via `#[Url]`. Class filter is anchored prefix substring on `payload.displayName`, wrapped in `LOWER(...)` for cross-database parity (MySQL / Postgres / SQLite).
+- **Retry failed jobs** — single retry in failed modal; bulk retry next to Recent failed when filters active. Routes through Laravel's `queue:retry` Artisan (works on all drivers, idempotent). Two-click in-button confirm. Server-enforced safety:
+  - Distinct `retryFailedJobs` Gate (separate from read-only `viewQueueInsights`).
   - `RateLimiter` 30 retries / minute / user.
-  - Bulk action **hard-rejects** when filters are empty or the matching set exceeds 100 rows — no silent truncation.
-  - Non-zero `queue:retry` exit codes surface as red banners (dead-letter / driver-rejected rows are visible, not silently reported as success).
+  - Bulk **hard-rejects** when filters empty or matching set > 100 rows — no silent truncation.
+  - Non-zero `queue:retry` exit codes surface as red banners.
   - Audit log entry per retry with sanitized filter context (control bytes neutralised, length-capped at 80 chars).
-  
-
-#### Embeddable + Livewire 3 or 4
-
-- Standalone Livewire + Blade dashboard. No Filament / Nova coupling.
-- Mounts at `/queue-insights` (gated by `viewQueueInsights`) or embeds inside a host admin layout via `<livewire:queue-insights-dashboard>`.
-- Composer constraint `^3.0 || ^4.0` — Pulse-style dual support so hosts on either Livewire major can install.
+- **Embeddable** — standalone Livewire + Blade dashboard. No Filament/Nova coupling. Mounts at `/queue-insights` (gated by `viewQueueInsights`) or embeds via `<livewire:queue-insights-dashboard>`. Composer constraint `livewire/livewire: ^3.0 || ^4.0` (Pulse-style dual support).
 
 ### Compatibility
+- PHP 8.3+
+- Laravel 11 or 12
+- Redis (Predis or phpredis — both exercised in CI)
+- livewire/livewire 3 or 4 *(only when using bundled dashboard route — capture + snapshot run without it)*
 
-- **PHP 8.3+**
-- **Laravel 11 or 12** (host `illuminate/*` constraints)
-- **Redis** for insights storage (Predis or phpredis client both supported and exercised in CI)
-- **livewire/livewire 3 or 4** *(only when using the bundled dashboard route — capture and snapshot run without it)*
-
-### Security notes
-
-- Payload capture is **off by default**. Enabling `full` mode requires a deliberate config + a custom sanitizer when jobs carry sensitive data — see `SECURITY.md`.
-- Default sanitizer (`KeyRedactingSanitizer`) redacts `password`, `token`, `secret`, `api_*key`, `authorization` at any depth and truncates oversized scalar fields, while preserving PHP-serialized blobs intact (the modal needs the full blob to extract decoded properties).
-- Retry write surface requires a separate `retryFailedJobs` Gate; without it the dashboard is fully read-only.
+### Security
+- Payload capture **off by default**. `full` mode requires deliberate config + custom sanitizer when jobs carry sensitive data — see `SECURITY.md`.
+- Default sanitizer (`KeyRedactingSanitizer`) redacts `password`, `token`, `secret`, `api_*key`, `authorization` at any depth; truncates oversized scalars; preserves PHP-serialized blobs intact (the modal needs the full blob to extract decoded properties).
+- Retry write surface requires separate `retryFailedJobs` Gate; without it the dashboard is fully read-only.
 
 ### Install
 
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
-
-
-
-
-
-
-
-
-
-
-
 ```
-Service provider auto-discovers. See [README](https://github.com/SanderMuller/laravel-queue-insights/blob/main/README.md) for queue snapshot config, gate setup, and the embedding pattern.
+
+Service provider auto-discovers. See [README](https://github.com/SanderMuller/laravel-queue-insights/blob/main/README.md) for snapshot config, gate setup, embedding pattern.
 
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/commits/0.1.0
