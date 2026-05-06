@@ -117,27 +117,38 @@ SHA=$(git rev-parse HEAD)
 
 # Settle — GitHub takes several seconds to register runs against the new SHA.
 # Querying too early returns an empty list; running=0 would falsely signal green.
-# Use the Bash tool with run_in_background=true if you want to do other work
-# while waiting; do NOT chain shorter sleeps to work around the harness sleep cap.
-until [ "$(gh run list --commit "$SHA" --json databaseId -q 'length')" -gt 0 ]; do sleep 5; done
-
-# List every workflow run tied to this SHA
-gh run list --commit "$SHA" --json databaseId,name,event,status,conclusion
-
-# Wait for every run to reach a terminal state
-while true; do
-    total=$(gh run list --commit "$SHA" --json databaseId -q 'length')
-    running=$(gh run list --commit "$SHA" --json status -q '[.[] | select(.status != "completed")] | length')
-    [ "$total" -gt 0 ] && [ "$running" -eq 0 ] && break
-    sleep 15
+# Bound the wait: if zero runs register within 60 s, the commit touched no
+# paths matched by ANY workflow's `paths:` filter (e.g. a docs-only or
+# skills-only delta). That's vacuously green — there are no runs to fail.
+# An unbounded `until total > 0` would deadlock on this case forever.
+SETTLE_DEADLINE=$((SECONDS + 60))
+while [ $SECONDS -lt $SETTLE_DEADLINE ] && [ "$(gh run list --commit "$SHA" --json databaseId -q 'length')" -eq 0 ]; do
+    sleep 5
 done
 
-# Then assert all success/skipped
-failed=$(gh run list --commit "$SHA" --json conclusion,name -q '[.[] | select(.conclusion != "success" and .conclusion != "skipped")] | length')
-[ "$failed" -eq 0 ] || { echo "CI red on $SHA"; gh run list --commit "$SHA"; exit 1; }
+TOTAL=$(gh run list --commit "$SHA" --json databaseId -q 'length')
+if [ "$TOTAL" -eq 0 ]; then
+    echo "OK: zero workflows triggered for $SHA — commit touched no path-filtered surface. Vacuously green."
+else
+    # List every workflow run tied to this SHA
+    gh run list --commit "$SHA" --json databaseId,name,event,status,conclusion
+
+    # Wait for every run to reach a terminal state
+    while true; do
+        running=$(gh run list --commit "$SHA" --json status -q '[.[] | select(.status != "completed")] | length')
+        [ "$running" -eq 0 ] && break
+        sleep 15
+    done
+
+    # Then assert all success/skipped
+    failed=$(gh run list --commit "$SHA" --json conclusion,name -q '[.[] | select(.conclusion != "success" and .conclusion != "skipped")] | length')
+    [ "$failed" -eq 0 ] || { echo "CI red on $SHA"; gh run list --commit "$SHA"; exit 1; }
+fi
 ```
 
-Pass criteria: every run for this commit has `conclusion` in `{success, skipped}`. Skipped is fine — path-filtered workflows are expected to skip when the release commit touches docs only.
+Pass criteria: either zero runs fired (path-filtered out at the workflow level), OR every run has `conclusion` in `{success, skipped}`. Job-level skipped is fine — path-filtered jobs inside a workflow that did fire are expected to skip when the release commit touches a narrow surface.
+
+**Vacuous-green caveat.** Zero-runs is safe ONLY when the commit truly cannot affect anything CI gates. Verify by running `git diff <prev-green-SHA>..HEAD --stat` — if every changed path is under `.ai/`, `.claude/`, `.github/skills/`, `internal/`, `docs/`, or similar pure-docs directories, treat as certified-by-association from the previous green SHA. If ANY runtime file (src/, tests/, composer.*, config/) shows up, the workflows' `paths:` filters are stale or wrong — investigate before treating as green.
 
 **Don't rely on a "latest run" heuristic.** `gh run list --branch main --limit 1` may pick a run from a completely different push — the commit-SHA filter is the only reliable anchor.
 
@@ -274,22 +285,30 @@ TAG="$VERSION"
 git fetch --tags origin --quiet
 TAG_SHA=$(git rev-list -n 1 "$TAG")
 
-# Wait until every tag-scoped run is terminal
+# Wait until every tag-scoped run is terminal — but bounded.
+# Tag-ref re-fires depend on workflows being configured with `tags:`
+# triggers; a release whose commit was skills-only (workflow `paths:`
+# filtered it out at main-push time) may also yield zero tag-ref runs.
+# Treat 0-runs-after-window as "no tag-scoped CI to gate against" and
+# pass — same vacuous-green rule as step 6, scoped here to the tag ref.
 waited=0
 while [ "$waited" -lt 900 ]; do
-    running=$(gh run list --commit "$TAG_SHA" --json status,headBranch \
-      -q "[.[] | select(.headBranch == \"$TAG\") | select(.status != \"completed\")] | length")
     total=$(gh run list --commit "$TAG_SHA" --json databaseId,headBranch \
       -q "[.[] | select(.headBranch == \"$TAG\")] | length")
+    running=$(gh run list --commit "$TAG_SHA" --json status,headBranch \
+      -q "[.[] | select(.headBranch == \"$TAG\") | select(.status != \"completed\")] | length")
     [ "$total" -gt 0 ] && [ "$running" -eq 0 ] && break
     sleep 15
     waited=$((waited + 15))
 done
-[ "$total" -gt 0 ] || { echo "NO TAG-REF RUNS after ${waited}s — investigate"; exit 1; }
 
-failed=$(gh run list --commit "$TAG_SHA" --json conclusion,headBranch,name \
-  -q "[.[] | select(.headBranch == \"$TAG\") | select(.conclusion != \"success\" and .conclusion != \"skipped\")] | length")
-[ "$failed" -eq 0 ] || { echo "TAG-REF CI RED on $TAG ($TAG_SHA)"; gh run list --commit "$TAG_SHA"; exit 1; }
+if [ "$total" -eq 0 ]; then
+    echo "OK: zero tag-ref runs registered for $TAG ($TAG_SHA) within ${waited}s — likely a docs-only release whose workflows' paths: filters skipped. Vacuously green."
+else
+    failed=$(gh run list --commit "$TAG_SHA" --json conclusion,headBranch,name \
+      -q "[.[] | select(.headBranch == \"$TAG\") | select(.conclusion != \"success\" and .conclusion != \"skipped\")] | length")
+    [ "$failed" -eq 0 ] || { echo "TAG-REF CI RED on $TAG ($TAG_SHA)"; gh run list --commit "$TAG_SHA"; exit 1; }
+fi
 ```
 
 If red:

@@ -71,6 +71,9 @@
         }
     },
     "scripts": {
+        "post-install-cmd": [
+            "@sync-ai"
+        ],
         "phpstan": "vendor/bin/phpstan analyse --memory-limit=2G",
         "phpstan-simplified": "vendor/bin/phpstan analyse --memory-limit=2G --error-format symplify",
         "phpstan-clear-cache": "vendor/bin/phpstan clear-result-cache",
