@@ -264,3 +264,89 @@ it('boot-time silenced shape check fails loud on a non-array config (codex revie
     expect(fn () => app()->register(QueueInsightsServiceProvider::class, true))
         ->toThrow(QueueInsightsConfigException::class, 'must be a list of class-name strings');
 });
+
+it('accepts a well-formed prometheus block (or empty defaults)', function (): void {
+    expect(function (): void {
+        ConfigValidator::validatePrometheus([]);
+        ConfigValidator::validatePrometheus([
+            'enabled' => true,
+            'path' => 'metrics',
+            'middleware' => null,
+            'token' => 'secret',
+            'allow_ips' => ['10.0.0.0/8', '192.168.1.1'],
+            'class_filter' => ['mode' => 'allow_list', 'classes' => ['App\\Jobs\\Foo'], 'top_n' => 50],
+            'metrics' => ['queue_depth' => true, 'jobs_processed_total' => false],
+            'cache_ttl_seconds' => 5,
+        ]);
+    })->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-bool prometheus.enabled', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['enabled' => 'yes']))
+        ->toThrow(QueueInsightsConfigException::class, 'prometheus.enabled');
+});
+
+it('rejects an empty prometheus.path', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['path' => '']))
+        ->toThrow(QueueInsightsConfigException::class, 'prometheus.path');
+});
+
+it('rejects a non-string prometheus.token', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['token' => 42]))
+        ->toThrow(QueueInsightsConfigException::class, 'prometheus.token');
+});
+
+it('accepts a null prometheus.token', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['token' => null]))
+        ->not->toThrow(Throwable::class);
+});
+
+it('rejects a malformed allow_ips entry (not an IP)', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['allow_ips' => ['not-an-ip']]))
+        ->toThrow(QueueInsightsConfigException::class, 'is not a valid IP or CIDR');
+});
+
+it('rejects a non-array allow_ips', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['allow_ips' => '10.0.0.0/8']))
+        ->toThrow(QueueInsightsConfigException::class, 'allow_ips must be a list');
+});
+
+it('rejects an empty-string allow_ips entry', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['allow_ips' => ['']]))
+        ->toThrow(QueueInsightsConfigException::class, 'must be a non-empty string');
+});
+
+it('rejects an unknown class_filter.mode', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['class_filter' => ['mode' => 'unknown']]))
+        ->toThrow(QueueInsightsConfigException::class, 'class_filter.mode must be one of');
+});
+
+it('rejects a non-positive top_n', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['class_filter' => ['top_n' => 0]]))
+        ->toThrow(QueueInsightsConfigException::class, 'class_filter.top_n must be a positive integer');
+});
+
+it('rejects a negative cache_ttl_seconds', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['cache_ttl_seconds' => -1]))
+        ->toThrow(QueueInsightsConfigException::class, 'cache_ttl_seconds must be a non-negative integer');
+});
+
+it('accepts cache_ttl_seconds = 0 (cache disabled)', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['cache_ttl_seconds' => 0]))
+        ->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-bool metrics.* toggle', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['metrics' => ['queue_depth' => 'yes']]))
+        ->toThrow(QueueInsightsConfigException::class, 'metrics.queue_depth must be a boolean');
+});
+
+it('rejects a non-string class_filter.classes entry', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['class_filter' => ['classes' => [42]]]))
+        ->toThrow(QueueInsightsConfigException::class, 'must be a non-empty string');
+});
+
+it('rejects a non-array prometheus.middleware', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['middleware' => 'foo']))
+        ->toThrow(QueueInsightsConfigException::class, 'middleware must be null or an array');
+});

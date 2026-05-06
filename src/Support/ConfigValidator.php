@@ -250,6 +250,19 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the prometheus block. Delegates to
+     * {@see PrometheusConfigValidator} so this class stays under
+     * PHPStan's cognitive-complexity ceiling (mirrors the
+     * `validateAlerts → AlertsConfigValidator` pattern).
+     *
+     * @param  array<array-key, mixed>  $prometheus
+     */
+    public static function validatePrometheus(array $prometheus): void
+    {
+        PrometheusConfigValidator::validate($prometheus);
+    }
+
+    /**
      * Validate the chain_lineage block. Type-checks the toggle, the redis
      * connection override (when set), and the two TTLs.
      *

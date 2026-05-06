@@ -159,6 +159,14 @@ final class QueueInsightsSnapshotCommand extends Command
                 600,
                 $e->getMessage(),
             ]);
+
+            // Monotonic counter for the Prometheus exporter (spec
+            // `internal/specs/prometheus-export.md` §2). Lives outside
+            // the 10-min boolean above so the boolean's TTL doesn't
+            // fight Prometheus monotonicity.
+            $redis->command('incr', [
+                KeyPrefix::make("snapshot-errors-total:{$connection}:{$errorKey}"),
+            ]);
         } catch (Throwable) {
             // If the insights Redis itself is unreachable we log above and move on.
         }
@@ -188,6 +196,14 @@ final class QueueInsightsSnapshotCommand extends Command
                     $cutoff,
                 ]);
             }
+
+            // Prometheus monotonic counters (`processed-total:*`,
+            // `failed-total:*`) age out via the per-INCR EXPIRE in
+            // `RecordJobProcessed::writeProcessedMonotonic` /
+            // `RecordJobFailed::writeFailedMonotonic`, NOT here.
+            // A prune-side DEL would race with a concurrent listener
+            // INCR re-bumping the same class on the roster, breaking
+            // Prometheus monotonicity for an active class.
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: classes prune failed', [
                 'exception' => $throwable::class,

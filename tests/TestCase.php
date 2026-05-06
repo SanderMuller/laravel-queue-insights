@@ -62,5 +62,15 @@ abstract class TestCase extends Orchestra
         $config->set('queue.connections.sync', ['driver' => 'sync']);
 
         $config->set('cache.default', 'array');
+
+        // Prometheus needs the gate flipped BEFORE the provider boots so
+        // `registerPrometheus()` loads the route file and registers the
+        // middleware alias. Tests that don't touch Prometheus aren't
+        // affected — the route only listens at `/metrics` and the
+        // collectors are zero-cost when nothing scrapes them. Per-test
+        // toggles (token, cache TTL) override via `config()->set` in
+        // beforeEach.
+        $config->set('queue-insights.prometheus.enabled', true);
+        $config->set('queue-insights.prometheus.cache_ttl_seconds', 0);
     }
 }

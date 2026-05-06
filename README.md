@@ -28,6 +28,7 @@ Self-hosted queue observability for Laravel. A Horizon-style dashboard that does
 - Retry failed jobs from the dashboard, single or bulk. Gated, rate-limited, and audit-logged.
 - Markdown export of failed-job details for handing off to an AI agent or pasting into a tracker.
 - Alerting — eight built-in detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown and built-in `log` / `slack` / `mail` channels via the standard Laravel notification stack. Typed events fire regardless of channel config so hosts can hook custom routing.
+- Prometheus exposition — opt-in `/metrics` endpoint (text + OpenMetrics) covering queue depth, in-flight, pending, delayed, oldest-age, monotonic processed/failed counters, duration aggregates, alert state, and snapshot liveness. Fail-closed bearer-token / IP-CIDR auth, cardinality control via per-class allow-list, plus a one-shot `queue-insights:prometheus-push` command for short-lived workers.
 - Standalone Livewire + Blade. No Filament or Nova coupling.
 - Small Redis footprint, bounded and auto-evicting. No external observability service required.
 
@@ -540,6 +541,93 @@ Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `
 | `qi:failed:{class}:{bucket}` Redis counters + `qi:classes` zset | Still written by the listeners. Silencing is reversible without losing history. |
 
 The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes for retry. Toggle "Show silenced" first if you want them in the bulk set.
+
+### Prometheus
+
+Enable via `QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true`. Mounts `GET /metrics` (path configurable) exposing queue-insights state in Prometheus 0.0.4 text format — or OpenMetrics 1.0.0 when the scraper sends `Accept: application/openmetrics-text` (Prometheus negotiates this automatically). Default-off; adoption is opt-in.
+
+Auth is **fail-closed**: the package's default middleware refuses with `403` unless `prometheus.token` (preferred for shared infra) or `prometheus.allow_ips` (CIDR list) is configured. There is no silent open default.
+
+```bash
+# .env
+QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true
+QUEUE_INSIGHTS_PROMETHEUS_TOKEN=long-random-string
+```
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: laravel-queue-insights
+    metrics_path: /metrics
+    bearer_token: long-random-string
+    static_configs:
+      - targets: ['app.example.com']
+```
+
+#### Metric catalogue
+
+| Metric | Type | Labels | Notes |
+|---|---|---|---|
+| `queue_insights_queue_depth` | gauge | `connection`, `queue` | Mirrors snapshot loop output. Pair with `queue_insights_snapshot_alive`. |
+| `queue_insights_inflight_jobs` | gauge | `connection`, `queue` | `ZCARD inflight-zset`. |
+| `queue_insights_pending_jobs` | gauge | `connection`, `queue` | Runnable now (`available_at <= now`). |
+| `queue_insights_delayed_jobs` | gauge | `connection`, `queue` | Not yet runnable (`available_at > now`). |
+| `queue_insights_oldest_pending_age_seconds` | gauge | `connection`, `queue` | 0 when empty. |
+| `queue_insights_oldest_inflight_age_seconds` | gauge | `connection`, `queue` | 0 when empty. |
+| `queue_insights_jobs_processed_total` | counter | `class`, `connection` | True monotonic INCR — safe for `rate()` / `increase()`. |
+| `queue_insights_jobs_failed_total` | counter | `class`, `connection` | Same. |
+| `queue_insights_job_duration_count_total` | counter | `class`, `connection` | Mean = `rate(sum) / rate(count)` Prometheus-side. |
+| `queue_insights_job_duration_sum_seconds_total` | counter | `class`, `connection` | Seconds (HINCRBY `sum_ms` ÷ 1000). |
+| `queue_insights_job_duration_max_seconds` | gauge | `class`, `connection` | Lifetime max. Use `max_over_time()` for windowed maxima. |
+| `queue_insights_alert_active` | gauge | `rule`, `connection`, `queue`, `severity` (+ `class` for class-scoped rules) | Always 1 when present; absent series = no alert. Use `OR on() vector(0)` Grafana-side to render gaps as 0. |
+| `queue_insights_snapshot_alive` | gauge | `connection`, `queue` | 1/0. **Use this in alerts**, not `_age_seconds`. |
+| `queue_insights_snapshot_age_seconds` | gauge | `connection`, `queue` | **Omitted** when the snapshot key is absent (so alerts can use `absent(...)` cleanly instead of clamping to 0). |
+| `queue_insights_snapshot_errors_total` | counter | `connection`, `queue` | Monotonic INCR — paired with the existing 10-min `snapshot:error:*` boolean. |
+| `queue_insights_exporter_collect_duration_seconds` | gauge | (none) | Wall-clock seconds of the previous collect cycle. |
+
+Per-class metrics (`*_processed_total`, `*_failed_total`, duration aggregates) are **opt-in by class** to bound cardinality. Default `class_filter.mode = allow_list` with empty `classes` → no per-class metrics emitted. Three modes:
+
+```php
+// config/queue-insights.php
+'prometheus' => [
+    'class_filter' => [
+        // 'allow_list'        — only emit for the FQCNs in `classes` (DEFAULT)
+        // 'allow_all'         — emit for every class on classes:{connection}
+        // 'top_n_by_recency'  — top N most-recently-seen per connection (recency, NOT throughput)
+        'mode' => 'allow_list',
+        'classes' => [
+            App\Jobs\GenerateReport::class,
+            App\Jobs\SyncCustomer::class,
+        ],
+        'top_n' => 50,
+    ],
+],
+```
+
+A two-tier cache (per-request memoise + 5 s Redis cache, key `prom:cache:rendered:{flavour}`) bounds thunder-herd when multiple Prometheus replicas scrape concurrently. Set `prometheus.cache_ttl_seconds = 0` to disable both layers for instant reads.
+
+Each metric family has its own toggle under `prometheus.metrics.*` (default-on) — disable any family the host doesn't need to keep the scrape body lean.
+
+#### Push gateway (short-lived workers / CLI)
+
+For processes that exit before any scrape can land, `php artisan queue-insights:prometheus-push` does a one-shot collect + PUT to a configured Pushgateway. Long-running workers should be **scraped, not pushed** — push-mode is for CLI scripts and scheduled tasks where pull-mode can't reach the process.
+
+```bash
+# .env
+QUEUE_INSIGHTS_PUSHGATEWAY_URL=https://pushgateway.example/metrics
+QUEUE_INSIGHTS_PUSHGATEWAY_JOB=laravel-queue-insights
+QUEUE_INSIGHTS_PUSHGATEWAY_INSTANCE=worker-01   # required for clustered hosts
+```
+
+The command **fails closed** when `pushgateway.instance` is unset and `--accept-shared-grouping` is not passed: clustered hosts that share a `job` label without distinct `instance` values silently overwrite each other's pushed metrics. Pass `--accept-shared-grouping` once you've confirmed single-replica semantics, or set `instance` per-replica.
+
+```bash
+php artisan queue-insights:prometheus-push                           # PUT metrics
+php artisan queue-insights:prometheus-push --delete                  # DELETE the grouping
+php artisan queue-insights:prometheus-push --accept-shared-grouping  # opt out of the instance guard
+```
+
+Exit codes mirror Symfony Console convention: `0` success, `1` Pushgateway HTTP failure, `2` config error (missing URL / unset instance without override).
 
 ## License
 

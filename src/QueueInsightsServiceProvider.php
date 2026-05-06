@@ -4,10 +4,12 @@ namespace SanderMuller\QueueInsights;
 
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Component as LivewireComponent;
@@ -22,6 +24,7 @@ use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
 use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
 use SanderMuller\QueueInsights\Console\DefaultWorkerOutputStreams;
 use SanderMuller\QueueInsights\Console\DefaultWorkerProcessFactory;
+use SanderMuller\QueueInsights\Console\QueueInsightsPrometheusPushCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsSnapshotCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsWorkCommand;
 use SanderMuller\QueueInsights\Console\WorkerOutputStreams;
@@ -36,6 +39,25 @@ use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
+use SanderMuller\QueueInsights\Prometheus\ClassFilter as PrometheusClassFilter;
+use SanderMuller\QueueInsights\Prometheus\Collector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\AlertActiveCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\DelayedCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\DurationAggregateCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\ExporterSelfCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\InflightCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\JobsFailedCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\JobsProcessedCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\OldestInflightAgeCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\OldestPendingAgeCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\PendingCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\QueueDepthCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotAgeCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotAliveCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotErrorsCollector;
+use SanderMuller\QueueInsights\Prometheus\PrometheusAuthMiddleware;
+use SanderMuller\QueueInsights\Prometheus\Registry as PrometheusRegistry;
+use SanderMuller\QueueInsights\Prometheus\Renderer as PrometheusRenderer;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
@@ -78,6 +100,54 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         // Octane without needing a worker restart.
         $this->app->scoped(SilencedJobs::class);
 
+        // Prometheus collectors carry no per-request state, but the
+        // Registry MUST be `bind()` (not `singleton`) so the per-flavour
+        // render memoise doesn't leak across requests under Octane /
+        // persistent processes — mirrors the ActiveIssuesProvider pattern
+        // above. The Redis cache layer is the cross-request bound.
+        $this->app->bind(PrometheusRenderer::class);
+        // ExporterSelfCollector carries the per-cycle duration sample
+        // between Registry::collect and its own collect() call — must
+        // be the SAME instance for a given Registry instance. `scoped`
+        // resets it per-request alongside the Registry binding.
+        $this->app->scoped(ExporterSelfCollector::class);
+        // ClassFilter memoises `classesFor(connection)` per-(mode,
+        // connection) so the three class-scoped collectors share one
+        // ZRANGE per scrape instead of three. `scoped` so the memoise
+        // dies with the request.
+        $this->app->scoped(PrometheusClassFilter::class);
+        $this->app->bind(PrometheusRegistry::class, function (Application $app): PrometheusRegistry {
+            $collectorClasses = [
+                QueueDepthCollector::class,
+                InflightCollector::class,
+                PendingCollector::class,
+                DelayedCollector::class,
+                OldestPendingAgeCollector::class,
+                OldestInflightAgeCollector::class,
+                SnapshotAliveCollector::class,
+                SnapshotAgeCollector::class,
+                JobsProcessedCollector::class,
+                JobsFailedCollector::class,
+                DurationAggregateCollector::class,
+                SnapshotErrorsCollector::class,
+                AlertActiveCollector::class,
+            ];
+
+            $collectors = [];
+            foreach ($collectorClasses as $class) {
+                $resolved = $app->make($class);
+                assert($resolved instanceof Collector);
+                $collectors[] = $resolved;
+            }
+
+            $renderer = $app->make(PrometheusRenderer::class);
+            assert($renderer instanceof PrometheusRenderer);
+            $self = $app->make(ExporterSelfCollector::class);
+            assert($self instanceof ExporterSelfCollector);
+
+            return new PrometheusRegistry($collectors, $renderer, $self);
+        });
+
         $this->app->bind(PayloadSanitizer::class, fn (): PayloadSanitizer => match (Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off)) {
             CaptureMode::Metadata => new MetadataOnlySanitizer(),
             CaptureMode::Full => new KeyRedactingSanitizer(
@@ -111,6 +181,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
             $this->commands([
                 QueueInsightsSnapshotCommand::class,
                 QueueInsightsWorkCommand::class,
+                QueueInsightsPrometheusPushCommand::class,
             ]);
         }
 
@@ -149,6 +220,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
         ConfigValidator::validateWork($section($cfg, 'work'));
         ConfigValidator::validateRetention($section($cfg, 'retention'));
+        ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
 
         // Silenced fails loud on a non-array shape rather than coercing
         // to `[]` like the other section validators — a `silenced =>
@@ -167,6 +239,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $this->registerListeners();
         $this->registerSchedule();
         $this->registerDashboard();
+        $this->registerPrometheus();
     }
 
     private function registerDashboard(): void
@@ -188,6 +261,23 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         Livewire::component('queue-insights-alert-rules-panel', AlertRulesPanel::class);
 
         $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
+    }
+
+    private function registerPrometheus(): void
+    {
+        if (! Config::bool('prometheus.enabled', false)) {
+            return;
+        }
+
+        // Loaded independently of the dashboard's `routes/web.php` so a
+        // headless production replica (dashboard.enabled = false) can
+        // still expose /metrics for cluster-internal scrape.
+        $router = $this->app->make(Router::class);
+        if (method_exists($router, 'aliasMiddleware')) {
+            $router->aliasMiddleware('queue-insights.prometheus-auth', PrometheusAuthMiddleware::class);
+        }
+
+        $this->loadRoutesFrom(__DIR__ . '/../routes/prometheus.php');
     }
 
     private function registerSchedule(): void

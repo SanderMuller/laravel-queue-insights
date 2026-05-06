@@ -9,6 +9,7 @@ use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\ZsetHead;
 
 /**
  * Fires when the oldest currently-runnable pending job has been waiting
@@ -46,26 +47,13 @@ final class OldestPendingDetector
             ['LIMIT' => [0, 1], 'WITHSCORES' => true],
         ]);
 
-        if (! is_array($row) || $row === []) {
+        $head = ZsetHead::firstMemberScore($row);
+        if ($head === null) {
             return null;
         }
 
-        // PendingJobsReader uses the same shape: associative [uuid => score]
-        // on both phpredis and Predis through Laravel's Redis layer.
-        $uuid = null;
-        $availableAt = null;
-        foreach ($row as $u => $score) {
-            if (is_string($u) && $u !== '' && is_numeric($score)) {
-                $uuid = $u;
-                $availableAt = (int) $score;
-                break;
-            }
-        }
-
-        if ($uuid === null || $availableAt === null) {
-            return null;
-        }
-
+        [$uuid, $availableAtFloat] = $head;
+        $availableAt = (int) $availableAtFloat;
         $age = $now - $availableAt;
         if ($age < $thresholdSeconds) {
             return null;

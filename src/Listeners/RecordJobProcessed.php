@@ -23,6 +23,15 @@ use Throwable;
 
 final readonly class RecordJobProcessed
 {
+    /**
+     * 30 days — matches the `classes` / `classes:{connection}` zset
+     * retention. A class going dormant 30+ days loses its monotonic
+     * counter; next event re-creates at 1 (a counter reset Prometheus
+     * `rate()` handles natively). Same boundary as the pre-existing
+     * dormant-class handling so observability semantics align.
+     */
+    private const int MONOTONIC_TTL_SECONDS = 2592000;
+
     public function __construct(
         private ResolveJobClass $resolveJobClass,
         private PayloadSanitizer $sanitizer,
@@ -54,6 +63,7 @@ final readonly class RecordJobProcessed
             $counterDays = max(1, Config::int('retention.processed_counters_days', 7));
             $bucketExpireAt = HourBucket::startTs($bucket) + ($counterDays * 86400);
             $this->writeProcessedCounters($redis, $class, $connectionName, $bucket, $bucketExpireAt);
+            $this->writeProcessedMonotonic($redis, $class, $connectionName);
 
             if ($durationMs !== null) {
                 $this->writeDurationMetrics($redis, $class, $connectionName, $durationMs);
@@ -237,7 +247,7 @@ final readonly class RecordJobProcessed
 
         // Read-only — the interim `qi:lineage:{uuid}` hash is intentionally
         // left to age out via its `lineage_ttl_seconds` TTL (default 7d).
-        // Two scenarios depend on this (codex review):
+        // Two scenarios depend on this:
         //   1. A child that failed first, was retried, and now succeeds:
         //      the original failed_jobs row stays in the failed list and
         //      RowEnricher::failed reads `qi:lineage:{uuid}` per render.
@@ -347,6 +357,32 @@ final readonly class RecordJobProcessed
             KeyPrefix::make("processed:{$class}:{$connectionName}:{$bucket}"),
             (string) $bucketExpireAt,
         );
+    }
+
+    /**
+     * Monotonic INCR counters powering the Prometheus exporter's
+     * `queue_insights_jobs_processed_total` metric. Spec
+     * `internal/specs/prometheus-export.md` §4 — hourly buckets aren't
+     * Prometheus-counter-safe (they decrement when retention rotates),
+     * so we ship a parallel INCR with a 30-day refreshing EXPIRE.
+     *
+     * EXPIRE is set per-event (cheap; refreshed on every INCR) so the
+     * key naturally ages out for dormant classes. A prune-side DEL
+     * would race with a concurrent INCR re-bumping the same class on
+     * the roster, breaking monotonicity for an active class. 30 days
+     * matches the `classes:{conn}` zset's retention bound.
+     */
+    private function writeProcessedMonotonic(RedisConnection $redis, string $class, string $connectionName): void
+    {
+        $aggregate = KeyPrefix::classKey('processed-total', $class);
+        $redis->command('incr', [$aggregate]);
+        $redis->command('expire', [$aggregate, self::MONOTONIC_TTL_SECONDS]);
+
+        if ($connectionName !== '') {
+            $perConnection = KeyPrefix::classKey('processed-total', $class, $connectionName);
+            $redis->command('incr', [$perConnection]);
+            $redis->command('expire', [$perConnection, self::MONOTONIC_TTL_SECONDS]);
+        }
     }
 
     private function writeDurationMetrics(RedisConnection $redis, string $class, string $connectionName, int $durationMs): void

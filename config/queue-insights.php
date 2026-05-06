@@ -297,4 +297,88 @@ return [
     'work' => [
         'shutdown_grace_seconds' => 120,
     ],
+
+    /*
+     | Prometheus exposition. When enabled, the package mounts a /metrics
+     | endpoint exposing queue-insights state in Prometheus 0.0.4 (or
+     | OpenMetrics, via Accept negotiation) format. Default-off — adoption
+     | is opt-in. See internal/specs/prometheus-export.md for the metric
+     | catalogue and cardinality model.
+     |
+     | Auth: when both `token` and `allow_ips` are unset, the default
+     | middleware fails closed with 403 — no silent open default. Set a
+     | bearer token (preferred for shared infra) or an IP allow-list of
+     | scrape sources. Hosts overriding `middleware` opt out of the
+     | package default entirely.
+     */
+    'prometheus' => [
+        'enabled' => env('QUEUE_INSIGHTS_PROMETHEUS_ENABLED', false),
+        'path' => 'metrics',
+        // null → use the package's `queue-insights.prometheus-auth` default.
+        // An explicit array (even empty) overrides it.
+        'middleware' => null,
+        'token' => env('QUEUE_INSIGHTS_PROMETHEUS_TOKEN'),
+        // CIDR strings — `Symfony\Component\HttpFoundation\IpUtils::checkIp`.
+        'allow_ips' => [],
+
+        /*
+         | Per-class metric cardinality control. Per-queue metrics are
+         | bounded by `snapshots` config; per-class metrics scale with
+         | the class roster (potentially thousands).
+         |
+         |   - `allow_all`         emit a sample per class in
+         |                         `classes:{connection}` zset.
+         |   - `allow_list`        only emit samples for the FQCNs in
+         |                         `classes`. Empty list → no per-class
+         |                         metrics. THE DEFAULT.
+         |   - `top_n_by_recency`  emit the top-N most-recently-seen
+         |                         classes per connection (score is
+         |                         last-seen unix ts, not throughput).
+         */
+        'class_filter' => [
+            'mode' => 'allow_list',
+            'classes' => [],
+            'top_n' => 50,
+        ],
+
+        /*
+         | Per-metric toggles. Disable any family the host doesn't need
+         | to keep the scrape body lean. The master gate is the
+         | top-level `enabled` flag above.
+         */
+        'metrics' => [
+            'queue_depth' => true,
+            'inflight_jobs' => true,
+            'pending_jobs' => true,
+            'delayed_jobs' => true,
+            'oldest_pending_age' => true,
+            'oldest_inflight_age' => true,
+            'jobs_processed_total' => true,
+            'jobs_failed_total' => true,
+            'job_duration' => true,
+            'alert_active' => true,
+            'snapshot_alive' => true,
+            'snapshot_age' => true,
+            'snapshot_errors_total' => true,
+        ],
+
+        /*
+         | Bounds thunder-herd when multiple Prometheus replicas scrape
+         | concurrently. 0 disables both the per-request memoise and the
+         | Redis cache (useful for debugging). Default 5s matches the
+         | snapshot freshness floor.
+         */
+        'cache_ttl_seconds' => 5,
+
+        /*
+         | Push-gateway support (Phase 4). For short-lived processes
+         | (CLI scripts, scheduled tasks) that exit before any scrape
+         | can land. Long-running workers should be scraped, not pushed.
+         */
+        'pushgateway' => [
+            'url' => env('QUEUE_INSIGHTS_PUSHGATEWAY_URL'),
+            'job' => env('QUEUE_INSIGHTS_PUSHGATEWAY_JOB', 'laravel-queue-insights'),
+            'instance' => env('QUEUE_INSIGHTS_PUSHGATEWAY_INSTANCE'),
+        ],
+    ],
 ];

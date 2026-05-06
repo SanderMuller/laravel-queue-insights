@@ -9,6 +9,7 @@ use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\ZsetHead;
 
 /**
  * Fires when the longest-running in-flight job has been executing past the
@@ -41,24 +42,13 @@ final class StuckInFlightDetector
             ['WITHSCORES' => true],
         ]);
 
-        if (! is_array($row) || $row === []) {
+        $head = ZsetHead::firstMemberScore($row);
+        if ($head === null) {
             return null;
         }
 
-        $uuid = null;
-        $startedAt = null;
-        foreach ($row as $u => $score) {
-            if (is_string($u) && $u !== '' && is_numeric($score)) {
-                $uuid = $u;
-                $startedAt = (int) $score;
-                break;
-            }
-        }
-
-        if ($uuid === null || $startedAt === null) {
-            return null;
-        }
-
+        [$uuid, $startedAtFloat] = $head;
+        $startedAt = (int) $startedAtFloat;
         $age = $now - $startedAt;
         if ($age < $thresholdSeconds) {
             return null;

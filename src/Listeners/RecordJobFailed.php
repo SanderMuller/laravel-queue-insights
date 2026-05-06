@@ -20,6 +20,12 @@ use Throwable;
 
 final readonly class RecordJobFailed
 {
+    /**
+     * See `RecordJobProcessed::MONOTONIC_TTL_SECONDS` — same 30 d
+     * boundary, same dormant-class semantics.
+     */
+    private const int MONOTONIC_TTL_SECONDS = 2592000;
+
     public function __construct(
         private ResolveJobClass $resolveJobClass,
     ) {}
@@ -42,6 +48,7 @@ final readonly class RecordJobFailed
 
             $counterDays = max(1, Config::int('retention.failed_counters_days', 30));
             $this->incrFailedCounters($redis, $class, $connectionName, $bucket, HourBucket::startTs($bucket) + ($counterDays * 86400));
+            $this->writeFailedMonotonic($redis, $class, $connectionName);
 
             $uuid = $event->job->uuid();
             if ($uuid !== null && $uuid !== '') {
@@ -128,6 +135,26 @@ final readonly class RecordJobFailed
             KeyPrefix::make("failed:{$class}:{$connectionName}:{$bucket}"),
             (string) $expireAt,
         );
+    }
+
+    /**
+     * Monotonic INCR counters powering the Prometheus exporter's
+     * `queue_insights_jobs_failed_total` metric. Symmetric to
+     * `RecordJobProcessed::writeProcessedMonotonic` — see that method
+     * for the full design rationale (TTL-on-write avoids a race with
+     * the snapshot prune that earlier drafts had).
+     */
+    private function writeFailedMonotonic(Connection $redis, string $class, string $connectionName): void
+    {
+        $aggregate = KeyPrefix::classKey('failed-total', $class);
+        $redis->command('incr', [$aggregate]);
+        $redis->command('expire', [$aggregate, self::MONOTONIC_TTL_SECONDS]);
+
+        if ($connectionName !== '') {
+            $perConnection = KeyPrefix::classKey('failed-total', $class, $connectionName);
+            $redis->command('incr', [$perConnection]);
+            $redis->command('expire', [$perConnection, self::MONOTONIC_TTL_SECONDS]);
+        }
     }
 
     /**

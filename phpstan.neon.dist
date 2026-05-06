@@ -81,6 +81,7 @@ parameters:
             paths:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
+                - tests/Unit/Prometheus/
             reportUnmatched: false
         -
             identifier: return.internalClass
@@ -88,6 +89,8 @@ parameters:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Feature/AlertingNotificationsTest.php
+                - tests/Unit/Prometheus/
+                - tests/Feature/Prometheus/
             reportUnmatched: false
         -
             identifier: new.internalClass
@@ -95,6 +98,8 @@ parameters:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Feature/AlertingNotificationsTest.php
+                - tests/Unit/Prometheus/
+                - tests/Feature/Prometheus/
             reportUnmatched: false
         -
             identifier: property.internalClass
@@ -105,6 +110,8 @@ parameters:
                 - tests/Feature/AlertingBacklogGrowingTest.php
                 - tests/Feature/AlertingTest.php
                 - tests/Feature/Http/AlertsDashboardTest.php
+                - tests/Unit/Prometheus/
+                - tests/Feature/Prometheus/
             reportUnmatched: false
         -
             identifier: parameter.internalClass
@@ -112,6 +119,7 @@ parameters:
                 - tests/Feature/AlertingClassDetectorsTest.php
                 - tests/Feature/AlertingDetectorsTest.php
                 - tests/Feature/AlertingNotificationsTest.php
+                - tests/Feature/Prometheus/
             reportUnmatched: false
         # PHPUnit's AssertionFailedError / ExpectationFailedException are marked @internal
         # but legitimately referenced from tests when asserting on assertion failures
