@@ -65,7 +65,7 @@ class QueueAlertNotification extends Notification
 
         foreach ($this->issue->context as $key => $value) {
             if (is_scalar($value)) {
-                $message->line(sprintf('%s: %s', $key, (string) $value));
+                $message->line(sprintf('%s: %s', $key, $this->formatScalar($value)));
             }
         }
 
@@ -92,7 +92,7 @@ class QueueAlertNotification extends Notification
 
         foreach ($this->issue->context as $key => $value) {
             if (is_scalar($value)) {
-                $fields[] = ['title' => (string) $key, 'value' => (string) $value, 'short' => true];
+                $fields[] = ['title' => (string) $key, 'value' => $this->formatScalar($value), 'short' => true];
             }
         }
 
@@ -116,5 +116,21 @@ class QueueAlertNotification extends Notification
     private function httpAvailable(): bool
     {
         return app()->bound(Factory::class);
+    }
+
+    /**
+     * Render a scalar context value for human-facing channels (mail, Slack).
+     * Floats round to 2dp so a `ratio` of 0.13235294117647 doesn't dump its
+     * full default precision. Ints + bools + strings pass through. Context
+     * itself is left raw so host event listeners (typed events) keep their
+     * full-precision floats.
+     */
+    private function formatScalar(int|float|string|bool $value): string
+    {
+        if (is_float($value)) {
+            return number_format($value, 2);
+        }
+
+        return (string) $value;
     }
 }

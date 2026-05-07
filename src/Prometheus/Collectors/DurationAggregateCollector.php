@@ -57,6 +57,7 @@ final readonly class DurationAggregateCollector implements Collector
                 if (! is_array($values)) {
                     continue;
                 }
+
                 // phpredis returns associative-by-field; Predis returns
                 // positional. `array_values` collapses both to positional.
                 $values = array_values($values);

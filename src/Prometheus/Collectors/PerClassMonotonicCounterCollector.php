@@ -64,6 +64,7 @@ abstract readonly class PerClassMonotonicCounterCollector implements Collector
                 if (! is_array($values)) {
                     continue;
                 }
+
                 // phpredis returns positional; Predis can return
                 // associative-by-key. `array_values` normalises so the
                 // positional `$values[$i]` access below is driver-safe.
