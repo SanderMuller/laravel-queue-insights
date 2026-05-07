@@ -6,13 +6,6 @@
         : '—';
     $attempts = is_numeric($row['attempts'] ?? null) ? (int) $row['attempts'] : null;
     $processedAt = $row['processed_at'] ?? null;
-    try {
-        $atHuman = is_string($processedAt) && $processedAt !== ''
-            ? \Illuminate\Support\Facades\Date::parse($processedAt)->diffForHumans()
-            : null;
-    } catch (\Throwable) {
-        $atHuman = null;
-    }
     $fqcn = $row['class'] ?? $selectedClass ?? '—';
     $lastBackslash = strrpos($fqcn, '\\');
     $namespace = $lastBackslash !== false ? substr($fqcn, 0, $lastBackslash + 1) : '';
@@ -67,7 +60,7 @@
         @endif
     </div>
     <div class="col-span-2 text-right">
-        <p class="whitespace-nowrap text-xs text-gray-700" @if($processedAt) title="{{ $processedAt }}" @endif>{{ $atHuman ?? '—' }}</p>
+        <x-queue-insights::qi-time :at="$processedAt" class="block whitespace-nowrap text-xs text-gray-700"/>
     </div>
     <div class="col-span-1 text-right">
         <svg class="ml-auto inline-block size-3 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

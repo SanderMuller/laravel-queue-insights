@@ -43,15 +43,7 @@
         ? \Carbon\CarbonInterval::milliseconds((int) $waitRaw)->cascade()->forHumans(['short' => true])
         : null;
 
-    // processed_at — render ISO + diffForHumans via Date:: to respect host app's factory.
     $processedAtRaw = $payload['processed_at'] ?? null;
-    try {
-        $processedAtHuman = is_string($processedAtRaw) && $processedAtRaw !== ''
-            ? \Illuminate\Support\Facades\Date::parse($processedAtRaw)->diffForHumans()
-            : null;
-    } catch (\Throwable) {
-        $processedAtHuman = null;
-    }
 
     $attemptsRaw = $payload['attempts'] ?? '';
     $attemptsInt = is_numeric($attemptsRaw) ? (int) $attemptsRaw : null;
@@ -247,9 +239,9 @@
                     <div class="bg-white p-4">
                         <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Processed at</dt>
                         <dd class="mt-1">
-                            <p class="truncate text-sm font-medium text-gray-900">{{ $processedAtHuman ?? '—' }}</p>
+                            <x-queue-insights::qi-time :at="$processedAtRaw" class="block truncate text-sm font-medium text-gray-900"/>
                             @if($processedAtRaw)
-                                <p class="truncate font-mono text-[10px] text-gray-400">{{ $processedAtRaw }}</p>
+                                <x-queue-insights::qi-time :at="$processedAtRaw" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
                             @endif
                         </dd>
                     </div>

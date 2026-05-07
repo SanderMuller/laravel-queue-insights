@@ -36,14 +36,12 @@
         <p class="flex items-center gap-1.5 truncate font-mono text-sm">
             <span class="truncate">@if($namespace !== '')<span class="text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900">{{ $shortName }}</span></span>
             @if($isInFlight)
-                <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20"
-                      @if($startedCarbon) title="Started {{ $startedCarbon->toIso8601String() }}" @endif>
+                <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
                     <span aria-hidden="true" class="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"></span>
                     running
                 </span>
             @elseif($isDelayed)
-                <span class="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20"
-                      @if($availableCarbon) title="Runs {{ $availableCarbon->toIso8601String() }}" @endif>
+                <span class="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
                     delayed
                 </span>
             @endif
@@ -57,22 +55,13 @@
         <p class="mt-0.5 truncate font-mono text-xs text-gray-800">{{ $row['queue'] ?? '—' }}</p>
     </div>
     <div class="col-span-2 text-right">
-        <p class="whitespace-nowrap text-xs text-gray-700"
-           @if($queuedCarbon) title="{{ $queuedCarbon->toIso8601String() }}" @endif>
-            {{ $queuedCarbon?->diffForHumans() ?? '—' }}
-        </p>
+        <x-queue-insights::qi-time :at="$queuedCarbon" class="block whitespace-nowrap text-xs text-gray-700"/>
     </div>
     <div class="col-span-2 text-right">
         @if($isInFlight)
-            <p class="whitespace-nowrap text-xs text-gray-700"
-               @if($startedCarbon) title="{{ $startedCarbon->toIso8601String() }}" @endif>
-                started {{ $startedCarbon?->diffForHumans() ?? '—' }}
-            </p>
+            <x-queue-insights::qi-time :at="$startedCarbon" prefix="started" class="block whitespace-nowrap text-xs text-gray-700"/>
         @else
-            <p class="whitespace-nowrap text-xs text-gray-700"
-               @if($availableCarbon) title="{{ $availableCarbon->toIso8601String() }}" @endif>
-                {{ $availableCarbon?->diffForHumans() ?? '—' }}
-            </p>
+            <x-queue-insights::qi-time :at="$availableCarbon" class="block whitespace-nowrap text-xs text-gray-700"/>
         @endif
     </div>
 </x-queue-insights::list-row>

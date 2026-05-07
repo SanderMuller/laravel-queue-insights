@@ -1,12 +1,5 @@
 @php
     /** @var array<string, mixed> $f */
-    try {
-        $failedAtHuman = is_string($f['failed_at'] ?? null) && $f['failed_at'] !== ''
-            ? \Illuminate\Support\Facades\Date::parse($f['failed_at'])->diffForHumans()
-            : null;
-    } catch (\Throwable) {
-        $failedAtHuman = null;
-    }
     $fqcn = $f['display_name'] ?? '—';
     $lastBackslash = strrpos((string) $fqcn, '\\');
     $namespace = $lastBackslash !== false ? substr((string) $fqcn, 0, $lastBackslash + 1) : '';
@@ -72,7 +65,7 @@
     </div>
 
     <div class="col-span-2 text-right">
-        <p class="whitespace-nowrap text-xs text-gray-700" @if($f['failed_at']) title="{{ $f['failed_at'] }}" @endif>{{ $failedAtHuman ?? '—' }}</p>
+        <x-queue-insights::qi-time :at="$f['failed_at'] ?? null" class="block whitespace-nowrap text-xs text-gray-700"/>
         @if($f['attempts'] !== null && $f['max_tries'] !== null)
             <p class="mt-0.5 text-xs font-medium tabular-nums text-gray-500">{{ $f['attempts'] }}/{{ $f['max_tries'] }}</p>
         @endif

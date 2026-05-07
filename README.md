@@ -7,30 +7,50 @@
 [![License](https://img.shields.io/github/license/sandermuller/laravel-queue-insights.svg?style=flat-square)](LICENSE)
 [![Laravel Compatibility](https://badge.laravel.cloud/badge/sandermuller/laravel-queue-insights?style=flat)](https://packagist.org/packages/sandermuller/laravel-queue-insights)
 
-Self-hosted queue observability for Laravel. A Horizon-style dashboard that doesn't lock you into the Redis queue driver.
+Self-hosted, driver-agnostic queue observability for Laravel.
+
+![Queue Insights dashboard](screenshot.png)
+
+## Contents
+
+- [Live demo](#live-demo)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Payload capture](#payload-capture)
+- [Dashboard](#dashboard)
+- [Running workers](#running-workers)
+- [Ops runbook](#ops-runbook)
+- [Alerting](#alerting)
+- [Prometheus](#prometheus)
+- [Testing](#testing)
+- [Changelog](#changelog)
+- [Contributing](#contributing)
+- [Security Vulnerabilities](#security-vulnerabilities)
+- [Credits](#credits)
+- [License](#license)
 
 ## Live demo
 
-[**queue-insights-demo-main-wgcmqf.laravel.cloud**](https://queue-insights-demo-main-wgcmqf.laravel.cloud) — public preview hosted on Laravel Cloud, seeded with realistic fixtures (eight queues, alerts firing, batched + chained jobs, recent completed/failed lists). The deploy uses the same `workbench/app/Support/PreviewSeeder.php` that powers `vendor/bin/testbench serve` locally, so what you see is the package rendering against real Redis reads — not a static screenshot.
+[**queue-insights-demo-main-wgcmqf.laravel.cloud**](https://queue-insights-demo-main-wgcmqf.laravel.cloud) — public preview hosted on Laravel Cloud, seeded with realistic fixtures.
 
 ## Features
 
-- Live depth, in-flight, and delayed counts per queue. Works on SQS, Redis, and database queues.
-- Pending & delayed-job inspector per queue — individual queued jobs with class FQCN and `runs in <countdown>` for delayed jobs. Driver-agnostic (event-captured into Redis), so SQS gets the same view as Redis and database queues.
-- Batched-jobs section — per-batch progress bar, processed/failed/pending counts, finished/cancelled state, and an expandable per-item rollup that links each uuid back to the existing completed/failed modal. Per-row chip on completed/failed/pending lists jumps to the batch in one click.
-- Chained-jobs visibility — completed and failed rows surface the next job in a `Bus::chain([...])` chain via a small `↳ Next (+N)` chip and a Chain section in the modal, sourced directly from the job's serialized payload. Backward `↰ From {parent}` lineage is captured opportunistically via short-lived Redis claim tickets, so the modal and failed-row markdown export show which job ran *before* this one too.
-- Wait time per queue (p50 / p95) and per job. Measures enqueue to worker pickup.
-- 24h throughput sparkline (processed + failed) with hover tooltips per hour, alongside a headline-stats panel: jobs/min, jobs past hour, failed past hour, max throughput hour, max wait p95, max runtime p95.
-- Queues grouped into *Needs attention* (errored or stale) and *Healthy* so a broken queue can't hide in a long list.
-- Per-job-class metrics: 24h processed and failed, average and max duration, last run.
-- Recent completed jobs. Metadata-only by default; opt-in payload capture with a pluggable sanitizer. Filter row mirrors the failed-jobs filter (connection, queue, class, from, to).
-- Recent failed jobs from Laravel's `failed_jobs` table, with a filter row over connection, queue, class, and date range. Filters persist in the URL.
-- Retry failed jobs from the dashboard, single or bulk. Gated, rate-limited, and audit-logged.
-- Markdown export of failed-job details for handing off to an AI agent or pasting into a tracker.
-- Alerting — eight built-in detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown and built-in `log` / `slack` / `mail` channels via the standard Laravel notification stack. Typed events fire regardless of channel config so hosts can hook custom routing.
-- Prometheus exposition — opt-in `/metrics` endpoint (text + OpenMetrics) covering queue depth, in-flight, pending, delayed, oldest-age, monotonic processed/failed counters, duration aggregates, alert state, and snapshot liveness. Fail-closed bearer-token / IP-CIDR auth, cardinality control via per-class allow-list, plus a one-shot `queue-insights:prometheus-push` command for short-lived workers.
-- Standalone Livewire + Blade. No Filament or Nova coupling.
-- Small Redis footprint, bounded and auto-evicting. No external observability service required.
+- **Driver-agnostic depth, in-flight, delayed counts** per queue — SQS, Redis, database.
+- **Pending & delayed-job inspector** per queue, event-captured into Redis (same view across drivers).
+- **Batched jobs** — per-batch progress, counts, cancelled state, per-item rollup linking back to job modals.
+- **Chained-job visibility** — `↳ Next` chip + Chain modal section, plus opportunistic backward `↰ From {parent}` lineage.
+- **Wait time** per queue (p50 / p95) and per job — enqueue → pickup gap.
+- **24h throughput sparkline** + headline stats (jobs/min, past hour, max p95 wait + runtime).
+- **Queues grouped *Needs attention* vs *Healthy*** so a broken queue can't hide in a long list.
+- **Per-class metrics** — 24h processed / failed, avg + max duration, last run.
+- **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), persisted in the URL.
+- **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
+- **Markdown export** of failed-job details for AI-assisted triage or trackers.
+- **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
+- **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, plus a `prometheus-push` command for short-lived workers.
+- **Standalone Livewire + Blade** — no Filament or Nova coupling.
+- **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
 
 ## Requirements
 
@@ -223,7 +243,7 @@ Expanding a row reveals the per-uuid item list in enqueue order, with a status i
 
 Every completed, failed, and pending row that belongs to a batch carries a small batch chip — clicking it opens the batch modal directly. The chip also renders inside the completed/failed/pending modal heroes, so an operator drilling into a single job can jump to its batch in one click. Inside an item modal that was opened from a batch, a `← Back to batch` button in the header returns you to the batch view without losing context (item modals stack visually on top of the batch modal).
 
-The data is **event-captured into Redis** alongside Laravel's own `BatchRepository`. The `JobQueued` listener writes three keys per batched job:
+The data is **event-captured into Redis** alongside Laravel's own `BatchRepository`. The `JobQueued` listener writes the following keys per batched job:
 
 - `qi:batches:index` (sorted set) — recent batchIds, ordered by first-seen unix timestamp. Used to enumerate batches without `SCAN`. Score-pruned on every enqueue (no whole-key TTL) so the head doesn't accumulate forever.
 - `qi:batches:index:{connection}` (sorted set) — per-connection roster, populated first-write-wins via Lua so a heterogeneous batch lands on exactly one connection. Same score-pruning as the aggregate index. Read by `/queue-insights/{connection}` scoped views.
@@ -306,7 +326,7 @@ To embed a connection-scoped view, pass the scope as a mount param:
 ```blade
 @livewire('queue-insights-dashboard', ['connection' => $tenant->queueConnection])
 ```
-    
+
 The component validates the connection against the configured snapshots (404s on mismatch) and runs `viewQueueInsightsConnection` defensively, same as the bundled route — so this is safe to render in publicly-reachable views.
 
 ### Custom payload sanitizer
@@ -391,9 +411,9 @@ The default 120s covers `--timeout=60` + 20s SQS long-poll + headroom. The windo
 - Shared Redis (multi-tenant, or multiple apps or envs on the same Redis): keep the default `QUEUE_INSIGHTS_KEY_PREFIX=qm:{APP_ENV}:`. Safe against collision.
 - Dedicated Redis: override to `QUEUE_INSIGHTS_KEY_PREFIX=qm:` to drop the env segment and shorten every key.
 
-### Alerting
+## Alerting
 
-Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Seven detectors run every snapshot tick (≈ every minute) against live Redis state:
+Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Eight detectors run every snapshot tick (≈ every minute) against live Redis state:
 
 | Rule               | Scope     | Fires when                                                                                                                |
 |--------------------|-----------|---------------------------------------------------------------------------------------------------------------------------|
@@ -410,7 +430,7 @@ A dashboard-only watchdog (`snapshot_command_dead`) renders a top-level red bann
 
 Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}:{c}:{q}`, TTL `cooldown_seconds`). The dashboard always reflects live state.
 
-#### Config example
+### Config example
 
 ```php
 // config/queue-insights.php
@@ -457,7 +477,7 @@ Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}
 > **Heads up — `oldest_pending` / `stuck_inflight` need pending tracking.**
 > Both detectors read `pending-zset:*` / `inflight-zset:*` populated by the `RecordJobQueued` / `RecordJobProcessing` listeners. With `pending.enabled = false` they short-circuit at runtime and a one-off boot warning lists which rules were tripped. Either re-enable pending tracking or disable those rules.
 
-#### Notification channels
+### Notification channels
 
 The package ships three channels out of the box:
 
@@ -467,7 +487,7 @@ The package ships three channels out of the box:
 
 Both `slack` and `mail` feature-detect the underlying binding (`Illuminate\Http\Client\Factory` and `mail.manager` respectively) — if the binding is missing they're silently skipped.
 
-#### Adding more channels (Discord, Teams, PagerDuty, Telegram, …)
+### Adding more channels (Discord, Teams, PagerDuty, Telegram, …)
 
 The package emits a `SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertNotification` and routes it through `SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable`, exactly as Spatie's alerting packages and Horizon do. To add a destination:
 
@@ -480,7 +500,7 @@ The package emits a `SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertN
    $this->app->bind(QueueInsightsNotifiable::class, MyNotifiable::class);
    ```
 
-#### Typed events (always fire)
+### Typed events (always fire)
 
 Each rule fires a typed event regardless of which channels are enabled — host apps can hook `Event::listen(...)` for custom routing:
 
@@ -489,11 +509,11 @@ Each rule fires a typed event regardless of which channels are enabled — host 
 - `JobClassFailureRateExceeded`, `JobClassP95Exceeded`
 - `BacklogGrowing`
 
-#### Active-rules panel
+### Active-rules panel
 
 The dashboard footer renders a read-only summary of `alerts.rules` + `alerts.channels` so operators can verify what's monitored without SSH'ing into the server. Edit the config file to change anything — there is no runtime mutation surface.
 
-#### Migrating from the 0.x `alerts.thresholds` shape
+### Migrating from the 0.x `alerts.thresholds` shape
 
 The pre-1.0 config exposed a single flat `alerts.thresholds` list. It is still honoured (legacy wins over `alerts.rules.depth.thresholds`) and emits a one-off boot warning. To migrate:
 
@@ -517,7 +537,7 @@ The pre-1.0 config exposed a single flat `alerts.thresholds` list. It is still h
 
 Note: Laravel's `mergeConfigFrom` is a shallow merge, so hosts that published `config/queue-insights.php` before this version will not pick up the new nested defaults under `alerts.rules.*` automatically — copy the new keys from the package config when migrating.
 
-#### Silencing noisy jobs
+### Silencing noisy jobs
 
 Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures** should be suppressed from the dashboard's Failed list, the headline failed-tile, the throughput sparkline's failed series, the `failure_rate` alert detector, and outbound notifications.
 
@@ -550,7 +570,7 @@ Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `
 
 The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes for retry. Toggle "Show silenced" first if you want them in the bulk set.
 
-### Prometheus
+## Prometheus
 
 Enable via `QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true`. Mounts `GET /metrics` (path configurable) exposing queue-insights state in Prometheus 0.0.4 text format — or OpenMetrics 1.0.0 when the scraper sends `Accept: application/openmetrics-text` (Prometheus negotiates this automatically). Default-off; adoption is opt-in.
 
@@ -572,7 +592,7 @@ scrape_configs:
       - targets: ['app.example.com']
 ```
 
-#### Metric catalogue
+### Metric catalogue
 
 | Metric | Type | Labels | Notes |
 |---|---|---|---|
@@ -616,7 +636,7 @@ A two-tier cache (per-request memoise + 5 s Redis cache, key `prom:cache:rendere
 
 Each metric family has its own toggle under `prometheus.metrics.*` (default-on) — disable any family the host doesn't need to keep the scrape body lean.
 
-#### Push gateway (short-lived workers / CLI)
+### Push gateway (short-lived workers / CLI)
 
 For processes that exit before any scrape can land, `php artisan queue-insights:prometheus-push` does a one-shot collect + PUT to a configured Pushgateway. Long-running workers should be **scraped, not pushed** — push-mode is for CLI scripts and scheduled tasks where pull-mode can't reach the process.
 
@@ -636,6 +656,31 @@ php artisan queue-insights:prometheus-push --accept-shared-grouping  # opt out o
 ```
 
 Exit codes mirror Symfony Console convention: `0` success, `1` Pushgateway HTTP failure, `2` config error (missing URL / unset instance without override).
+
+## Testing
+
+```bash
+composer test
+```
+
+Runs the Pest suite via Orchestra Testbench. `composer qa` additionally runs Rector, Pint, and PHPStan.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) and the [GitHub releases page](https://github.com/SanderMuller/laravel-queue-insights/releases). The changelog is updated automatically on release publish — do not edit by hand.
+
+## Contributing
+
+Issues and pull requests welcome at [github.com/SanderMuller/laravel-queue-insights](https://github.com/SanderMuller/laravel-queue-insights). Please run `composer qa` and `composer test` before opening a PR.
+
+## Security Vulnerabilities
+
+Please review [our security policy](SECURITY.md) on how to report security vulnerabilities.
+
+## Credits
+
+- [Sander Muller](https://github.com/SanderMuller)
+- [All Contributors](https://github.com/SanderMuller/laravel-queue-insights/contributors)
 
 ## License
 

@@ -169,9 +169,9 @@
                     <div class="bg-white p-4">
                         <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Queued at</dt>
                         <dd class="mt-1">
-                            <p class="truncate text-sm font-medium text-gray-900">{{ $queuedCarbon?->diffForHumans() ?? '—' }}</p>
+                            <x-queue-insights::qi-time :at="$queuedCarbon" class="block truncate text-sm font-medium text-gray-900"/>
                             @if($queuedCarbon)
-                                <p class="truncate font-mono text-[10px] text-gray-400">{{ $queuedCarbon->toIso8601String() }}</p>
+                                <x-queue-insights::qi-time :at="$queuedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
                             @endif
                         </dd>
                     </div>
@@ -179,9 +179,9 @@
                         <div class="bg-white p-4">
                             <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Started</dt>
                             <dd class="mt-1">
-                                <p class="truncate text-sm font-medium text-gray-900">{{ $startedCarbon?->diffForHumans() ?? '—' }}</p>
+                                <x-queue-insights::qi-time :at="$startedCarbon" class="block truncate text-sm font-medium text-gray-900"/>
                                 @if($startedCarbon)
-                                    <p class="truncate font-mono text-[10px] text-gray-400">{{ $startedCarbon->toIso8601String() }}</p>
+                                    <x-queue-insights::qi-time :at="$startedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
                                 @endif
                             </dd>
                         </div>
@@ -205,9 +205,9 @@
                             <div class="bg-white p-4">
                                 <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Runs</dt>
                                 <dd class="mt-1">
-                                    <p class="truncate text-sm font-medium text-gray-900">{{ $availableCarbon?->diffForHumans() ?? '—' }}</p>
+                                    <x-queue-insights::qi-time :at="$availableCarbon" class="block truncate text-sm font-medium text-gray-900"/>
                                     @if($availableCarbon)
-                                        <p class="truncate font-mono text-[10px] text-gray-400">{{ $availableCarbon->toIso8601String() }}</p>
+                                        <x-queue-insights::qi-time :at="$availableCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
                                     @endif
                                 </dd>
                             </div>

@@ -16,11 +16,6 @@
     @php
         $fqcn = $item['class'] ?? '—';
         $shortName = ($p = strrpos($fqcn, '\\')) !== false ? substr($fqcn, $p + 1) : $fqcn;
-        try {
-            $atHuman = is_string($item['processed_at'] ?? null) && $item['processed_at'] !== ''
-                ? \Illuminate\Support\Facades\Date::parse($item['processed_at'])->diffForHumans(['short' => true])
-                : '—';
-        } catch (\Throwable) { $atHuman = '—'; }
     @endphp
     <li class="flex cursor-pointer items-center justify-between gap-3 py-1.5 transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500"
         role="button" tabindex="0"
@@ -34,7 +29,7 @@
         </span>
         <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500">
             <span class="truncate font-mono">{{ $item['queue'] ?? '—' }}</span>
-            <span class="text-gray-400">{{ $atHuman }}</span>
+            <x-queue-insights::qi-time :at="$item['processed_at'] ?? null" format="relative-short" class="text-gray-400"/>
         </span>
     </li>
 
@@ -43,11 +38,6 @@
         $fqcn = $item['display_name'] ?? '—';
         $shortName = ($p = strrpos((string) $fqcn, '\\')) !== false ? substr((string) $fqcn, $p + 1) : (string) $fqcn;
         $clickable = ($item['id'] ?? null) !== null;
-        try {
-            $atHuman = is_string($item['failed_at'] ?? null) && $item['failed_at'] !== ''
-                ? \Illuminate\Support\Facades\Date::parse($item['failed_at'])->diffForHumans(['short' => true])
-                : '—';
-        } catch (\Throwable) { $atHuman = '—'; }
         $excShort = ! empty($item['exception_class']) ? class_basename($item['exception_class']) : null;
     @endphp
     <li @class([
@@ -70,7 +60,7 @@
         </span>
         <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500">
             <span class="truncate font-mono">{{ $item['queue'] ?? '—' }}</span>
-            <span class="text-gray-400">{{ $atHuman }}</span>
+            <x-queue-insights::qi-time :at="$item['failed_at'] ?? null" format="relative-short" class="text-gray-400"/>
         </span>
     </li>
 
@@ -122,8 +112,8 @@
                     <x-slot:tip>
                         Delayed by <span class="font-medium">{{ $delayHumanized }}</span>.
                         @if($availableCarbon)
-                            Runs <span class="font-medium">{{ $availableCarbon->diffForHumans() }}</span>
-                            <span class="block font-mono text-[10px] text-white/60">{{ $availableCarbon->toIso8601String() }}</span>
+                            Runs <x-queue-insights::qi-time :at="$availableCarbon" class="font-medium"/>
+                            <x-queue-insights::qi-time :at="$availableCarbon" format="absolute-mono" class="block text-[10px] text-white/60"/>
                         @endif
                     </x-slot:tip>
                 </x-queue-insights::hint>
@@ -131,15 +121,13 @@
         </span>
         <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500">
             <span class="truncate font-mono">{{ $item['queue'] ?? '—' }}</span>
-            <span class="text-gray-400">
-                @if($isInFlight && $startedCarbon)
-                    started {{ $startedCarbon->diffForHumans(['short' => true]) }}
-                @elseif($queuedCarbon)
-                    {{ $queuedCarbon->diffForHumans(['short' => true]) }}
-                @else
-                    —
-                @endif
-            </span>
+            @if($isInFlight && $startedCarbon)
+                <x-queue-insights::qi-time :at="$startedCarbon" format="relative-short" prefix="started" class="text-gray-400"/>
+            @elseif($queuedCarbon)
+                <x-queue-insights::qi-time :at="$queuedCarbon" format="relative-short" class="text-gray-400"/>
+            @else
+                <span class="text-gray-400">—</span>
+            @endif
         </span>
     </li>
 

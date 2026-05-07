@@ -28,13 +28,6 @@
         : null;
 
     $failedAtRaw = $failed['failed_at'] ?? null;
-    try {
-        $failedAtHuman = is_string($failedAtRaw) && $failedAtRaw !== ''
-            ? \Illuminate\Support\Facades\Date::parse($failedAtRaw)->diffForHumans()
-            : null;
-    } catch (\Throwable) {
-        $failedAtHuman = null;
-    }
 
     $failedException = $failed['exception'] ?? null;
 
@@ -319,9 +312,9 @@
                     <div class="bg-white p-4">
                         <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Failed at</dt>
                         <dd class="mt-1">
-                            <p class="truncate text-sm font-medium text-gray-900">{{ $failedAtHuman ?? '—' }}</p>
+                            <x-queue-insights::qi-time :at="$failedAtRaw" class="block truncate text-sm font-medium text-gray-900"/>
                             @if($failedAtRaw)
-                                <p class="truncate font-mono text-[10px] text-gray-400">{{ $failedAtRaw }}</p>
+                                <x-queue-insights::qi-time :at="$failedAtRaw" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
                             @endif
                         </dd>
                         {{-- Wait time — `—` when no sample (legacy / driver). --}}

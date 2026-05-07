@@ -75,14 +75,12 @@
             return (string) json_encode($v, JSON_UNESCAPED_SLASHES);
         };
 
-        $renderTimestamp = function (mixed $v): ?array {
+        $renderTimestamp = function (mixed $v): ?\Carbon\CarbonInterface {
             if (! is_numeric($v)) {
                 return null;
             }
             try {
-                $dt = \Illuminate\Support\Facades\Date::createFromTimestamp((float) $v);
-
-                return ['human' => $dt->diffForHumans(), 'abs' => $dt->toIso8601String()];
+                return \Illuminate\Support\Facades\Date::createFromTimestamp((float) $v);
             } catch (\Throwable) {
                 return null;
             }
@@ -130,8 +128,8 @@
                             </dt>
                             <dd class="break-all font-mono {{ $v === null ? 'text-gray-400' : 'text-gray-900' }}">
                                 @if($ts !== null)
-                                    <span>{{ $ts['human'] }}</span>
-                                    <span class="ml-1 text-[10px] text-gray-400" title="{{ $ts['abs'] }}">({{ $v }})</span>
+                                    <x-queue-insights::qi-time :at="$ts"/>
+                                    <span class="ml-1 text-[10px] text-gray-400">({{ $v }})</span>
                                 @else
                                     {{ $v === null ? 'null' : (is_scalar($v) ? (string) $v : (string) json_encode($v, JSON_UNESCAPED_SLASHES)) }}
                                 @endif

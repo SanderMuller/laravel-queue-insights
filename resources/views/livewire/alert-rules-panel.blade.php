@@ -173,7 +173,8 @@
                                             @foreach($issue['context'] as $ctxKey => $ctxValue)
                                                 <div class="flex items-baseline gap-1.5">
                                                     <dt class="text-gray-500">{{ $ctxKey }}</dt>
-                                                    <dd class="font-mono tabular-nums text-gray-800">{{ $ctxValue }}</dd>
+                                                    {{-- Floats round to 2dp; ints + strings pass through. --}}
+                                                    <dd class="font-mono tabular-nums text-gray-800">{{ is_float($ctxValue) ? number_format($ctxValue, 2) : $ctxValue }}</dd>
                                                 </div>
                                             @endforeach
                                         </dl>

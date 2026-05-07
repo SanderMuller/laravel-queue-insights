@@ -58,7 +58,7 @@ it('Section A renders base metadata under off mode (no payload_* keys)', functio
         ->assertSeeText('(1243 ms)')
         ->assertSeeText('Attempts')
         ->assertSeeText('Processed at')
-        ->assertSeeText('2026-04-24T12:00:00+00:00')
+        ->assertSeeHtml('datetime="2026-04-24T12:00:00+00:00"')
         ->assertSeeText('Stream ID');
 });
 

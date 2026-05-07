@@ -65,9 +65,15 @@
                         <dl class="grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
                             @foreach($issue->context as $key => $value)
                                 @if(is_scalar($value))
+                                    {{-- Floats (failure_rate's `ratio` /
+                                         `ratio_threshold`, backlog_growing's
+                                         slope) print with PHP default
+                                         precision otherwise. Round at every
+                                         render site — context stays raw so
+                                         host event listeners keep precision. --}}
                                     <div class="flex items-baseline gap-1.5">
                                         <dt class="font-medium opacity-75">{{ $key }}:</dt>
-                                        <dd class="tabular-nums">{{ $value }}</dd>
+                                        <dd class="tabular-nums">{{ is_float($value) ? number_format($value, 2) : $value }}</dd>
                                     </div>
                                 @endif
                             @endforeach

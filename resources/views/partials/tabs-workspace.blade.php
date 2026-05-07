@@ -34,7 +34,7 @@
         const conditional = {
             pending: {{ ($pendingEnabled ?? false) ? 'true' : 'false' }},
             batches: {{ ($batchesEnabled ?? false) ? 'true' : 'false' }},
-            silenced: {{ count($silencedClasses ?? []) > 0 ? 'true' : 'false' }},
+            silenced: {{ (count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0 ? 'true' : 'false' }},
         };
         const apply = () => {
             const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|classes|silenced|alerts)$/);
@@ -63,8 +63,8 @@
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'completed', 'label' => 'Completed', 'badge' => $completedTotal ?? count($completedRows)])
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'failed', 'label' => 'Failed', 'badge' => $failedTotal ?? count($failedRows)])
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'classes', 'label' => 'Classes', 'badge' => count($classes)])
-            @if(count($silencedClasses ?? []) > 0)
-                @include('queue-insights::partials.tabs.tab-button', ['name' => 'silenced', 'label' => 'Silenced', 'badge' => count($silencedClasses)])
+            @if((count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0)
+                @include('queue-insights::partials.tabs.tab-button', ['name' => 'silenced', 'label' => 'Silenced', 'badge' => count($silencedClasses) + count($silencedPatterns ?? [])])
             @endif
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'alerts', 'label' => 'Alert rules', 'badge' => null])
         </nav>
@@ -95,7 +95,7 @@
     <div x-show="tab==='classes'" x-cloak>
         @include('queue-insights::partials.tabs.pane-classes')
     </div>
-    @if(count($silencedClasses ?? []) > 0)
+    @if((count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0)
         <div x-show="tab==='silenced'" x-cloak>
             @include('queue-insights::partials.tabs.pane-silenced')
         </div>

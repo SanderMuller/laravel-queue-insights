@@ -133,13 +133,13 @@
                             @if($createdAt instanceof \Carbon\CarbonInterface)
                                 <div class="flex items-baseline gap-1.5">
                                     <dt class="text-gray-400">created</dt>
-                                    <dd title="{{ $createdAt->toIso8601String() }}">{{ $createdAt->diffForHumans() }}</dd>
+                                    <dd><x-queue-insights::qi-time :at="$createdAt"/></dd>
                                 </div>
                             @endif
                             @if($finishedAt instanceof \Carbon\CarbonInterface)
                                 <div class="flex items-baseline gap-1.5">
                                     <dt class="text-gray-400">{{ $isCancelled ? 'cancelled' : 'finished' }}</dt>
-                                    <dd title="{{ $finishedAt->toIso8601String() }}">{{ $finishedAt->diffForHumans() }}</dd>
+                                    <dd><x-queue-insights::qi-time :at="$finishedAt"/></dd>
                                 </div>
                             @endif
                         </dl>
@@ -212,7 +212,7 @@
                                         <div class="mt-1 flex flex-wrap items-center gap-x-2 text-gray-400">
                                             <span class="font-mono">…{{ $shortUuid }}</span>
                                             @if(is_int($ts))
-                                                <span title="{{ \Illuminate\Support\Facades\Date::createFromTimestamp($ts)->toIso8601String() }}">{{ \Illuminate\Support\Facades\Date::createFromTimestamp($ts)->diffForHumans() }}</span>
+                                                <x-queue-insights::qi-time :at="$ts"/>
                                             @endif
                                         </div>
                                     </div>

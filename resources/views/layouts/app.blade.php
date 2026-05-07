@@ -25,6 +25,38 @@
             color: rgb(4 120 87);
             box-shadow: inset 0 0 0 1px rgb(5 150 105 / 0.3);
         }
+
+        /* qi-time tooltip — single floating element managed by the global
+           handler in <head>. Pinned above (or below) the trigger, never
+           captures pointer events so hover doesn't flicker on slow paint. */
+        #qi-time-tooltip {
+            position: fixed;
+            z-index: 60;
+            pointer-events: none;
+            padding: 6px 8px;
+            border-radius: 6px;
+            background: rgb(17 24 39);
+            color: white;
+            font-size: 11px;
+            line-height: 1.35;
+            box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.4), inset 0 0 0 1px rgb(255 255 255 / 0.08);
+            white-space: nowrap;
+            opacity: 0;
+            transform: translateY(2px);
+            transition: opacity 90ms ease, transform 90ms ease;
+        }
+        #qi-time-tooltip[data-shown] { opacity: 1; transform: translateY(0); }
+        #qi-time-tooltip table { border-collapse: collapse; }
+        #qi-time-tooltip td { padding: 1px 0; vertical-align: baseline; }
+        #qi-time-tooltip td.qi-time-label {
+            padding-right: 10px;
+            color: rgb(156 163 175);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 10px;
+        }
+        #qi-time-tooltip td.qi-time-value { font-variant-numeric: tabular-nums; }
     </style>
     {{--
         Inline JSON colorizer + copy-to-clipboard helpers for the Details modal.
@@ -125,6 +157,188 @@
                 selectFallback();
             }
         }, true);
+
+        /*
+         * qi-time hydration — every <time data-qi-time> element gets:
+         *   1. Absolute formats rewritten to the user's local timezone.
+         *   2. A hover/focus tooltip with both UTC and Local lines.
+         *
+         * Server emits ISO-8601 UTC in `datetime`. Browser parses it into a
+         * Date and re-formats with Intl. Re-runs after every Livewire
+         * `morph.updated` so freshly polled rows hydrate the same way.
+         *
+         * Relative formats keep their server-rendered text (diffForHumans is
+         * timezone-agnostic) — only the tooltip is added.
+         */
+        (function () {
+            var ABS_FMT = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' };
+            var localFormatter, utcFormatter;
+            try {
+                localFormatter = new Intl.DateTimeFormat(undefined, ABS_FMT);
+                utcFormatter = new Intl.DateTimeFormat(undefined, Object.assign({ timeZone: 'UTC' }, ABS_FMT));
+            } catch (e) {
+                return; // ancient browser — leave server-rendered text alone
+            }
+
+            function localOffsetLabel() {
+                var min = -new Date().getTimezoneOffset();
+                if (min === 0) return 'UTC';
+                var sign = min >= 0 ? '+' : '-';
+                var abs = Math.abs(min);
+                var h = Math.floor(abs / 60);
+                var m = abs % 60;
+                return 'UTC' + sign + h + (m ? ':' + String(m).padStart(2, '0') : '');
+            }
+            var OFFSET_LABEL = localOffsetLabel();
+
+            function hydrateOne(el) {
+                if (el._qiTimeHydrated === el.getAttribute('datetime')) return;
+                var iso = el.getAttribute('datetime');
+                if (! iso) return;
+                var d = new Date(iso);
+                if (isNaN(d.getTime())) return;
+                var fmt = el.getAttribute('data-qi-time-format') || 'relative';
+                var prefix = el.getAttribute('data-qi-time-prefix');
+                if (fmt === 'absolute' || fmt === 'absolute-mono') {
+                    el.textContent = (prefix ? prefix + ' ' : '') + localFormatter.format(d);
+                }
+                // Refresh aria-label so SR users hear the same UTC + Local
+                // pair the visual tooltip shows. Server-side aria-label is
+                // UTC-only because the offset is unknown; JS knows both.
+                el.setAttribute(
+                    'aria-label',
+                    (prefix ? prefix + ' ' : '') +
+                    utcFormatter.format(d) + ' UTC, ' +
+                    localFormatter.format(d) + ' ' + OFFSET_LABEL
+                );
+                el._qiTimeHydrated = iso;
+            }
+
+            function hydrateAll(root) {
+                (root || document).querySelectorAll('time[data-qi-time]').forEach(hydrateOne);
+            }
+
+            // Tooltip — single shared element. Has a stable id so triggers
+            // can point at it via aria-describedby while shown.
+            var TIP_ID = 'qi-time-tooltip';
+            var tip = null;
+            var currentTrigger = null;
+            function ensureTip() {
+                if (tip) return tip;
+                tip = document.createElement('div');
+                tip.id = TIP_ID;
+                tip.setAttribute('role', 'tooltip');
+                tip.innerHTML = '<table><tbody>' +
+                    '<tr><td class="qi-time-label">UTC</td><td class="qi-time-value" data-qi-tip-utc></td></tr>' +
+                    '<tr><td class="qi-time-label" data-qi-tip-local-label></td><td class="qi-time-value" data-qi-tip-local></td></tr>' +
+                    '</tbody></table>';
+                document.body.appendChild(tip);
+                return tip;
+            }
+
+            function showTip(el) {
+                var iso = el.getAttribute('datetime');
+                if (! iso) return;
+                var d = new Date(iso);
+                if (isNaN(d.getTime())) return;
+                var t = ensureTip();
+                t.querySelector('[data-qi-tip-utc]').textContent = utcFormatter.format(d);
+                t.querySelector('[data-qi-tip-local]').textContent = localFormatter.format(d);
+                t.querySelector('[data-qi-tip-local-label]').textContent = 'Local ' + OFFSET_LABEL;
+                t.style.left = '0px';
+                t.style.top = '0px';
+                t.setAttribute('data-shown', '');
+                // Wire the trigger to the tooltip so a screen reader announces
+                // it on focus. Stash any pre-existing aria-describedby so we
+                // can restore it on hide rather than clobber a host value.
+                if (currentTrigger && currentTrigger !== el) {
+                    restoreDescribedBy(currentTrigger);
+                }
+                currentTrigger = el;
+                el._qiPrevDescribedBy = el.getAttribute('aria-describedby');
+                el.setAttribute('aria-describedby', TIP_ID);
+                // Position after paint so width is known. Bail if the trigger
+                // was detached (Livewire morph) between mouseover and rAF —
+                // a detached node returns rect 0,0,0,0 and would pin the tip
+                // to the top-left corner.
+                requestAnimationFrame(function () {
+                    if (! el.isConnected) { hideTip(); return; }
+                    var rect = el.getBoundingClientRect();
+                    var tw = t.offsetWidth;
+                    var th = t.offsetHeight;
+                    var left = rect.left + (rect.width / 2) - (tw / 2);
+                    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+                    var top = rect.top - th - 6;
+                    if (top < 8) top = rect.bottom + 6; // flip below if no space above
+                    t.style.left = left + 'px';
+                    t.style.top = top + 'px';
+                });
+            }
+
+            function restoreDescribedBy(el) {
+                if (el._qiPrevDescribedBy) {
+                    el.setAttribute('aria-describedby', el._qiPrevDescribedBy);
+                } else {
+                    el.removeAttribute('aria-describedby');
+                }
+                el._qiPrevDescribedBy = null;
+            }
+
+            function hideTip() {
+                if (tip) tip.removeAttribute('data-shown');
+                if (currentTrigger) {
+                    restoreDescribedBy(currentTrigger);
+                    currentTrigger = null;
+                }
+            }
+
+            document.addEventListener('mouseover', function (e) {
+                var el = e.target.closest && e.target.closest('time[data-qi-time]');
+                if (el) showTip(el);
+            });
+            document.addEventListener('mouseout', function (e) {
+                var el = e.target.closest && e.target.closest('time[data-qi-time]');
+                if (el) hideTip();
+            });
+            document.addEventListener('focusin', function (e) {
+                var el = e.target.closest && e.target.closest('time[data-qi-time]');
+                if (el) showTip(el);
+            });
+            document.addEventListener('focusout', function (e) {
+                var el = e.target.closest && e.target.closest('time[data-qi-time]');
+                if (el) hideTip();
+            });
+            window.addEventListener('scroll', hideTip, true);
+
+            function registerLivewireHook() {
+                if (! window.Livewire || ! window.Livewire.hook) return;
+                Livewire.hook('morph.updated', function (payload) {
+                    var el = payload && payload.el ? payload.el : document;
+                    hydrateAll(el);
+                    // Defensive: if the hovered <time> was replaced mid-show,
+                    // mouseout may not fire on the old node. Hide the tip so
+                    // it doesn't pin to a stale viewport coordinate.
+                    hideTip();
+                });
+            }
+            function bootQiTime() {
+                hydrateAll(document);
+                // Dual-branch: register the Livewire hook whether scripts load
+                // before or after Livewire bootstrap. Mirrors the JSON colorizer
+                // pattern above; without this, polled morphs leave absolute-mode
+                // times stuck in the server's timezone.
+                if (window.Livewire) {
+                    registerLivewireHook();
+                } else {
+                    document.addEventListener('livewire:initialized', registerLivewireHook, { once: true });
+                }
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', bootQiTime, { once: true });
+            } else {
+                bootQiTime();
+            }
+        })();
     </script>
 </head>
 <body class="bg-gray-50 text-gray-900 antialiased">

@@ -70,9 +70,9 @@
             </span>
         @endif
         @if($finishedAt instanceof \Carbon\CarbonInterface)
-            <span class="basis-full text-right text-xs text-gray-400" title="{{ $finishedAt->toIso8601String() }}">finished {{ $finishedAt->diffForHumans() }}</span>
+            <x-queue-insights::qi-time :at="$finishedAt" prefix="finished" class="basis-full text-right text-xs text-gray-400"/>
         @elseif($createdAt instanceof \Carbon\CarbonInterface)
-            <span class="basis-full text-right text-xs text-gray-400" title="{{ $createdAt->toIso8601String() }}">created {{ $createdAt->diffForHumans() }}</span>
+            <x-queue-insights::qi-time :at="$createdAt" prefix="created" class="basis-full text-right text-xs text-gray-400"/>
         @endif
     </div>
 </x-queue-insights::list-row>

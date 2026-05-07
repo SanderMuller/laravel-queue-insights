@@ -68,7 +68,6 @@
                                     $p95Ms = $c['p95_ms'] ?? null;
                                     $maxMs = $c['max_ms'] ?? null;
                                     $lastRunAt = $c['last_run_at'] ?? null;
-                                    $lastRunIso = $lastRunAt instanceof \Carbon\CarbonInterface ? $lastRunAt->toIso8601String() : null;
                                 @endphp
                                 {{-- @js() safely encodes FQCN for JS string literals — single-quoted
                                     `'{{ ... }}'` strips `\J`, `\V` etc as unknown escapes. --}}
@@ -121,9 +120,9 @@
                                     </td>
                                     {{-- Last run: humanized + absolute subtitle --}}
                                     <td class="px-3 py-3 align-top">
-                                        <p class="whitespace-nowrap text-xs text-gray-700" @if($lastRunIso) title="{{ $lastRunIso }}" @endif>{{ $lastRunAt?->diffForHumans() ?? '—' }}</p>
-                                        @if($lastRunIso)
-                                            <p class="mt-0.5 font-mono text-[10px] text-gray-400">{{ $lastRunIso }}</p>
+                                        <x-queue-insights::qi-time :at="$lastRunAt" class="block whitespace-nowrap text-xs text-gray-700"/>
+                                        @if($lastRunAt instanceof \Carbon\CarbonInterface)
+                                            <x-queue-insights::qi-time :at="$lastRunAt" format="absolute-mono" class="mt-0.5 block text-[10px] text-gray-400"/>
                                         @endif
                                     </td>
                                 </tr>

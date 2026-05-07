@@ -75,7 +75,7 @@
             @endif
 
             @if($q['last_at'])
-                <span class="basis-full text-right text-xs text-gray-400" title="{{ $q['last_at']->toIso8601String() }}">last {{ $q['last_at']->diffForHumans() }}</span>
+                <x-queue-insights::qi-time :at="$q['last_at']" prefix="last" class="basis-full text-right text-xs text-gray-400"/>
             @else
                 <span class="basis-full text-right text-xs text-gray-400">
                     <x-queue-insights::hint placement="bottom" triggerClass="cursor-help underline decoration-dotted decoration-gray-300 underline-offset-2">
@@ -114,9 +114,7 @@
                                         @include('queue-insights::partials.batch-chip', ['batchId' => $job['batch_id']])
                                     @endif
                                 </span>
-                                <span class="shrink-0 text-gray-500" title="{{ \Illuminate\Support\Facades\Date::createFromTimestamp($queuedAt)->toIso8601String() }}">
-                                    queued {{ \Illuminate\Support\Facades\Date::createFromTimestamp($queuedAt)->diffForHumans() }}
-                                </span>
+                                <x-queue-insights::qi-time :at="$queuedAt" prefix="queued" class="shrink-0 text-gray-500"/>
                             </li>
                         @endforeach
                     </ul>
@@ -136,9 +134,7 @@
                                         @include('queue-insights::partials.batch-chip', ['batchId' => $job['batch_id']])
                                     @endif
                                 </span>
-                                <span class="shrink-0 text-gray-500" title="{{ \Illuminate\Support\Facades\Date::createFromTimestamp($availableAt)->toIso8601String() }}">
-                                    runs {{ \Illuminate\Support\Facades\Date::createFromTimestamp($availableAt)->diffForHumans() }}
-                                </span>
+                                <x-queue-insights::qi-time :at="$availableAt" prefix="runs" class="shrink-0 text-gray-500"/>
                             </li>
                         @endforeach
                     </ul>
