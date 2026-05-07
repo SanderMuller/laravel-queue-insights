@@ -12,6 +12,7 @@
      *
      * Required scope vars:
      *   $silencedClasses        — list<string> FQCNs in `queue-insights.silenced`
+     *   $silencedPatterns       — list<string> globs in `queue-insights.silenced_patterns`
      *   $silencedFailedRows     — RowEnricher::failed() output, capped at PER_PAGE
      *   $silencedCompletedRows  — RowEnricher::completed() output, capped at PER_PAGE
      *   $scopeConnection        — ?string scope (drives the empty-state message
@@ -37,15 +38,34 @@
         <p class="mt-1 text-xs text-gray-500">
             Failures + completed runs for these classes are hidden from the default Failed and Completed lists. Counter writes are preserved — removing a class from <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">queue-insights.silenced</code> immediately re-surfaces its history.
         </p>
-        <ul role="list" class="mt-3 flex flex-wrap gap-1.5">
-            @foreach($silencedClasses as $silencedClass)
-                <li>
-                    <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10">
-                        {{ $silencedClass }}
-                    </span>
-                </li>
-            @endforeach
-        </ul>
+        @if(count($silencedClasses) > 0)
+            <ul role="list" class="mt-3 flex flex-wrap gap-1.5">
+                @foreach($silencedClasses as $silencedClass)
+                    <li>
+                        <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10">
+                            {{ $silencedClass }}
+                        </span>
+                    </li>
+                @endforeach
+            </ul>
+        @endif
+        @if(count($silencedPatterns ?? []) > 0)
+            <h3 class="mt-4 text-sm font-semibold tracking-tight text-gray-700">
+                Silenced patterns <span class="font-normal text-gray-500">({{ count($silencedPatterns) }})</span>
+            </h3>
+            <p class="mt-1 text-xs text-gray-500">
+                <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">Str::is</code> globs from <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">queue-insights.silenced_patterns</code>. Any class whose FQCN matches is silenced on the same surfaces as the exact list.
+            </p>
+            <ul role="list" class="mt-3 flex flex-wrap gap-1.5">
+                @foreach($silencedPatterns as $pattern)
+                    <li>
+                        <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10">
+                            {{ $pattern }}
+                        </span>
+                    </li>
+                @endforeach
+            </ul>
+        @endif
     </section>
 
     {{-- Failed (silenced) — uses the same row partial as the main Failed pane

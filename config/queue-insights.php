@@ -84,6 +84,19 @@ return [
         // App\Jobs\IntermittentlyFailingJob::class,
     ],
 
+    /*
+     | Wildcard counterpart to `silenced`. Each entry is a `Str::is`-style
+     | glob (e.g. `App\Jobs\Reports\*`) — silences every class whose FQCN
+     | matches. Exact `silenced` entries are checked first; patterns are
+     | the fallback path. Same surfaces as `silenced`: failed list, headline
+     | failed counts, throughput failed bucket, failure_rate detector,
+     | dispatcher guard, completed-row filter, silenced-tab roster, SQL
+     | NOT LIKE exclusion. Empty list = patterns off.
+     */
+    'silenced_patterns' => [
+        // 'App\\Jobs\\Reports\\*',
+    ],
+
     'alerts' => [
         'enabled' => env('QUEUE_INSIGHTS_ALERTS_ENABLED', false),
         'cooldown_seconds' => 900,

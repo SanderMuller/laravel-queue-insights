@@ -254,6 +254,45 @@ it('rejects a regex-violating silenced entry', function (): void {
         ->toThrow(QueueInsightsConfigException::class, 'is not a valid job-class label');
 });
 
+it('accepts an empty silenced_patterns list (feature off)', function (): void {
+    ConfigValidator::validateSilencedPatterns([]);
+})->throwsNoExceptions();
+
+it('accepts well-formed glob patterns', function (): void {
+    ConfigValidator::validateSilencedPatterns([
+        'App\\Jobs\\Reports\\*',
+        '*\\Internal\\*',
+        'Closure@*',
+    ]);
+})->throwsNoExceptions();
+
+it('rejects an associative silenced_patterns array', function (): void {
+    expect(fn () => ConfigValidator::validateSilencedPatterns(['k' => 'App\\Jobs\\*']))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced_patterns must be a list');
+});
+
+it('rejects a non-string silenced_patterns entry', function (): void {
+    expect(fn () => ConfigValidator::validateSilencedPatterns([42]))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced_patterns[0] must be a non-empty string');
+});
+
+it('rejects an empty-string silenced_patterns entry', function (): void {
+    expect(fn () => ConfigValidator::validateSilencedPatterns(['']))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced_patterns[0] must be a non-empty string');
+});
+
+it('rejects a glob pattern with shell-injection chars', function (): void {
+    expect(fn () => ConfigValidator::validateSilencedPatterns(['App\\Jobs\\*; DROP TABLE']))
+        ->toThrow(QueueInsightsConfigException::class, 'is not a valid glob pattern');
+});
+
+it('boot-time silenced_patterns shape check fails loud on a non-array config', function (): void {
+    config()->set('queue-insights.silenced_patterns', 'App\\Jobs\\*');
+
+    expect(fn () => app()->register(QueueInsightsServiceProvider::class, true))
+        ->toThrow(QueueInsightsConfigException::class, 'silenced_patterns must be a list of glob strings');
+});
+
 it('boot-time silenced shape check fails loud on a non-array config (codex review #2)', function (): void {
     // The other section validators silently coerce a non-array config to
     // [], but `silenced` is meant to be a list of FQCNs and a typo like

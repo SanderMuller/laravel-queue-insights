@@ -236,6 +236,19 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         ConfigValidator::validateSilenced($silenced);
 
+        // silenced_patterns mirrors the same fail-loud-on-non-array stance
+        // as silenced. Same rationale: a `silenced_patterns => 'App\\*'`
+        // typo (string instead of list) silently becoming "no patterns"
+        // would mute exactly the operator who's trying to mute things.
+        $patterns = $cfg['silenced_patterns'] ?? [];
+        if (! is_array($patterns)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.silenced_patterns must be a list of glob strings (got ' . get_debug_type($patterns) . ').'
+            );
+        }
+
+        ConfigValidator::validateSilencedPatterns($patterns);
+
         $this->registerListeners();
         $this->registerSchedule();
         $this->registerDashboard();

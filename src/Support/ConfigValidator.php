@@ -156,6 +156,40 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the silenced-patterns list. Wildcard counterpart to
+     * `silenced`. Each entry is a non-empty `Str::is`-style glob; the
+     * shape check is intentionally loose — patterns may legitimately
+     * contain `*`, `\\`, `:`, `/`, `@` for FQCN segments + synthetic
+     * labels. The runtime match (`Str::is`) tolerates anything we accept
+     * here, so a typo'd pattern only ever fails to match — it cannot
+     * crash the dashboard read path.
+     *
+     * @param  array<array-key, mixed>  $patterns
+     */
+    public static function validateSilencedPatterns(array $patterns): void
+    {
+        if (! array_is_list($patterns)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.silenced_patterns must be a list of glob strings, not an associative array.'
+            );
+        }
+
+        foreach ($patterns as $i => $entry) {
+            if (! is_string($entry) || $entry === '') {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.silenced_patterns[{$i}] must be a non-empty string."
+                );
+            }
+
+            if (preg_match('/^[A-Za-z_*][A-Za-z0-9_\\\\@:\/*?]*$/', $entry) !== 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.silenced_patterns[{$i}] is not a valid glob pattern (`{$entry}`)."
+                );
+            }
+        }
+    }
+
+    /**
      * Validate the retention block. Type-checks each known stream cap +
      * counter-bucket day window so a typo at boot fails loudly rather than
      * silently degrading to a hardcoded fallback.

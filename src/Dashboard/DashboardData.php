@@ -108,6 +108,7 @@ final readonly class DashboardData
         'hasOpenModal',
         'chainBackTop',
         'silencedClasses',
+        'silencedPatterns',
         'silencedFailedRows',
         'silencedCompletedRows',
     ];
@@ -280,10 +281,12 @@ final readonly class DashboardData
         // listed in `queue-insights.silenced`. Skips work entirely when
         // the silenced list is empty so the tab + its data stay zero-cost
         // for hosts that don't use the feature.
-        $silencedClasses = resolve(SilencedJobs::class)->all();
-        [$silencedFailedRows, $silencedCompletedRows] = $silencedClasses === []
-            ? [[], []]
-            : $this->buildSilencedListings($silencedClasses, $scope);
+        $silenced = resolve(SilencedJobs::class);
+        $silencedClasses = $silenced->all();
+        $silencedPatterns = $silenced->patterns();
+        [$silencedFailedRows, $silencedCompletedRows] = $silenced->hasAny()
+            ? $this->buildSilencedListings($silenced, $scope)
+            : [[], []];
 
         $aggregates = QueueAggregates::aggregate($queues);
 
@@ -348,6 +351,7 @@ final readonly class DashboardData
                 ? null
                 : $component->chainBackStack[array_key_last($component->chainBackStack)],
             'silencedClasses' => $silencedClasses,
+            'silencedPatterns' => $silencedPatterns,
             'silencedFailedRows' => $silencedFailedRows,
             'silencedCompletedRows' => $silencedCompletedRows,
         ];
@@ -463,13 +467,10 @@ final readonly class DashboardData
      * paginated archive. Operators who need deep history land on the main
      * Failed / Completed pane and toggle "Show silenced".
      *
-     * @param  list<string>  $silencedClasses
      * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>}
      */
-    private function buildSilencedListings(array $silencedClasses, ?string $scope): array
+    private function buildSilencedListings(SilencedJobs $silenced, ?string $scope): array
     {
-        $silencedSet = array_fill_keys($silencedClasses, true);
-
         $allFailed = RowEnricher::failed($this->svc->recentFailed(
             self::RECENT_FETCH_LIMIT,
             new FailedJobFilters(connection: $scope ?? '', includeSilenced: true),
@@ -480,18 +481,18 @@ final readonly class DashboardData
 
         $silencedFailed = array_values(array_filter(
             $allFailed,
-            static function (array $row) use ($silencedSet): bool {
+            static function (array $row) use ($silenced): bool {
                 $class = $row['class'] ?? null;
 
-                return is_string($class) && isset($silencedSet[$class]);
+                return is_string($class) && $silenced->isSilenced($class);
             },
         ));
         $silencedCompleted = array_values(array_filter(
             $allCompleted,
-            static function (array $row) use ($silencedSet): bool {
+            static function (array $row) use ($silenced): bool {
                 $class = $row['class'] ?? null;
 
-                return is_string($class) && isset($silencedSet[$class]);
+                return is_string($class) && $silenced->isSilenced($class);
             },
         ));
 

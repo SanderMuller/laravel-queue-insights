@@ -10,6 +10,7 @@ use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
 beforeEach(function (): void {
     config()->set('queue-insights.silenced', []);
+    config()->set('queue-insights.silenced_patterns', []);
 });
 
 it('isSilenced returns false when the silenced list is empty', function (): void {
@@ -51,6 +52,82 @@ it('matches synthetic class labels (Closure@hash)', function (): void {
     expect($silenced->isSilenced('Closure@abc123'))->toBeTrue()
         ->and($silenced->isSilenced('Encrypted@deadbeef'))->toBeTrue()
         ->and($silenced->isSilenced('Closure@other'))->toBeFalse();
+});
+
+it('matches a Str::is glob pattern when exact-match misses', function (): void {
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    $silenced = new SilencedJobs();
+    expect($silenced->isSilenced('App\\Jobs\\Reports\\Daily'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Reports\\Weekly'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Other'))->toBeFalse();
+});
+
+it('exact-match wins when both lists are populated', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Foo']);
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Bar\\*']);
+
+    $silenced = new SilencedJobs();
+    expect($silenced->isSilenced('App\\Jobs\\Foo'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Bar\\Quux'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Other'))->toBeFalse();
+});
+
+it('all() returns exact list only — patterns are not enumerable', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Foo']);
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    expect((new SilencedJobs())->all())->toBe(['App\\Jobs\\Foo']);
+});
+
+it('hasAny() reports true when only patterns are set', function (): void {
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    expect((new SilencedJobs())->hasAny())->toBeTrue();
+});
+
+it('hasAny() reports false when both lists are empty', function (): void {
+    expect((new SilencedJobs())->hasAny())->toBeFalse();
+});
+
+it('empty pattern list short-circuits the fallback path', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Foo']);
+
+    expect((new SilencedJobs())->isSilenced('App\\Jobs\\Anything'))->toBeFalse();
+});
+
+it('isSilenced returns false for an empty class even when a glob is "*"', function (): void {
+    // Defensive: Str::is('*', '') returns true in some Laravel versions; our
+    // empty-class guard runs before pattern matching so the empty-string
+    // fallback path stays "not silenced" regardless of glob shape.
+    config()->set('queue-insights.silenced_patterns', ['*']);
+
+    expect((new SilencedJobs())->isSilenced(''))->toBeFalse();
+});
+
+it('matches case-insensitively across exact list and patterns (parity with SQL LOWER path)', function (): void {
+    // The SQL exclusion path lowercases both sides so URL-filter casing
+    // doesn't matter. isSilenced must do the same so a lowercase config
+    // entry doesn't hide rows in SQL while leaving them visible on the
+    // dashboard / detector / dispatcher / throughput / completed-row
+    // paths. Codex review surfaced this drift.
+    config()->set('queue-insights.silenced', ['app\\jobs\\noisy']);
+    config()->set('queue-insights.silenced_patterns', ['app\\jobs\\reports\\*']);
+
+    $silenced = new SilencedJobs();
+    expect($silenced->isSilenced('App\\Jobs\\Noisy'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Reports\\Daily'))->toBeTrue()
+        ->and($silenced->isSilenced('APP\\JOBS\\REPORTS\\WEEKLY'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Other'))->toBeFalse();
+});
+
+it('all() / patterns() preserve operator-supplied casing for display', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    $silenced = new SilencedJobs();
+    expect($silenced->all())->toBe(['App\\Jobs\\Noisy'])
+        ->and($silenced->patterns())->toBe(['App\\Jobs\\Reports\\*']);
 });
 
 it('app()->scoped binding produces a fresh instance after a scope flush (Octane parity)', function (): void {

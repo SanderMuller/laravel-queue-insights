@@ -243,6 +243,50 @@ it('reveals silenced-class failed rows when includeSilenced=true', function (): 
     expect($rows)->toHaveCount(2);
 });
 
+it('hides rows matching a silenced_patterns glob', function (): void {
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Reports\\Daily', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Reports\\Weekly', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Other', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50);
+    $payload = $rows[0]['payload'] ?? null;
+
+    expect($rows)->toHaveCount(1)
+        ->and(is_string($payload) ? $payload : '')->toContain('App\\\\Jobs\\\\Other');
+});
+
+it('silenced_patterns glob escape preserves underscores between wildcards', function (): void {
+    // Pattern `App\\Jobs\\With_*` should match a class whose segment after
+    // `With` starts with an underscore (literal). It must NOT match
+    // `App\\Jobs\\WithXFoo` even though a naive regex translation could
+    // collapse `_` → `.`. The DisplayNamePayloadMatch::patternFromGlob
+    // splits on `*` and escapes each segment — `_` becomes `|_` so the
+    // SQL LIKE keeps it literal.
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\With_*']);
+
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\With_Foo', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\WithXFoo', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50);
+    $payload = $rows[0]['payload'] ?? null;
+
+    expect($rows)->toHaveCount(1)
+        ->and(is_string($payload) ? $payload : '')->toContain('App\\\\Jobs\\\\WithXFoo');
+});
+
+it('silenced_patterns are revealed when includeSilenced=true', function (): void {
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Reports\\Daily', 'maxTries' => 3, 'attempts' => 1]]);
+    seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\Other', 'maxTries' => 3, 'attempts' => 1]]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(includeSilenced: true));
+
+    expect($rows)->toHaveCount(2);
+});
+
 it('silenced exclusion escapes wildcards so a class containing _ does not over-hide', function (): void {
     // The class `App\Jobs\With_Underscore` is silenced. A class
     // `App\Jobs\WithXUnderscore` (X = arbitrary char) would match a naive

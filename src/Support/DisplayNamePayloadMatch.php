@@ -46,4 +46,37 @@ final class DisplayNamePayloadMatch
 
         return ['%"displayname":"' . $needle . '%', self::ESCAPE];
     }
+
+    /**
+     * Build a LIKE pattern from a `Str::is`-style glob — the literal `*`
+     * segments translate to SQL `%` wildcards while every other character
+     * (including `_` / `%` / `|`) is escaped exactly like `pattern()`.
+     * `?` is treated as a literal — `Str::is` does not support `?`, so we
+     * keep the SQL pattern in lockstep with the in-PHP match.
+     *
+     * @return array{0: string, 1: string}|null
+     */
+    public static function patternFromGlob(string $glob): ?array
+    {
+        $segments = explode('*', $glob);
+        $encoded = [];
+        foreach ($segments as $segment) {
+            if ($segment === '') {
+                $encoded[] = '';
+
+                continue;
+            }
+
+            $jsonEncoded = json_encode($segment, JSON_UNESCAPED_UNICODE);
+            if (! is_string($jsonEncoded)) {
+                return null;
+            }
+
+            $needle = strtolower(trim($jsonEncoded, '"'));
+            $needle = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $needle);
+            $encoded[] = $needle;
+        }
+
+        return ['%"displayname":"' . implode('%', $encoded) . '%', self::ESCAPE];
+    }
 }

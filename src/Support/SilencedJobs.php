@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Support;
 
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Str;
 
 /**
  * Read-side filter that drops silenced job-class failures from dashboard
@@ -13,21 +14,72 @@ use Illuminate\Database\Query\Builder;
  * `$this->app->scoped(SilencedJobs::class)` in the service provider) so
  * the config snapshot is fresh per request under FPM and cleanly reset
  * between requests under Octane. No static state to flush.
+ *
+ * Two match modes:
+ *  - exact `silenced` list (O(1) hash lookup, cheap)
+ *  - `silenced_patterns` globs (O(patterns) `Str::is` fallback)
+ *
+ * Exact-match wins when both lists are populated — patterns are the
+ * fallback path only.
+ *
+ * **Case-insensitive matching everywhere.** The SQL exclusion path
+ * (`DisplayNamePayloadMatch`) lowercases both sides so the URL-filter
+ * input stays robust against deep-link casing drift; this helper
+ * mirrors that by lowercasing on lookup so `'app\\jobs\\foo'` in
+ * config matches `'App\\Jobs\\Foo'` on the listener side. Storage
+ * keeps the operator's original casing for `all()` / `patterns()`
+ * display.
  */
-final class SilencedJobs
+final readonly class SilencedJobs
 {
     /**
+     * Operator-supplied class list, original casing preserved for
+     * display via `all()`.
+     *
+     * @var list<string>
+     */
+    private array $classes;
+
+    /**
+     * Lowercased exact-match set for O(1) lookup. Keys are
+     * `strtolower($class)`.
+     *
      * @var array<string, true>
      */
-    private array $set;
+    private array $lowerSet;
+
+    /**
+     * Operator-supplied glob list, original casing preserved for
+     * display via `patterns()`.
+     *
+     * @var list<string>
+     */
+    private array $patterns;
+
+    /**
+     * Lowercased glob list, used for `Str::is` matching after the
+     * input class is lowercased.
+     *
+     * @var list<string>
+     */
+    private array $lowerPatterns;
 
     public function __construct()
     {
         $list = config('queue-insights.silenced', []);
-        $this->set = array_fill_keys(
-            is_array($list) ? array_values(array_filter($list, is_string(...))) : [],
+        $this->classes = is_array($list)
+            ? array_values(array_filter($list, is_string(...)))
+            : [];
+        $this->lowerSet = array_fill_keys(
+            array_map(strtolower(...), $this->classes),
             true,
         );
+
+        $patterns = config('queue-insights.silenced_patterns', []);
+        $this->patterns = is_array($patterns)
+            ? array_values(array_filter($patterns, is_string(...)))
+            : [];
+        $this->lowerPatterns = array_map(strtolower(...), $this->patterns);
     }
 
     public function isSilenced(string $class): bool
@@ -35,27 +87,68 @@ final class SilencedJobs
         // ResolveJobClass can return an empty string in fallback paths; treat
         // that as "not silenced" rather than risk a falsy lookup matching an
         // empty-string config entry.
-        return $class !== '' && isset($this->set[$class]);
+        if ($class === '') {
+            return false;
+        }
+
+        $lower = strtolower($class);
+
+        if (isset($this->lowerSet[$lower])) {
+            return true;
+        }
+
+        foreach ($this->lowerPatterns as $pattern) {
+            if (Str::is($pattern, $lower)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Exact-match list only. Patterns are not enumerable, so callers that
+     * need to "iterate every silenced class" (e.g. the Silenced dashboard
+     * tab) must combine this list with `isSilenced()` for pattern coverage
+     * — see `DashboardData::buildSilencedListings`.
+     *
+     * @return list<string>
+     */
+    public function all(): array
+    {
+        return $this->classes;
     }
 
     /**
      * @return list<string>
      */
-    public function all(): array
+    public function patterns(): array
     {
-        return array_keys($this->set);
+        return $this->patterns;
+    }
+
+    public function hasAny(): bool
+    {
+        return $this->classes !== [] || $this->patterns !== [];
     }
 
     /**
      * Append per-silenced-class `LOWER(payload) NOT LIKE` clauses to a
      * failed-jobs query so silenced classes drop out of the result set.
-     * Cost is O(silenced) `NOT LIKE` clauses per query; the optimiser
-     * collapses these into a single table scan.
+     * Cost is O(silenced + patterns) `NOT LIKE` clauses per query; the
+     * optimiser collapses these into a single table scan.
      */
     public function appendExclusion(Builder $query): void
     {
-        foreach (array_keys($this->set) as $class) {
+        foreach ($this->classes as $class) {
             $pattern = DisplayNamePayloadMatch::pattern($class);
+            if ($pattern !== null) {
+                $query->whereRaw('LOWER(payload) NOT LIKE ? ESCAPE ?', $pattern);
+            }
+        }
+
+        foreach ($this->patterns as $glob) {
+            $pattern = DisplayNamePayloadMatch::patternFromGlob($glob);
             if ($pattern !== null) {
                 $query->whereRaw('LOWER(payload) NOT LIKE ? ESCAPE ?', $pattern);
             }

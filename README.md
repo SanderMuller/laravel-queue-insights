@@ -526,6 +526,14 @@ Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures
     App\Jobs\IntermittentlyFailingJob::class,
     App\Jobs\ThirdPartyApiSometimesFlakes::class,
 ],
+
+// Glob fallback for whole namespaces or related classes. Exact `silenced`
+// entries are matched first; `silenced_patterns` is `Str::is`-style and
+// matches case-insensitively, same as `silenced`.
+'silenced_patterns' => [
+    'App\\Jobs\\Reports\\*',
+    'App\\Jobs\\*Sync',
+],
 ```
 
 Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `qi:classes`) are preserved — silencing is a read-side filter only, so removing a class from the list immediately re-surfaces its history without any backfill. The class rows table keeps showing throughput / p95 / max for silenced classes with a muted `silenced` badge so you can still triage them.

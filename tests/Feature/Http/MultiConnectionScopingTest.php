@@ -538,6 +538,23 @@ it('Silenced tab renders the silenced-class roster + per-axis empty-state messag
         ->and($scoped)->toContain('No silenced-class completed jobs on the redis connection');
 });
 
+it('Silenced tab renders when only silenced_patterns is configured (no exact list)', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.silenced', []);
+    config()->set('queue-insights.silenced_patterns', ['App\\Jobs\\Reports\\*']);
+
+    app()->forgetScopedInstances();
+
+    $html = Livewire::test(QueueInsightsDashboard::class)->html();
+
+    expect($html)->toContain('Silenced patterns')
+        ->and($html)->toContain('App\\Jobs\\Reports\\*');
+});
+
 it('Silenced tab is hidden when the silenced list is empty', function (): void {
     if (! RedisAvailability::check()) {
         $this->markTestSkipped('redis not available on this host');
@@ -545,6 +562,8 @@ it('Silenced tab is hidden when the silenced list is empty', function (): void {
 
     RedisAvailability::flush();
     config()->set('queue-insights.silenced', []);
+    config()->set('queue-insights.silenced_patterns', []);
+
     app()->forgetScopedInstances();
 
     $html = Livewire::test(QueueInsightsDashboard::class)->html();
