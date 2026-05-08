@@ -32,17 +32,17 @@
 <div class="flex flex-col gap-6">
     {{-- Header — silenced class roster + reminder of the contract. --}}
     <section>
-        <h2 class="text-sm font-semibold tracking-tight text-gray-700">
-            Silenced classes <span class="font-normal text-gray-500">({{ count($silencedClasses) }})</span>
+        <h2 class="text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
+            Silenced classes <span class="font-normal text-gray-500 dark:text-gray-400">({{ count($silencedClasses) }})</span>
         </h2>
-        <p class="mt-1 text-xs text-gray-500">
-            Failures + completed runs for these classes are hidden from the default Failed and Completed lists. Counter writes are preserved — removing a class from <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">queue-insights.silenced</code> immediately re-surfaces its history.
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+            Failures + completed runs for these classes are hidden from the default Failed and Completed lists. Counter writes are preserved — removing a class from <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px] dark:bg-gray-800">queue-insights.silenced</code> immediately re-surfaces its history.
         </p>
         @if(count($silencedClasses) > 0)
             <ul role="list" class="mt-3 flex flex-wrap gap-1.5">
                 @foreach($silencedClasses as $silencedClass)
                     <li>
-                        <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10">
+                        <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10">
                             {{ $silencedClass }}
                         </span>
                     </li>
@@ -50,16 +50,16 @@
             </ul>
         @endif
         @if(count($silencedPatterns ?? []) > 0)
-            <h3 class="mt-4 text-sm font-semibold tracking-tight text-gray-700">
-                Silenced patterns <span class="font-normal text-gray-500">({{ count($silencedPatterns) }})</span>
+            <h3 class="mt-4 text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
+                Silenced patterns <span class="font-normal text-gray-500 dark:text-gray-400">({{ count($silencedPatterns) }})</span>
             </h3>
-            <p class="mt-1 text-xs text-gray-500">
-                <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">Str::is</code> globs from <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px]">queue-insights.silenced_patterns</code>. Any class whose FQCN matches is silenced on the same surfaces as the exact list.
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
+                <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px] dark:bg-gray-800">Str::is</code> globs from <code class="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px] dark:bg-gray-800">queue-insights.silenced_patterns</code>. Any class whose FQCN matches is silenced on the same surfaces as the exact list.
             </p>
             <ul role="list" class="mt-3 flex flex-wrap gap-1.5">
                 @foreach($silencedPatterns as $pattern)
                     <li>
-                        <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10">
+                        <span class="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 font-mono text-[11px] font-medium text-gray-700 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10">
                             {{ $pattern }}
                         </span>
                     </li>
@@ -71,23 +71,23 @@
     {{-- Failed (silenced) — uses the same row partial as the main Failed pane
         so retry button / chain chip / batch chip behaviour stays in lockstep. --}}
     <section>
-        <h3 class="text-sm font-semibold tracking-tight text-gray-700">
-            Failed <span class="font-normal text-gray-500">({{ count($silencedFailedRows) }})</span>
+        <h3 class="text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
+            Failed <span class="font-normal text-gray-500 dark:text-gray-400">({{ count($silencedFailedRows) }})</span>
         </h3>
         @if(count($silencedFailedRows) === 0)
-            <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
+            <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
                 {{ $emptyFailedMessage }}
             </div>
         @else
-            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">
-                <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
                     <div class="col-span-4">Job</div>
                     <div class="col-span-3">Queue</div>
                     <div class="col-span-2 text-right">Attempts</div>
                     <div class="col-span-2 text-right">Failed</div>
                     <div class="col-span-1"></div>
                 </div>
-                <ul role="list" class="divide-y divide-gray-950/5">
+                <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($silencedFailedRows as $f)
                         @include('queue-insights::partials.failed-list-row', ['f' => $f])
                     @endforeach
@@ -98,23 +98,23 @@
 
     {{-- Completed (silenced) — same shape, same row partial. --}}
     <section>
-        <h3 class="text-sm font-semibold tracking-tight text-gray-700">
-            Completed <span class="font-normal text-gray-500">({{ count($silencedCompletedRows) }})</span>
+        <h3 class="text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
+            Completed <span class="font-normal text-gray-500 dark:text-gray-400">({{ count($silencedCompletedRows) }})</span>
         </h3>
         @if(count($silencedCompletedRows) === 0)
-            <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
+            <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
                 {{ $emptyCompletedMessage }}
             </div>
         @else
-            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">
-                <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500">
+            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
                     <div class="col-span-4">Job</div>
                     <div class="col-span-3">Queue</div>
                     <div class="col-span-2 text-right">Runtime</div>
                     <div class="col-span-2 text-right">Completed</div>
                     <div class="col-span-1"></div>
                 </div>
-                <ul role="list" class="divide-y divide-gray-950/5">
+                <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($silencedCompletedRows as $row)
                         @include('queue-insights::partials.completed-row', ['row' => $row])
                     @endforeach

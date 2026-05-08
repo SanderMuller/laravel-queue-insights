@@ -604,7 +604,9 @@ it('Silenced tab merges + slices to PER_PAGE, dropping non-silenced rows (codex 
 
     $rows = Livewire::test(QueueInsightsDashboard::class)->viewData('silencedCompletedRows');
 
-    expect($rows)->toBeArray()->and($rows)->toHaveCount(25);
+    // Silenced tab caps at PER_PAGE per axis. Bound to the constant so
+    // future default changes don't drift this assertion silently.
+    expect($rows)->toBeArray()->and($rows)->toHaveCount(DashboardData::PER_PAGE);
     if (! is_array($rows)) {
         return;
     }

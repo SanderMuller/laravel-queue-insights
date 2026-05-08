@@ -79,6 +79,11 @@ it('Section A humanizes duration with short form', function (): void {
 });
 
 it('Section A shows amber Attempts badge when attempts > 1', function (): void {
+    // Asserts each token individually rather than as a single substring —
+    // the dark-mode audit (Phase 4) injected `dark:` companions between
+    // the light pair, breaking adjacency. Token-by-token matches keep
+    // the test resilient to future re-orderings while still proving the
+    // amber-tone treatment is on the badge.
     openDetailsModal([
         'class' => 'App\\Foo',
         'connection' => 'redis',
@@ -87,7 +92,8 @@ it('Section A shows amber Attempts badge when attempts > 1', function (): void {
         'attempts' => '3',
         'processed_at' => '2026-04-24T12:00:00+00:00',
     ])
-        ->assertSeeHtml('bg-amber-100 text-amber-800');
+        ->assertSeeHtml('bg-amber-100')
+        ->assertSeeHtml('text-amber-800');
 });
 
 it('Section B absent under off mode', function (): void {

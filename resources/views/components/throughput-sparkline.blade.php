@@ -12,7 +12,7 @@
 
 @if($throughputBars === 0)
     <section aria-label="Throughput, last 24 hours"
-             class="rounded-xl bg-white p-5 ring-1 ring-gray-950/5 text-sm text-gray-500">
+             class="rounded-xl bg-white p-5 ring-1 ring-gray-950/5 text-sm text-gray-500 dark:bg-gray-900 dark:ring-white/10 dark:text-gray-300">
         No throughput recorded in the window.
     </section>
 @else
@@ -79,27 +79,27 @@
 @endphp
 
 <section aria-label="Throughput, last 24 hours"
-         class="rounded-xl bg-white p-5 ring-1 ring-gray-950/5">
+         class="rounded-xl bg-white p-5 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
     <div class="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
-            <p class="text-xs font-medium text-gray-500">Throughput &middot; last 24h</p>
-            <p class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 tabular-nums">{{ number_format($throughputTotalProcessed) }}
-                <span class="ml-1 text-sm font-normal text-gray-500">processed</span></p>
+            <p class="text-xs font-medium text-gray-500 dark:text-gray-300">Throughput &middot; last 24h</p>
+            <p class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 tabular-nums dark:text-gray-100">{{ number_format($throughputTotalProcessed) }}
+                <span class="ml-1 text-sm font-normal text-gray-500 dark:text-gray-300">processed</span></p>
         </div>
         <dl class="flex gap-5 text-xs">
             <div class="flex items-center gap-2">
                 <span class="size-2 rounded-sm bg-emerald-500" aria-hidden="true"></span>
-                <dt class="text-gray-500">Processed</dt>
-                <dd class="font-medium tabular-nums text-gray-900">{{ number_format($throughputTotalProcessed) }}</dd>
+                <dt class="text-gray-500 dark:text-gray-300">Processed</dt>
+                <dd class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ number_format($throughputTotalProcessed) }}</dd>
             </div>
             <div class="flex items-center gap-2">
                 <span class="size-2 rounded-sm bg-red-500" aria-hidden="true"></span>
-                <dt class="text-gray-500">Failed</dt>
-                <dd class="font-medium tabular-nums {{ $throughputTotalFailed > 0 ? 'text-red-600' : 'text-gray-900' }}">{{ number_format($throughputTotalFailed) }}</dd>
+                <dt class="text-gray-500 dark:text-gray-300">Failed</dt>
+                <dd class="font-medium tabular-nums {{ $throughputTotalFailed > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100' }}">{{ number_format($throughputTotalFailed) }}</dd>
             </div>
-            <div class="flex items-center gap-2 text-gray-500">
+            <div class="flex items-center gap-2 text-gray-500 dark:text-gray-300">
                 <dt>Current hour</dt>
-                <dd class="font-medium tabular-nums text-gray-900">{{ number_format($throughputNewestHour['processed'] ?? 0) }}</dd>
+                <dd class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ number_format($throughputNewestHour['processed'] ?? 0) }}</dd>
             </div>
         </dl>
     </div>
@@ -145,7 +145,7 @@
         </div>
     </div>
 
-    <div class="mt-2 flex justify-between text-[10px] font-medium uppercase tracking-wider text-gray-400 tabular-nums">
+    <div class="mt-2 flex justify-between text-[10px] font-medium uppercase tracking-wider text-gray-400 tabular-nums dark:text-gray-400">
         <span>24h ago</span>
         <span>now</span>
     </div>

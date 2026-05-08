@@ -50,7 +50,7 @@
     {{-- Sticky tab strip — bleeds into the page padding so the underline runs full-width.
         Every tab badge is the plain integer total in muted gray; urgency is surfaced inside
         each tab's content (ring colours, status pills) rather than in the strip. --}}
-    <div class="sticky top-0 z-10 -mx-6 border-b border-gray-950/5 bg-gray-50/90 px-6 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10">
+    <div class="sticky top-0 z-10 -mx-6 border-b border-gray-950/5 bg-gray-50/90 px-6 backdrop-blur sm:-mx-8 sm:px-8 lg:-mx-10 lg:px-10 dark:border-white/10 dark:bg-gray-950/90">
         <nav class="-mb-px flex flex-wrap items-center gap-x-1" aria-label="Sections">
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'overview', 'label' => 'Overview', 'badge' => null])
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'queues', 'label' => 'Queues', 'badge' => count($queues)])

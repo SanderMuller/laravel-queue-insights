@@ -1,11 +1,102 @@
+@php($qiThemeEnabled = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.theme.enabled', false))
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    @if($qiThemeEnabled)
+        {{-- Tells the browser the page is theme-aware so native form controls,
+             scrollbars, and the default canvas paint correctly in both modes.
+             Gated on the master flag — when off, the dashboard is always-light
+             and we don't claim dark-mode support. --}}
+        <meta name="color-scheme" content="light dark">
+    @endif
     <title>Queue Insights</title>
+    @if($qiThemeEnabled)
+        {{-- Theme init — MUST run before <body> paints to avoid FOIT. Single
+             owner of matchMedia + localStorage + html.dark/dataset.theme.
+             Toggle dispatches `qi-theme-change`; this script applies and
+             dispatches `qi-theme-applied` for the toggle to mirror.
+             See internal/specs/dashboard-dark-mode.md §1.3. --}}
+        <script>
+            (function () {
+                var KEY = 'qi-theme';
+                var root = document.documentElement;
+
+                function readPref() {
+                    try {
+                        var v = localStorage.getItem(KEY);
+                        return (v === 'light' || v === 'dark') ? v : 'system';
+                    } catch (e) { return 'system'; }
+                }
+                function systemPrefersDark() {
+                    return !!(window.matchMedia
+                        && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                }
+                function apply(pref) {
+                    root.dataset.theme = pref;
+                    var dark = pref === 'dark' || (pref === 'system' && systemPrefersDark());
+                    root.classList.toggle('dark', dark);
+                    // Detail carries BOTH preference (light/dark/system) and the
+                    // resolved scheme (light/dark) so listeners that need to
+                    // know what's actually rendered (e.g. a third-party widget
+                    // syncing its own theme) don't have to read html.dark.
+                    window.dispatchEvent(new CustomEvent('qi-theme-applied', {
+                        detail: { preference: pref, resolved: dark ? 'dark' : 'light' },
+                    }));
+                }
+
+                apply(readPref());
+
+                // Single matchMedia subscription — installed once per full
+                // document load. Survives wire:navigate (head is not morphed).
+                if (window.matchMedia) {
+                    window.matchMedia('(prefers-color-scheme: dark)')
+                        .addEventListener('change', function () {
+                            if ((root.dataset.theme || 'system') === 'system') {
+                                apply('system');
+                            }
+                        });
+                }
+
+                window.addEventListener('qi-theme-change', function (e) {
+                    var pref = (e && e.detail) || 'system';
+                    try { localStorage.setItem(KEY, pref); } catch (err) {}
+                    apply(pref);
+                });
+            })();
+        </script>
+    @endif
+    {{-- Tailwind v3 Play CDN. Spec hard-depends on:
+           1. inline `tailwind.config = { darkMode: 'class' }` working
+           2. `dark:` ancestor selector triggered by `html.dark`
+         Both are stable v3 contracts. v4 has no Play CDN equivalent —
+         migrating off this URL requires a build step + porting darkMode
+         and the variant to `@custom-variant`. See dark-mode spec §1.1. --}}
     <script src="https://cdn.tailwindcss.com"></script>
+    {{-- darkMode + safelist — emitted unconditionally even when the theme
+         flag is off so `dark:` variants stay in `class` mode (not the
+         default `media` mode). Without this, any `dark:` class added by
+         Phase 2-5 audits would auto-fire on system-dark hosts during the
+         audit window, exposing half-themed surfaces. With darkMode='class'
+         and no `.dark` ancestor (because the head script above didn't run
+         when the flag was off), `dark:` variants are inert.
+
+         The safelist guarantees the JSON-colorizer dual-class strings
+         (only present as JS string literals in highlightJson below) survive
+         any extractor changes in future Play CDN versions. --}}
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            safelist: [
+                'text-blue-700',  'dark:text-blue-300',
+                'text-green-700', 'dark:text-green-300',
+                'text-purple-700','dark:text-purple-300',
+                'text-orange-700','dark:text-orange-300',
+            ],
+        };
+    </script>
     @livewireStyles
     <style>
         [x-cloak] { display: none !important; }
@@ -24,6 +115,13 @@
             background-color: rgb(236 253 245);
             color: rgb(4 120 87);
             box-shadow: inset 0 0 0 1px rgb(5 150 105 / 0.3);
+        }
+        /* Dark-mode copy-feedback. Inert without `.dark` on <html>; emitted
+           unconditionally because the selector cost is negligible. */
+        html.dark [data-qi-copy][data-qi-copied] {
+            background-color: rgb(6 78 59 / 0.4);
+            color: rgb(110 231 183);
+            box-shadow: inset 0 0 0 1px rgb(52 211 153 / 0.3);
         }
 
         /* qi-time tooltip — single floating element managed by the global
@@ -57,6 +155,13 @@
             font-size: 10px;
         }
         #qi-time-tooltip td.qi-time-value { font-variant-numeric: tabular-nums; }
+        /* Dark-mode tooltip surface — slightly lighter than the body
+           bg-gray-950 so the tooltip separates from the page. gray-700
+           (rgb 55 65 81) picked over gray-800 because gray-800 reads as
+           "same as a card". Inert without `.dark` on <html>. */
+        html.dark #qi-time-tooltip {
+            background: rgb(55 65 81);
+        }
     </style>
     {{--
         Inline JSON colorizer + copy-to-clipboard helpers for the Details modal.
@@ -78,11 +183,11 @@
                     function (m, str, colon, kw, num) {
                         if (str) {
                             return colon
-                                ? '<span class="text-blue-700">' + str + '</span>' + colon
-                                : '<span class="text-green-700">' + str + '</span>';
+                                ? '<span class="text-blue-700 dark:text-blue-300">' + str + '</span>' + colon
+                                : '<span class="text-green-700 dark:text-green-300">' + str + '</span>';
                         }
-                        if (kw)  { return '<span class="text-purple-700">' + kw + '</span>'; }
-                        if (num) { return '<span class="text-orange-700">' + num + '</span>'; }
+                        if (kw)  { return '<span class="text-purple-700 dark:text-purple-300">' + kw + '</span>'; }
+                        if (num) { return '<span class="text-orange-700 dark:text-orange-300">' + num + '</span>'; }
                         return m;
                     }
                 );
@@ -341,7 +446,10 @@
         })();
     </script>
 </head>
-<body class="bg-gray-50 text-gray-900 antialiased">
+<body @class([
+    'bg-gray-50 text-gray-900 antialiased',
+    'dark:bg-gray-950 dark:text-gray-100' => $qiThemeEnabled,
+])>
     <div class="isolate min-h-dvh">
         {{-- Horizon-style dark top bar — signature "infra tool" chrome. The
              `header-scope` stack lets the dashboard inject a connection-scope
@@ -364,14 +472,23 @@
                 @stack('header-scope')
 
                 @php($qiPolling = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true))
-                <div class="ml-auto flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
-                    <span class="relative flex size-2">
-                        @if($qiPolling)
-                            <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                        @endif
-                        <span class="relative inline-flex size-2 rounded-full {{ $qiPolling ? 'bg-emerald-400' : 'bg-gray-500' }}"></span>
-                    </span>
-                    <span>{{ $qiPolling ? 'Active · polling 10s' : 'Static · polling off' }}</span>
+                {{-- Right-edge controls: theme toggle + polling chip. Wrapped
+                     in `ml-auto` so they hug the right side regardless of
+                     header-scope stack contents. Toggle only renders when
+                     the theme flag is on (Phase 6 flips the default to true). --}}
+                <div class="ml-auto flex items-center gap-2">
+                    @if($qiThemeEnabled)
+                        <x-queue-insights::theme-toggle/>
+                    @endif
+                    <div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
+                        <span class="relative flex size-2">
+                            @if($qiPolling)
+                                <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                            @endif
+                            <span class="relative inline-flex size-2 rounded-full {{ $qiPolling ? 'bg-emerald-400' : 'bg-gray-500' }}"></span>
+                        </span>
+                        <span>{{ $qiPolling ? 'Active · polling 10s' : 'Static · polling off' }}</span>
+                    </div>
                 </div>
             </div>
         </header>

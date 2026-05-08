@@ -69,44 +69,44 @@
         $appFrameCount = count(array_filter($frames, fn (array $f): bool => ! $f['is_vendor'] && ! $f['is_main']));
         $vendorFrameCount = count(array_filter($frames, fn (array $f): bool => $f['is_vendor']));
     @endphp
-    <div class="overflow-hidden rounded-lg ring-1 ring-gray-950/10" x-data="{ showVendor: {{ $appFrameCount === 0 ? 'true' : 'false' }} }">
+    <div class="overflow-hidden rounded-lg ring-1 ring-gray-950/10 dark:ring-white/10" x-data="{ showVendor: {{ $appFrameCount === 0 ? 'true' : 'false' }} }">
         {{-- Header: exception class + message --}}
-        <div class="border-b border-red-600/20 bg-red-50 px-4 py-3 text-sm">
-            <p class="break-all font-mono text-xs font-medium text-red-700">{{ $headerClass }}</p>
+        <div class="border-b border-red-600/20 bg-red-50 px-4 py-3 text-sm dark:border-red-400/30 dark:bg-red-900/40">
+            <p class="break-all font-mono text-xs font-medium text-red-700 dark:text-red-300">{{ $headerClass }}</p>
             @if($headerMessage !== '')
-                <p class="mt-1 break-words font-mono text-sm text-red-900">{{ $headerMessage }}</p>
+                <p class="mt-1 break-words font-mono text-sm text-red-900 dark:text-red-200">{{ $headerMessage }}</p>
             @endif
         </div>
 
         {{-- Frames --}}
         @if(count($frames) === 0)
-            <p class="px-4 py-3 text-xs text-gray-500">No stack frames available.</p>
+            <p class="px-4 py-3 text-xs text-gray-500 dark:bg-gray-900 dark:text-gray-300">No stack frames available.</p>
         @else
-            <ol role="list" class="divide-y divide-gray-950/5 bg-white">
+            <ol role="list" class="divide-y divide-gray-950/5 bg-white dark:divide-white/10 dark:bg-gray-900">
                 @foreach($frames as $f)
                     <li class="px-4 py-2 text-xs"
                         @if($f['is_vendor']) x-show="showVendor" x-cloak @endif>
                         <div class="flex items-baseline gap-3">
                             @if($f['index'] !== null)
-                                <span class="shrink-0 font-mono text-[10px] tabular-nums {{ $f['is_vendor'] ? 'text-gray-300' : 'text-gray-400' }}">#{{ $f['index'] }}</span>
+                                <span class="shrink-0 font-mono text-[10px] tabular-nums {{ $f['is_vendor'] ? 'text-gray-300 dark:text-gray-500' : 'text-gray-400 dark:text-gray-400' }}">#{{ $f['index'] }}</span>
                             @endif
                             <div class="min-w-0 flex-1">
                                 @if($f['is_main'])
-                                    <p class="font-mono text-[11px] italic {{ $f['is_vendor'] ? 'text-gray-400' : 'text-gray-600' }}">{main}</p>
+                                    <p class="font-mono text-[11px] italic {{ $f['is_vendor'] ? 'text-gray-400 dark:text-gray-500' : 'text-gray-600 dark:text-gray-300' }}">{main}</p>
                                 @else
-                                    <p class="break-all font-mono text-[11px] {{ $f['is_vendor'] ? 'text-gray-400' : 'text-gray-700' }}">
+                                    <p class="break-all font-mono text-[11px] {{ $f['is_vendor'] ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300' }}">
                                         <span>{{ $f['file'] }}</span>
                                         @if($f['line'] !== null)
-                                            <span class="ml-1 tabular-nums {{ $f['is_vendor'] ? 'text-gray-300' : 'text-emerald-700' }}">:{{ $f['line'] }}</span>
+                                            <span class="ml-1 tabular-nums {{ $f['is_vendor'] ? 'text-gray-300 dark:text-gray-500' : 'text-emerald-700 dark:text-emerald-300' }}">:{{ $f['line'] }}</span>
                                         @endif
                                     </p>
                                     @if($f['call'] !== '')
-                                        <p class="mt-0.5 break-all font-mono text-[11px] {{ $f['is_vendor'] ? 'text-gray-400' : 'text-gray-900' }}">{{ $f['call'] }}</p>
+                                        <p class="mt-0.5 break-all font-mono text-[11px] {{ $f['is_vendor'] ? 'text-gray-400 dark:text-gray-500' : 'text-gray-900 dark:text-gray-100' }}">{{ $f['call'] }}</p>
                                     @endif
                                 @endif
                             </div>
                             @if($f['is_vendor'])
-                                <span class="shrink-0 rounded bg-gray-950/5 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-gray-400">vendor</span>
+                                <span class="shrink-0 rounded bg-gray-950/5 px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider text-gray-400 dark:bg-white/10 dark:text-gray-400">vendor</span>
                             @endif
                         </div>
                     </li>
@@ -115,10 +115,10 @@
 
             {{-- Show vendor toggle (only when both classes of frames exist) --}}
             @if($vendorFrameCount > 0 && $appFrameCount > 0)
-                <div class="border-t border-gray-950/5 bg-gray-50/50 px-4 py-2 text-right">
+                <div class="border-t border-gray-950/5 bg-gray-50/50 px-4 py-2 text-right dark:border-white/10 dark:bg-gray-900/50">
                     <button type="button"
                             @click="showVendor = ! showVendor"
-                            class="rounded text-[11px] font-medium text-emerald-700 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                            class="rounded text-[11px] font-medium text-emerald-700 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300 dark:hover:text-emerald-200">
                         <span x-show="! showVendor">Show {{ $vendorFrameCount }} vendor frame{{ $vendorFrameCount === 1 ? '' : 's' }}</span>
                         <span x-show="showVendor" x-cloak>Hide vendor frames</span>
                     </button>

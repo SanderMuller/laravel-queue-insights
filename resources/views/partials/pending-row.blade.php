@@ -34,34 +34,34 @@
     :aria-label="'Open ' . $stateLabel . ' job details'">
     <div class="col-span-5 min-w-0">
         <p class="flex items-center gap-1.5 truncate font-mono text-sm">
-            <span class="truncate">@if($namespace !== '')<span class="text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900">{{ $shortName }}</span></span>
+            <span class="truncate">@if($namespace !== '')<span class="text-gray-400 dark:text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span></span>
             @if($isInFlight)
-                <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-900/40 px-1.5 py-0.5 font-sans text-[10px] font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
                     <span aria-hidden="true" class="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"></span>
                     running
                 </span>
             @elseif($isDelayed)
-                <span class="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20">
+                <span class="shrink-0 rounded bg-indigo-50 dark:bg-indigo-900/40 px-1.5 py-0.5 font-sans text-[10px] font-medium text-indigo-700 dark:text-indigo-300 ring-1 ring-inset ring-indigo-600/20 dark:ring-indigo-400/30">
                     delayed
                 </span>
             @endif
         </p>
         @if($shortUuid !== null)
-            <p class="mt-0.5 font-mono text-xs text-gray-400">#{{ $shortUuid }}</p>
+            <p class="mt-0.5 font-mono text-xs text-gray-400 dark:text-gray-400">#{{ $shortUuid }}</p>
         @endif
     </div>
     <div class="col-span-3 min-w-0">
-        <p class="truncate text-xs text-gray-500">{{ $row['connection'] ?? '—' }}</p>
-        <p class="mt-0.5 truncate font-mono text-xs text-gray-800">{{ $row['queue'] ?? '—' }}</p>
+        <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
+        <p class="mt-0.5 truncate font-mono text-xs text-gray-800 dark:text-gray-200">{{ $row['queue'] ?? '—' }}</p>
     </div>
     <div class="col-span-2 text-right">
-        <x-queue-insights::qi-time :at="$queuedCarbon" class="block whitespace-nowrap text-xs text-gray-700"/>
+        <x-queue-insights::qi-time :at="$queuedCarbon" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
     </div>
     <div class="col-span-2 text-right">
         @if($isInFlight)
-            <x-queue-insights::qi-time :at="$startedCarbon" prefix="started" class="block whitespace-nowrap text-xs text-gray-700"/>
+            <x-queue-insights::qi-time :at="$startedCarbon" prefix="started" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
         @else
-            <x-queue-insights::qi-time :at="$availableCarbon" class="block whitespace-nowrap text-xs text-gray-700"/>
+            <x-queue-insights::qi-time :at="$availableCarbon" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
         @endif
     </div>
 </x-queue-insights::list-row>

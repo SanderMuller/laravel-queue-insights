@@ -107,6 +107,22 @@ final class QueueInsightsDashboard extends Component
     public int $failedPage = 1;
 
     /*
+     * Per-page count for the Completed + Failed lists. URL-shareable
+     * (`cpp` / `fpp`) and validated against
+     * `Dashboard\DashboardData::PER_PAGE_OPTIONS` so a hostile
+     * `?cpp=999999` can't force the dashboard to render an unbounded
+     * row count. Default is `Dashboard\DashboardData::PER_PAGE` (10);
+     * the `except` value matches the default so URL stays clean
+     * unless the operator picks a non-default page size.
+     */
+
+    #[Url(as: 'cpp', except: 10)]
+    public int $completedPerPage = 10;
+
+    #[Url(as: 'fpp', except: 10)]
+    public int $failedPerPage = 10;
+
+    /*
      * Pending-jobs inspector — single-queue expand state. Format:
      * "{connection}:{canonical-queue}". Empty string = nothing expanded.
      * URL-shareable so an operator can paste the dashboard URL and land
@@ -133,6 +149,29 @@ final class QueueInsightsDashboard extends Component
      * the prop across `wire:poll` round-trips so no `#[Url]` mirror is needed.
      */
     public ?string $scopeConnection = null;
+
+    /**
+     * Belt-and-suspenders clamp for the per-page props on every request.
+     * `#[Url]` re-hydrates the props from the query string on each request
+     * (not just initial mount), and `updated()` only fires on `set()` /
+     * `wire:model` updates — neither path runs through here. Without this
+     * hook a hostile `?cpp=999999` deep-link would leave the dropdown's
+     * `wire:model` value out of sync with the slice the paginator
+     * actually rendered (DashboardData::build() clamps the slice via
+     * `resolvePerPage()` regardless, but the dropdown would show blank
+     * until the user clicked something). `boot()` runs after hydration
+     * but before render, so the clamp lands before the view sees it.
+     */
+    public function boot(): void
+    {
+        if (! in_array($this->completedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+            $this->completedPerPage = DashboardData::PER_PAGE;
+        }
+
+        if (! in_array($this->failedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+            $this->failedPerPage = DashboardData::PER_PAGE;
+        }
+    }
 
     /**
      * Defense-in-depth: enforce the `viewQueueInsights` Gate on component mount,
@@ -397,9 +436,34 @@ final class QueueInsightsDashboard extends Component
      * Reset pagination when a filter changes — bookmarked page numbers stop
      * making sense the moment the underlying set shifts. Caught for any
      * Livewire-tracked filter by name prefix instead of one hook per prop.
+     *
+     * Also clamps user-supplied per-page values (URL params, dropdown
+     * picks) to the whitelist before resetting the corresponding page —
+     * a hostile `?cpp=999999` would otherwise force the dashboard to
+     * materialise an unbounded slice.
      */
     public function updated(string $name): void
     {
+        if ($name === 'completedPerPage') {
+            if (! in_array($this->completedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+                $this->completedPerPage = DashboardData::PER_PAGE;
+            }
+
+            $this->completedPage = 1;
+
+            return;
+        }
+
+        if ($name === 'failedPerPage') {
+            if (! in_array($this->failedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+                $this->failedPerPage = DashboardData::PER_PAGE;
+            }
+
+            $this->failedPage = 1;
+
+            return;
+        }
+
         if (str_starts_with($name, 'completedFilter') || $name === 'selectedClass' || $name === 'completedIncludeSilenced') {
             $this->completedPage = 1;
         } elseif (str_starts_with($name, 'filter') || $name === 'includeSilenced') {

@@ -44,11 +44,12 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **24h throughput sparkline** + headline stats (jobs/min, past hour, max p95 wait + runtime).
 - **Queues grouped *Needs attention* vs *Healthy*** so a broken queue can't hide in a long list.
 - **Per-class metrics** — 24h processed / failed, avg + max duration, last run.
-- **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), persisted in the URL.
+- **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), per-page dropdown (10 / 25 / 50 / 100), all persisted in the URL.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, plus a `prometheus-push` command for short-lived workers.
+- **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
 
@@ -328,6 +329,23 @@ To embed a connection-scoped view, pass the scope as a mount param:
 ```
 
 The component validates the connection against the configured snapshots (404s on mismatch) and runs `viewQueueInsightsConnection` defensively, same as the bundled route — so this is safe to render in publicly-reachable views.
+
+### Dark mode
+
+The dashboard ships with a tri-state theme toggle (sun / monitor / moon) in the header — `light`, `dark`, and `system` (follows `prefers-color-scheme`, default). The header itself stays Horizon-dark in both modes by design; the rest of the chrome flips between light and dark surfaces.
+
+Persistence lives in `localStorage['qi-theme']`. A blocking inline script in `<head>` resolves the preference before first paint, so there's no flash of incorrect theme. The toggle survives `wire:navigate` morphs without leaking listeners.
+
+```php
+'dashboard' => [
+    'theme' => [
+        // Default true; set to false to revert to the always-light look.
+        'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
+    ],
+],
+```
+
+Operators on system-dark hosts (terminal, IDE, Linear) get a coherent dark dashboard; operators on light hosts see the same look they had before. Disable via `QUEUE_INSIGHTS_DARK_MODE=false` in `.env` if needed — the inline script, color-scheme meta, and toggle component all skip emission and the dashboard reverts to the pre-feature always-light rendering.
 
 ### Custom payload sanitizer
 

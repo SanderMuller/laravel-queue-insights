@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Dashboard;
 
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Gate;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
 use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
@@ -34,19 +35,37 @@ use Throwable;
 final readonly class DashboardData
 {
     /**
-     * Per-page cap for the Completed and Failed lists. Fixed at 25 so the
-     * tab content stays above-fold-friendly. Page is clamped to the
-     * available range at render time.
+     * Default per-page count for the Completed and Failed lists. The
+     * operator can override per-tab via the per-page dropdown; URL
+     * params (`cpp` / `fpp`) round-trip the choice. Page is clamped
+     * to the available range at render time.
+     *
+     * Default of 10 keeps the tab content above-fold-friendly on a
+     * laptop viewport — operators who want denser tables pick 25/50/100
+     * from the dropdown and the choice persists via URL.
      */
-    public const int PER_PAGE = 25;
+    public const int PER_PAGE = 10;
+
+    /**
+     * Whitelist of acceptable per-page values. Driven by the dropdown
+     * in `partials/pagination-controls.blade.php`; also enforced by
+     * `QueueInsightsDashboard::updated()` so a hostile `?cpp=999999`
+     * URL param can't force an unbounded slice.
+     *
+     * Keep this small — every option must produce a usable page count
+     * within `RECENT_FETCH_LIMIT` (250). 100/page = 2 full pages + a
+     * tail, which is the upper bound that still feels paginated.
+     */
+    public const array PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
     /**
      * Underlying fetch ceiling for the Completed + Failed tabs. Pages
      * are sliced from this set, so this caps how deep the user can
      * paginate ("recent {RECENT_FETCH_LIMIT} jobs" — older history is
-     * not paginated by design).
+     * not paginated by design). Sized so the largest per-page option
+     * still produces multiple pages.
      */
-    public const int RECENT_FETCH_LIMIT = self::PER_PAGE * 10;
+    public const int RECENT_FETCH_LIMIT = 250;
 
     /**
      * The exact set of keys `build()` returns. Used by
@@ -83,12 +102,15 @@ final readonly class DashboardData
         'completedPage',
         'completedTotalPages',
         'completedPerPage',
+        'completedPaginator',
         'completedFiltersActive',
         'failedRows',
         'failedTotal',
         'failedPage',
         'failedTotalPages',
         'failedPerPage',
+        'failedPaginator',
+        'perPageOptions',
         'selectedClass',
         'selectedPayload',
         'selectedFailed',
@@ -254,21 +276,21 @@ final readonly class DashboardData
             || $selectedPending !== null
             || $selectedBatch !== null;
 
-        // Server-side pagination — slice the post-filter list to the active
-        // page so the tab pane never renders more than PER_PAGE rows. Page
-        // is clamped to the actual range so a bookmarked deep page on a list
-        // that's since shrunk gracefully lands on the last available page.
+        // Server-side pagination — see paginate() for the per-axis logic.
         $completedAll = $this->buildCompletedFilter($component)->apply(RowEnricher::completed($recentCompleted));
-        $completedTotal = count($completedAll);
-        $completedTotalPages = max(1, (int) ceil($completedTotal / self::PER_PAGE));
-        $completedPage = min(max(1, $component->completedPage), $completedTotalPages);
-        $completedRowsPaged = array_slice($completedAll, ($completedPage - 1) * self::PER_PAGE, self::PER_PAGE);
-
         $failedAll = RowEnricher::failed($recentFailed);
-        $failedTotal = count($failedAll);
-        $failedTotalPages = max(1, (int) ceil($failedTotal / self::PER_PAGE));
-        $failedPage = min(max(1, $component->failedPage), $failedTotalPages);
-        $failedRowsPaged = array_slice($failedAll, ($failedPage - 1) * self::PER_PAGE, self::PER_PAGE);
+
+        [$completedPaginator, $completedRowsPaged, $completedPage, $completedTotal, $completedTotalPages, $completedPerPage] =
+            $this->paginate($completedAll, $component->completedPerPage, $component->completedPage, 'cp');
+        [$failedPaginator, $failedRowsPaged, $failedPage, $failedTotal, $failedTotalPages, $failedPerPage] =
+            $this->paginate($failedAll, $component->failedPerPage, $component->failedPage, 'fp');
+
+        // Snap the clamped page values back onto the Livewire props so the
+        // URL reflects the actually-rendered page. A hostile `?cp=99999`
+        // deep-link would otherwise render the last-available page but
+        // leave the URL pinned to 99999 — bookmarks + share-links go stale.
+        $component->completedPage = $completedPage;
+        $component->failedPage = $failedPage;
 
         // Overview-card previews — top-5 of the FULL filtered list (not the
         // paginated slice). Otherwise navigating to page 2 of Completed or
@@ -318,13 +340,16 @@ final readonly class DashboardData
             'completedTotal' => $completedTotal,
             'completedPage' => $completedPage,
             'completedTotalPages' => $completedTotalPages,
-            'completedPerPage' => self::PER_PAGE,
+            'completedPerPage' => $completedPerPage,
+            'completedPaginator' => $completedPaginator,
             'completedFiltersActive' => $this->completedFiltersActive($component),
             'failedRows' => $failedRowsPaged,
             'failedTotal' => $failedTotal,
             'failedPage' => $failedPage,
             'failedTotalPages' => $failedTotalPages,
-            'failedPerPage' => self::PER_PAGE,
+            'failedPerPage' => $failedPerPage,
+            'failedPaginator' => $failedPaginator,
+            'perPageOptions' => self::PER_PAGE_OPTIONS,
             'selectedClass' => $component->selectedClass,
             'selectedPayload' => $selectedPayload,
             'selectedFailed' => $selectedFailed,
@@ -355,6 +380,58 @@ final readonly class DashboardData
             'silencedFailedRows' => $silencedFailedRows,
             'silencedCompletedRows' => $silencedCompletedRows,
         ];
+    }
+
+    /**
+     * Belt-and-suspenders clamp for per-page values. The component's
+     * `updated()` hook already snaps user input back to PER_PAGE_OPTIONS,
+     * but values bound straight from `mount()` (URL params on first load)
+     * skip that hook — guard here so a `?cpp=999999` deep link can't slip
+     * through to `array_slice($all, 0, 999999)`.
+     */
+    private function resolvePerPage(int $candidate): int
+    {
+        return in_array($candidate, self::PER_PAGE_OPTIONS, true)
+            ? $candidate
+            : self::PER_PAGE;
+    }
+
+    /**
+     * Slice + paginator construction for one axis (Completed or Failed).
+     * Extracted from `build()` to keep that method under PHPStan's
+     * cognitive-complexity ceiling (mirrors the existing private-helper
+     * pattern used by `buildCompletedFilter`, `resolveParentClassFor`).
+     *
+     * Returns a 6-tuple to keep the call site explicit: paginator, the
+     * sliced page array, the clamped current page, total row count,
+     * total page count, and the resolved per-page (after PER_PAGE_OPTIONS
+     * clamp). Callers destructure for use in the view-data return.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     * @return array{0: LengthAwarePaginator<int, array<string, mixed>>, 1: list<array<string, mixed>>, 2: int, 3: int, 4: int, 5: int}
+     */
+    private function paginate(array $rows, int $perPageProp, int $pageProp, string $pageName): array
+    {
+        $perPage = $this->resolvePerPage($perPageProp);
+        $total = count($rows);
+        $totalPages = max(1, (int) ceil($total / $perPage));
+        $page = min(max(1, $pageProp), $totalPages);
+        $sliced = array_slice($rows, ($page - 1) * $perPage, $perPage);
+
+        // LengthAwarePaginator wraps the already-sliced page so views can
+        // use `->onFirstPage()`, `->hasMorePages()`, `->firstItem()`, etc.
+        // The standard `->links()` view is NOT used — `partials/pagination-
+        // controls` is the package's own Tailwind-themed footer (drives
+        // `gotoFooPage` Livewire methods to keep the URL scheme stable).
+        $paginator = new LengthAwarePaginator(
+            items: $sliced,
+            total: $total,
+            perPage: $perPage,
+            currentPage: $page,
+            options: ['pageName' => $pageName],
+        );
+
+        return [$paginator, $sliced, $page, $total, $totalPages, $perPage];
     }
 
     private function buildCompletedFilter(QueueInsightsDashboard $component): CompletedRowFilter

@@ -35,7 +35,7 @@
                          x-on:click.outside="open = false"
                          role="menu"
                          aria-label="Connection scope"
-                         class="absolute left-0 top-full z-20 mt-2 w-56 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-950/10">
+                         class="absolute left-0 top-full z-20 mt-2 w-56 overflow-hidden rounded-lg bg-white shadow-lg ring-1 ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
                         <ul role="list" class="py-1 text-sm">
                             @foreach($connectionNav['tabs'] as $tab)
                                 <li>
@@ -46,8 +46,8 @@
                                        aria-checked="{{ $tab['active'] ? 'true' : 'false' }}"
                                        @class([
                                            'flex items-center gap-2 px-3 py-1.5 transition focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-emerald-500',
-                                           'bg-emerald-50 text-emerald-700' => $tab['active'],
-                                           'text-gray-700 hover:bg-gray-50' => ! $tab['active'],
+                                           'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300' => $tab['active'],
+                                           'text-gray-700 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800' => ! $tab['active'],
                                        ])>
                                         @if($tab['active'])
                                             <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.7a1 1 0 0 1 .03 1.4l-7.5 8a1 1 0 0 1-1.46 0l-3.5-3.75a1 1 0 1 1 1.46-1.36l2.77 2.97 6.77-7.23a1 1 0 0 1 1.43-.03Z" clip-rule="evenodd"/></svg>

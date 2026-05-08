@@ -13,16 +13,16 @@
          role="status" aria-live="polite"
          @class([
              'mb-4 flex items-start gap-3 rounded-lg p-3 text-sm ring-1 ring-inset transition',
-             'bg-emerald-50 text-emerald-900 ring-emerald-600/20' => $okMessage,
-             'bg-red-50 text-red-900 ring-red-600/20' => $errorMessage,
+             'bg-emerald-50 text-emerald-900 ring-emerald-600/20 dark:bg-emerald-900/40 dark:text-emerald-200 dark:ring-emerald-400/30' => $okMessage,
+             'bg-red-50 text-red-900 ring-red-600/20 dark:bg-red-900/40 dark:text-red-200 dark:ring-red-400/30' => $errorMessage,
          ])>
         @if($okMessage)
-            <svg class="mt-0.5 size-4 shrink-0 text-emerald-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <svg class="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd"/>
             </svg>
             <p class="min-w-0 flex-1">{{ $okMessage }}</p>
         @else
-            <svg class="mt-0.5 size-4 shrink-0 text-red-600" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <svg class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z" clip-rule="evenodd"/>
             </svg>
             <p class="min-w-0 flex-1">{{ $errorMessage }}</p>
@@ -30,7 +30,7 @@
 
         <button type="button" x-on:click="shown = false"
                 aria-label="Dismiss"
-                class="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-950/5 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                class="shrink-0 rounded p-0.5 text-gray-400 hover:bg-gray-950/5 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-200">
             <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
             </svg>

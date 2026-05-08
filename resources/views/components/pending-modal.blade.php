@@ -64,16 +64,16 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closePending">
     <div x-trap.noscroll="true"
-         class="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-xl bg-white shadow-xl ring-1 ring-gray-950/5"
+         class="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
          @click.stop>
         {{-- Header --}}
-        <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 bg-white px-4 py-4">
+        <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
             <div class="flex items-center gap-2">
                 @if($expandedBatchId !== '')
                     <button type="button"
                             wire:click="closePending"
                             aria-label="Back to batch"
-                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
                         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
                         </svg>
@@ -82,9 +82,9 @@
                 @endif
                 @include('queue-insights::partials.chain-back-button', ['frame' => $chainBackTop])
                 <span class="inline-flex size-6 items-center justify-center rounded-md ring-1 ring-inset {{ match (true) {
-                    $isInFlight => 'bg-amber-50 text-amber-600 ring-amber-600/20',
+                    $isInFlight => 'bg-amber-50 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 ring-amber-600/20 dark:ring-amber-400/30',
                     $isDelayed => 'bg-indigo-50 text-indigo-600 ring-indigo-600/20',
-                    default => 'bg-gray-50 text-gray-600 ring-gray-600/20',
+                    default => 'bg-gray-50 dark:bg-gray-800 text-gray-600 dark:text-gray-300 ring-gray-600/20',
                 } }}">
                     @if($isInFlight)
                         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -96,12 +96,12 @@
                         </svg>
                     @endif
                 </span>
-                <h3 id="qi-pending-modal-title" class="text-sm font-semibold text-gray-900">{{ $headerLabel }}</h3>
+                <h3 id="qi-pending-modal-title" class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ $headerLabel }}</h3>
             </div>
             <button type="button"
                     wire:click="closePending"
                     aria-label="Close pending job modal"
-                    class="rounded-md p-1 text-gray-400 hover:bg-gray-950/5 hover:text-gray-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                    class="rounded-md p-1 text-gray-400 dark:text-gray-400 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
                 <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
                 </svg>
@@ -114,9 +114,9 @@
                     but the next poll's hydration found nothing — a worker grabbed
                     the job (RecordJobProcessing deletes the pending hash), or
                     the TTL fired. Either way, there's nothing to render. --}}
-                <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center">
-                    <p class="text-sm font-medium text-gray-900">No longer pending</p>
-                    <p class="mt-1 text-xs text-gray-500">
+                <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center dark:border-white/10">
+                    <p class="text-sm font-medium text-gray-900 dark:text-gray-100">No longer pending</p>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                         A worker has picked this job up, or the tracking entry expired. Close this modal and check the Recent completed / Recent failed lists for the result.
                     </p>
                 </div>
@@ -124,18 +124,18 @@
                 {{-- Identity hero — class FQCN + connection/queue chips, mirrors
                     the failed-modal layout. --}}
                 <section class="mb-6">
-                    <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">{{ $headerHeroLabel }}</p>
+                    <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">{{ $headerHeroLabel }}</p>
                     @php
                         $heroChrome = match (true) {
-                            $isInFlight => 'from-amber-50 ring-amber-600/10',
-                            $isDelayed => 'from-indigo-50 ring-indigo-600/10',
-                            default => 'from-gray-50 ring-gray-600/10',
+                            $isInFlight => 'from-amber-50 ring-amber-600/10 dark:from-amber-900/40 dark:ring-amber-400/30',
+                            $isDelayed => 'from-indigo-50 ring-indigo-600/10 dark:from-indigo-900/40 dark:ring-indigo-400/30',
+                            default => 'from-gray-50 ring-gray-600/10 dark:from-gray-800 dark:ring-white/10',
                         };
                     @endphp
-                    <div class="rounded-xl bg-linear-to-br to-white p-4 ring-1 ring-inset {{ $heroChrome }}">
+                    <div class="rounded-xl bg-linear-to-br to-white dark:to-gray-900 p-4 ring-1 ring-inset {{ $heroChrome }}">
                         <dl>
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Class</dt>
-                            <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $class ?? '—' }}</dd>
+                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
+                            <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $class ?? '—' }}</dd>
                         </dl>
                         <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                             <x-queue-insights::meta-pill label="Connection" :value="$connection"/>
@@ -162,52 +162,52 @@
                     $tileCols = $isInFlight || $isDelayed ? 3 : 2;
                 @endphp
                 <dl @class([
-                        'mb-3 grid gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5',
+                        'mb-3 grid gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10',
                         'grid-cols-2' => $tileCols === 2,
                         'grid-cols-3' => $tileCols === 3,
                     ])>
-                    <div class="bg-white p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Queued at</dt>
+                    <div class="bg-white dark:bg-gray-900 p-4">
+                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Queued at</dt>
                         <dd class="mt-1">
-                            <x-queue-insights::qi-time :at="$queuedCarbon" class="block truncate text-sm font-medium text-gray-900"/>
+                            <x-queue-insights::qi-time :at="$queuedCarbon" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
                             @if($queuedCarbon)
-                                <x-queue-insights::qi-time :at="$queuedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
+                                <x-queue-insights::qi-time :at="$queuedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
                             @endif
                         </dd>
                     </div>
                     @if($isInFlight)
-                        <div class="bg-white p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Started</dt>
+                        <div class="bg-white dark:bg-gray-900 p-4">
+                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Started</dt>
                             <dd class="mt-1">
-                                <x-queue-insights::qi-time :at="$startedCarbon" class="block truncate text-sm font-medium text-gray-900"/>
+                                <x-queue-insights::qi-time :at="$startedCarbon" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
                                 @if($startedCarbon)
-                                    <x-queue-insights::qi-time :at="$startedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
+                                    <x-queue-insights::qi-time :at="$startedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
                                 @endif
                             </dd>
                         </div>
-                        <div class="bg-white p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Running for</dt>
+                        <div class="bg-white dark:bg-gray-900 p-4">
+                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Running for</dt>
                             <dd class="mt-1 flex items-center gap-1.5">
                                 <span aria-hidden="true" class="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"></span>
-                                <span class="text-lg font-semibold tracking-tight tabular-nums text-gray-900">
+                                <span class="text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
                                     {{ $runningForHumanized ?? '—' }}
                                 </span>
                             </dd>
                         </div>
                     @else
-                        <div class="bg-white p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Waiting for</dt>
-                            <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900">
+                        <div class="bg-white dark:bg-gray-900 p-4">
+                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Waiting for</dt>
+                            <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
                                 {{ $waitingForHumanized ?? '—' }}
                             </dd>
                         </div>
                         @if($isDelayed)
-                            <div class="bg-white p-4">
-                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Runs</dt>
+                            <div class="bg-white dark:bg-gray-900 p-4">
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Runs</dt>
                                 <dd class="mt-1">
-                                    <x-queue-insights::qi-time :at="$availableCarbon" class="block truncate text-sm font-medium text-gray-900"/>
+                                    <x-queue-insights::qi-time :at="$availableCarbon" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
                                     @if($availableCarbon)
-                                        <x-queue-insights::qi-time :at="$availableCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
+                                        <x-queue-insights::qi-time :at="$availableCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
                                     @endif
                                 </dd>
                             </div>
@@ -217,17 +217,17 @@
 
                 {{-- UUID — same identity row pattern as the failed modal --}}
                 @if($uuid !== null)
-                    <dl class="flex items-center gap-2 border-t border-gray-950/5 pt-3">
-                        <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400">UUID</dt>
+                    <dl class="flex items-center gap-2 border-t border-gray-950/5 dark:border-white/10 pt-3">
+                        <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">UUID</dt>
                         <dd class="flex min-w-0 flex-1 items-center gap-1.5">
                             <code id="qi-pending-uuid"
-                                  class="truncate rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600">{{ $uuid }}</code>
+                                  class="truncate rounded bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-300">{{ $uuid }}</code>
                             <x-queue-insights::copy-button target="qi-pending-uuid" label="Copy UUID" variant="icon" class="shrink-0"/>
                         </dd>
                     </dl>
                 @endif
 
-                <p class="mt-4 text-[11px] text-gray-500">
+                <p class="mt-4 text-[11px] text-gray-500 dark:text-gray-300">
                     @if($isInFlight)
                         A worker is processing this job right now. The modal will flip to its empty state once the job finishes (success or failure) — check Recent completed / Recent failed afterwards.
                     @elseif($isDelayed)

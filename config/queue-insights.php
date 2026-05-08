@@ -215,6 +215,19 @@ return [
         // The workbench preview disables it because the seeded fixtures
         // are static — every poll would be wasted Redis traffic.
         'polling' => true,
+        // Light/dark/system theme toggle. Master kill switch for the
+        // dark-mode feature — gates the FOIT head script, the
+        // `<meta name="color-scheme">` tag, and the toggle component
+        // in the header. `dark:` Tailwind variants on individual
+        // surfaces are emitted unconditionally; they're inert unless
+        // a `.dark` class is on `<html>`, which only happens when
+        // this flag is true. Default is on after the per-surface
+        // audit (Phases 1-5 of the dark-mode spec); hosts can disable
+        // via the env var if they need to revert. See
+        // internal/specs/dashboard-dark-mode.md for rationale.
+        'theme' => [
+            'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
+        ],
     ],
 
     /*

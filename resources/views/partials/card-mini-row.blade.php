@@ -17,7 +17,7 @@
         $fqcn = $item['class'] ?? '—';
         $shortName = ($p = strrpos($fqcn, '\\')) !== false ? substr($fqcn, $p + 1) : $fqcn;
     @endphp
-    <li class="flex cursor-pointer items-center justify-between gap-3 py-1.5 transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500"
+    <li class="flex cursor-pointer items-center justify-between gap-3 py-1.5 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 focus-visible:bg-emerald-50/40 dark:focus-visible:bg-emerald-900/30 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500"
         role="button" tabindex="0"
         aria-label="Open completed job details — {{ $fqcn }}"
         wire:click="openPayload(@js($item['_id']))"
@@ -25,11 +25,11 @@
         x-on:keydown.space.prevent="$wire.openPayload(@js($item['_id']))">
         <span class="flex min-w-0 items-center gap-2">
             <span class="size-1.5 shrink-0 rounded-full bg-emerald-500"></span>
-            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900">{{ $shortName }}</span>
+            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span>
         </span>
-        <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500">
+        <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500 dark:text-gray-300">
             <span class="truncate font-mono">{{ $item['queue'] ?? '—' }}</span>
-            <x-queue-insights::qi-time :at="$item['processed_at'] ?? null" format="relative-short" class="text-gray-400"/>
+            <x-queue-insights::qi-time :at="$item['processed_at'] ?? null" format="relative-short" class="text-gray-400 dark:text-gray-400"/>
         </span>
     </li>
 
@@ -42,7 +42,7 @@
     @endphp
     <li @class([
             'flex items-center justify-between gap-3 py-1.5 transition',
-            'cursor-pointer hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
+            'cursor-pointer hover:bg-gray-950/[0.03] dark:hover:bg-white/5 focus-visible:bg-emerald-50/40 dark:focus-visible:bg-emerald-900/30 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
         ])
         @if($clickable)
             role="button" tabindex="0"
@@ -53,14 +53,14 @@
         @endif>
         <span class="flex min-w-0 items-center gap-2">
             <span class="size-1.5 shrink-0 rounded-full bg-red-500"></span>
-            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900">{{ $shortName }}</span>
+            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span>
             @if($excShort)
-                <span class="hidden truncate font-mono text-[10px] text-red-600 sm:inline" @if(! empty($item['exception_message'])) title="{{ $item['exception_message'] }}" @endif>{{ $excShort }}</span>
+                <span class="hidden truncate font-mono text-[10px] text-red-600 dark:text-red-400 sm:inline" @if(! empty($item['exception_message'])) title="{{ $item['exception_message'] }}" @endif>{{ $excShort }}</span>
             @endif
         </span>
-        <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500">
+        <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500 dark:text-gray-300">
             <span class="truncate font-mono">{{ $item['queue'] ?? '—' }}</span>
-            <x-queue-insights::qi-time :at="$item['failed_at'] ?? null" format="relative-short" class="text-gray-400"/>
+            <x-queue-insights::qi-time :at="$item['failed_at'] ?? null" format="relative-short" class="text-gray-400 dark:text-gray-400"/>
         </span>
     </li>
 
@@ -87,7 +87,7 @@
     @endphp
     <li @class([
             'flex items-center justify-between gap-3 py-1.5 transition',
-            'cursor-pointer hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
+            'cursor-pointer hover:bg-gray-950/[0.03] dark:hover:bg-white/5 focus-visible:bg-emerald-50/40 dark:focus-visible:bg-emerald-900/30 focus-visible:outline focus-visible:-outline-offset-1 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
         ])
         @if($clickable)
             role="button" tabindex="0"
@@ -104,10 +104,10 @@
             @else
                 <span class="size-1.5 shrink-0 rounded-full bg-gray-400"></span>
             @endif
-            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900">{{ $shortName }}</span>
+            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span>
             @if($isDelayed && $delayHumanized !== null)
                 <x-queue-insights::hint
-                    triggerClass="shrink-0 rounded bg-indigo-50 px-1.5 py-0.5 font-sans text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20 cursor-help">
+                    triggerClass="shrink-0 rounded bg-indigo-50 dark:bg-indigo-900/40 px-1.5 py-0.5 font-sans text-[10px] font-medium text-indigo-700 dark:text-indigo-300 ring-1 ring-inset ring-indigo-600/20 dark:ring-indigo-400/30 cursor-help">
                     in {{ $delayHumanized }}
                     <x-slot:tip>
                         Delayed by <span class="font-medium">{{ $delayHumanized }}</span>.
@@ -119,14 +119,14 @@
                 </x-queue-insights::hint>
             @endif
         </span>
-        <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500">
+        <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums text-gray-500 dark:text-gray-300">
             <span class="truncate font-mono">{{ $item['queue'] ?? '—' }}</span>
             @if($isInFlight && $startedCarbon)
-                <x-queue-insights::qi-time :at="$startedCarbon" format="relative-short" prefix="started" class="text-gray-400"/>
+                <x-queue-insights::qi-time :at="$startedCarbon" format="relative-short" prefix="started" class="text-gray-400 dark:text-gray-400"/>
             @elseif($queuedCarbon)
-                <x-queue-insights::qi-time :at="$queuedCarbon" format="relative-short" class="text-gray-400"/>
+                <x-queue-insights::qi-time :at="$queuedCarbon" format="relative-short" class="text-gray-400 dark:text-gray-400"/>
             @else
-                <span class="text-gray-400">—</span>
+                <span class="text-gray-400 dark:text-gray-400">—</span>
             @endif
         </span>
     </li>
@@ -134,19 +134,19 @@
 @elseif($type === 'queue')
     @php
         $depthNum = is_numeric($item['depth'] ?? null) ? (int) $item['depth'] : 0;
-        $depthCls = $depthNum === 0 ? 'text-gray-900' : ($depthNum > 1000 ? 'text-red-700' : 'text-amber-700');
+        $depthCls = $depthNum === 0 ? 'text-gray-900 dark:text-gray-100' : ($depthNum > 1000 ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300');
         $statusDot = ($item['error'] ?? false) ? 'bg-red-500' : (($item['stale'] ?? false) ? 'bg-amber-400' : 'bg-emerald-500');
         $statusTxt = ($item['error'] ?? false) ? 'errored' : (($item['stale'] ?? false) ? 'stale' : 'healthy');
     @endphp
     <li class="flex items-center justify-between gap-3 py-1.5">
         <span class="flex min-w-0 items-center gap-2">
             <span class="size-1.5 shrink-0 rounded-full {{ $statusDot }}" title="{{ $statusTxt }}"></span>
-            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900">{{ $item['queue'] }}</span>
-            <span class="hidden shrink-0 truncate text-[10px] text-gray-400 sm:inline">{{ $item['connection'] }}</span>
+            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $item['queue'] }}</span>
+            <span class="hidden shrink-0 truncate text-[10px] text-gray-400 dark:text-gray-400 sm:inline">{{ $item['connection'] }}</span>
         </span>
         <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums">
             <span class="font-medium {{ $depthCls }}">{{ $item['depth'] }}</span>
-            <span class="text-gray-400">depth</span>
+            <span class="text-gray-400 dark:text-gray-400">depth</span>
         </span>
     </li>
 @endif

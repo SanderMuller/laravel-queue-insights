@@ -12,14 +12,14 @@
     because the user already chose to land on this tab. --}}
 <section>
     <details class="group" open>
-        <summary class="flex cursor-pointer list-none items-center justify-between gap-4 rounded-lg px-3 py-2.5 -mx-3 hover:bg-gray-950/[0.03] focus-visible:bg-gray-950/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-4 rounded-lg px-3 py-2.5 -mx-3 hover:bg-gray-950/[0.03] focus-visible:bg-gray-950/[0.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:hover:bg-white/5 dark:focus-visible:bg-white/5">
             <div class="flex items-center gap-2.5">
-                <span class="h-5 w-1 rounded bg-gray-300 group-open:bg-emerald-500" aria-hidden="true"></span>
-                <h2 class="text-sm font-semibold tracking-tight text-gray-700">
-                    Job classes <span class="font-normal text-gray-500">(24h · {{ count($classes) }})</span>
+                <span class="h-5 w-1 rounded bg-gray-300 group-open:bg-emerald-500 dark:bg-gray-700" aria-hidden="true"></span>
+                <h2 class="text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
+                    Job classes <span class="font-normal text-gray-500 dark:text-gray-400">(24h · {{ count($classes) }})</span>
                 </h2>
                 @if($selectedClass)
-                    <span class="rounded bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">{{ $selectedClass }}</span>
+                    <span class="rounded bg-emerald-50 px-2 py-0.5 font-mono text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-400/30">{{ $selectedClass }}</span>
                 @endif
             </div>
             <div class="flex items-center gap-3">
@@ -29,11 +29,11 @@
                         spec wording is loose; preventDefault makes the no-toggle behaviour explicit
                         (codex review). --}}
                     <button type="button" wire:click="clearSelectedClass" x-on:click.stop.prevent
-                            class="rounded text-xs font-medium text-emerald-700 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                            class="rounded text-xs font-medium text-emerald-700 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300 dark:hover:text-emerald-200">
                         Clear filter
                     </button>
                 @endif
-                <svg class="size-4 text-gray-400 transition-transform group-open:rotate-90" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                <svg class="size-4 text-gray-400 transition-transform group-open:rotate-90 dark:text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
                 </svg>
             </div>
@@ -41,7 +41,7 @@
 
         <div class="mt-4">
             @if(count($classes) === 0)
-                <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500">
+                <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
                     No processed jobs in the window.
                 </div>
             @else
@@ -49,14 +49,14 @@
                     <div class="inline-block min-w-full px-6 py-2 align-middle sm:px-8 lg:px-10">
                         <table class="w-full text-sm">
                             <thead>
-                            <tr class="text-left text-xs font-medium text-gray-500">
+                            <tr class="text-left text-xs font-medium text-gray-500 dark:text-gray-300">
                                 <th class="whitespace-nowrap py-2 pr-3 font-medium">Job</th>
                                 <th class="whitespace-nowrap px-3 py-2 text-right font-medium">Volume</th>
                                 <th class="whitespace-nowrap px-3 py-2 text-right font-medium">Runtime</th>
                                 <th class="whitespace-nowrap px-3 py-2 font-medium">Last run</th>
                             </tr>
                             </thead>
-                            <tbody class="divide-y divide-gray-950/5">
+                            <tbody class="divide-y divide-gray-950/5 dark:divide-white/10">
                             @foreach($classes as $c)
                                 @php
                                     $processed = is_numeric($c['processed_24h'] ?? null) ? (int) $c['processed_24h'] : 0;
@@ -71,7 +71,7 @@
                                 @endphp
                                 {{-- @js() safely encodes FQCN for JS string literals — single-quoted
                                     `'{{ ... }}'` strips `\J`, `\V` etc as unknown escapes. --}}
-                                <tr class="cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500 {{ $selectedClass === $c['class'] ? 'bg-emerald-50/30' : '' }}"
+                                <tr class="cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500 dark:hover:bg-white/5 dark:focus-visible:bg-emerald-900/30 {{ $selectedClass === $c['class'] ? 'bg-emerald-50/30 dark:bg-emerald-900/20' : '' }}"
                                     role="button"
                                     tabindex="0"
                                     aria-label="Filter by {{ $c['class'] }}"
@@ -81,48 +81,48 @@
                                     {{-- Job: class FQCN + (optional) fail-rate subtitle --}}
                                     <td class="max-w-md py-3 pr-3 align-top">
                                         <div class="flex items-center gap-1.5">
-                                            <p class="truncate font-mono text-xs font-medium text-gray-900">{{ $c['class'] }}</p>
+                                            <p class="truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $c['class'] }}</p>
                                             @if(($c['silenced'] ?? false) === true)
                                                 {{-- Muted badge — class is in `queue-insights.silenced`. Failures
                                                      hidden from the Failed list + alert pipeline; throughput / p95
                                                      stats stay visible so the operator can still triage. --}}
-                                                <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 ring-1 ring-inset ring-gray-950/10" title="Failures silenced via queue-insights.silenced">silenced</span>
+                                                <span class="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-500 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10" title="Failures silenced via queue-insights.silenced">silenced</span>
                                             @endif
                                         </div>
                                         @if($failed > 0)
-                                            <p class="mt-0.5 text-[10px] font-medium tabular-nums text-red-600">{{ number_format($failRate, 1) }}% fail rate</p>
+                                            <p class="mt-0.5 text-[10px] font-medium tabular-nums text-red-600 dark:text-red-400">{{ number_format($failRate, 1) }}% fail rate</p>
                                         @endif
                                     </td>
                                     {{-- Volume: processed · failed stacked --}}
                                     <td class="px-3 py-3 text-right align-top">
-                                        <p class="text-sm font-medium tabular-nums text-gray-900">{{ number_format($processed) }}</p>
-                                        <p class="mt-0.5 text-[10px] font-medium tabular-nums {{ $failed > 0 ? 'text-red-600' : 'text-gray-400' }}">{{ $failed > 0 ? number_format($failed) . ' failed' : 'no failures' }}</p>
+                                        <p class="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ number_format($processed) }}</p>
+                                        <p class="mt-0.5 text-[10px] font-medium tabular-nums {{ $failed > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-400 dark:text-gray-400' }}">{{ $failed > 0 ? number_format($failed) . ' failed' : 'no failures' }}</p>
                                     </td>
                                     {{-- Runtime: avg headline + p95/max micro-stats underneath --}}
                                     <td class="px-3 py-3 text-right align-top">
-                                        <p class="text-sm font-medium tabular-nums text-gray-900">
+                                        <p class="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">
                                             {{ $avgMs !== null ? number_format((float) $avgMs, 0) . ' ms' : '—' }}
-                                            <span class="ml-1 text-[10px] font-normal text-gray-400">avg</span>
+                                            <span class="ml-1 text-[10px] font-normal text-gray-400 dark:text-gray-400">avg</span>
                                         </p>
                                         @if($p95Ms !== null || $maxMs !== null)
-                                            <p class="mt-0.5 text-[10px] tabular-nums text-gray-500">
+                                            <p class="mt-0.5 text-[10px] tabular-nums text-gray-500 dark:text-gray-300">
                                                 @if($p95Ms !== null)
-                                                    <span class="font-medium text-gray-700">{{ number_format((int) $p95Ms) }}</span><span class="text-gray-400"> p95</span>
+                                                    <span class="font-medium text-gray-700 dark:text-gray-200">{{ number_format((int) $p95Ms) }}</span><span class="text-gray-400 dark:text-gray-400"> p95</span>
                                                 @endif
                                                 @if($p95Ms !== null && $maxMs !== null)
-                                                    <span class="mx-0.5 text-gray-300">·</span>
+                                                    <span class="mx-0.5 text-gray-300 dark:text-gray-500">·</span>
                                                 @endif
                                                 @if($maxMs !== null)
-                                                    <span class="font-medium text-gray-700">{{ number_format((int) $maxMs) }}</span><span class="text-gray-400"> max</span>
+                                                    <span class="font-medium text-gray-700 dark:text-gray-200">{{ number_format((int) $maxMs) }}</span><span class="text-gray-400 dark:text-gray-400"> max</span>
                                                 @endif
                                             </p>
                                         @endif
                                     </td>
                                     {{-- Last run: humanized + absolute subtitle --}}
                                     <td class="px-3 py-3 align-top">
-                                        <x-queue-insights::qi-time :at="$lastRunAt" class="block whitespace-nowrap text-xs text-gray-700"/>
+                                        <x-queue-insights::qi-time :at="$lastRunAt" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
                                         @if($lastRunAt instanceof \Carbon\CarbonInterface)
-                                            <x-queue-insights::qi-time :at="$lastRunAt" format="absolute-mono" class="mt-0.5 block text-[10px] text-gray-400"/>
+                                            <x-queue-insights::qi-time :at="$lastRunAt" format="absolute-mono" class="mt-0.5 block text-[10px] text-gray-400 dark:text-gray-400"/>
                                         @endif
                                     </td>
                                 </tr>

@@ -221,6 +221,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateWork($section($cfg, 'work'));
         ConfigValidator::validateRetention($section($cfg, 'retention'));
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
+        ConfigValidator::validateDashboard($section($cfg, 'dashboard'));
 
         // Silenced fails loud on a non-array shape rather than coercing
         // to `[]` like the other section validators — a `silenced =>

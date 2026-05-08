@@ -23,10 +23,10 @@
     // BatchRepository hasn't stamped cancelled_at yet.
     if ($isCancelled || ($hasFailures && ! ($batch['allows_failures'] ?? false))) {
         $barTone = 'bg-red-500';
-        $statusChip = ['label' => $isCancelled ? 'cancelled' : 'cancelled (first failure)', 'cls' => 'bg-red-50 text-red-700 ring-red-600/20'];
+        $statusChip = ['label' => $isCancelled ? 'cancelled' : 'cancelled (first failure)', 'cls' => 'bg-red-50 dark:bg-red-900/40 text-red-700 dark:text-red-300 ring-red-600/20 dark:ring-red-400/30'];
     } elseif ($isFinished && ! $hasFailures) {
         $barTone = 'bg-emerald-500';
-        $statusChip = ['label' => 'finished', 'cls' => 'bg-gray-50 text-gray-700 ring-gray-950/10'];
+        $statusChip = ['label' => 'finished', 'cls' => 'bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 ring-gray-950/10 dark:ring-white/10'];
     } elseif ($hasFailures) {
         $barTone = 'bg-amber-500';
         $statusChip = null;
@@ -41,25 +41,25 @@
     :aria-label="'Open batch details for ' . $label"
     density="compact">
     <div class="col-span-5 min-w-0">
-        <p class="truncate text-sm font-medium text-gray-900">{{ $label }}</p>
-        <p class="truncate font-mono text-xs text-gray-400">{{ $id }}</p>
+        <p class="truncate text-sm font-medium text-gray-900 dark:text-gray-100">{{ $label }}</p>
+        <p class="truncate font-mono text-xs text-gray-400 dark:text-gray-400">{{ $id }}</p>
     </div>
 
     <div class="col-span-3">
-        <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-950/5">
+        <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-950/5 dark:bg-white/10">
             <div class="h-full {{ $barTone }} transition-all" style="width: {{ max(2, $progress) }}%"></div>
         </div>
-        <p class="mt-1 text-xs tabular-nums text-gray-500">{{ $progress }}% · {{ $processed }}/{{ $total }}</p>
+        <p class="mt-1 text-xs tabular-nums text-gray-500 dark:text-gray-300">{{ $progress }}% · {{ $processed }}/{{ $total }}</p>
     </div>
 
     <dl class="col-span-2 grid grid-cols-2 text-center text-xs tabular-nums">
         <div>
-            <dt class="text-gray-400">failed</dt>
-            <dd class="font-medium {{ $hasFailures ? 'text-red-700' : 'text-gray-700' }}">{{ $failed }}</dd>
+            <dt class="text-gray-400 dark:text-gray-400">failed</dt>
+            <dd class="font-medium {{ $hasFailures ? 'text-red-700 dark:text-red-300' : 'text-gray-700 dark:text-gray-300' }}">{{ $failed }}</dd>
         </div>
         <div>
-            <dt class="text-gray-400">pending</dt>
-            <dd class="font-medium text-gray-700">{{ $pending }}</dd>
+            <dt class="text-gray-400 dark:text-gray-400">pending</dt>
+            <dd class="font-medium text-gray-700 dark:text-gray-300">{{ $pending }}</dd>
         </div>
     </dl>
 
@@ -70,9 +70,9 @@
             </span>
         @endif
         @if($finishedAt instanceof \Carbon\CarbonInterface)
-            <x-queue-insights::qi-time :at="$finishedAt" prefix="finished" class="basis-full text-right text-xs text-gray-400"/>
+            <x-queue-insights::qi-time :at="$finishedAt" prefix="finished" class="basis-full text-right text-xs text-gray-400 dark:text-gray-400"/>
         @elseif($createdAt instanceof \Carbon\CarbonInterface)
-            <x-queue-insights::qi-time :at="$createdAt" prefix="created" class="basis-full text-right text-xs text-gray-400"/>
+            <x-queue-insights::qi-time :at="$createdAt" prefix="created" class="basis-full text-right text-xs text-gray-400 dark:text-gray-400"/>
         @endif
     </div>
 </x-queue-insights::list-row>

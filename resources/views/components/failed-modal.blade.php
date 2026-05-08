@@ -147,17 +147,17 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closeFailed">
     <div x-trap.noscroll="true"
-         class="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-xl bg-white shadow-xl ring-1 ring-gray-950/5 [--padding:--spacing(6)]"
+         class="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10 [--padding:--spacing(6)]"
          @click.stop>
         {{-- Header --}}
-        <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 bg-white px-4 py-4">
+        <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
             <div class="flex items-center gap-2">
                 @if($expandedBatchId !== '')
                     <button type="button"
                             x-show="view === 'job'"
                             wire:click="closeFailed"
                             aria-label="Back to batch"
-                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                            class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
                         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                             <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
                         </svg>
@@ -170,20 +170,20 @@
                         x-cloak
                         x-on:click="view = (view === 'chain-detail') ? 'chain' : 'job'"
                         aria-label="Back"
-                        class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-950/5 hover:text-gray-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                        class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
                     <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
                     </svg>
                     <span>Back</span>
                 </button>
-                <span x-show="view === 'job'" class="inline-flex size-6 items-center justify-center rounded-md bg-red-50 text-red-600 ring-1 ring-inset ring-red-600/20">
+                <span x-show="view === 'job'" class="inline-flex size-6 items-center justify-center rounded-md bg-red-50 dark:bg-red-900/40 text-red-600 dark:text-red-400 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
                     <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path fill-rule="evenodd"
                               d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"
                               clip-rule="evenodd"/>
                     </svg>
                 </span>
-                <h3 id="qi-failed-modal-title" class="text-sm font-semibold text-gray-900">
+                <h3 id="qi-failed-modal-title" class="text-sm font-semibold text-gray-900 dark:text-gray-100">
                     <span x-show="view === 'job'">Failed job</span>
                     <span x-show="view === 'chain'" x-cloak>Chained jobs</span>
                     <span x-show="view === 'chain-detail'" x-cloak>Chained job details</span>
@@ -197,8 +197,8 @@
                     <div x-data="{ confirming: false, t: null }" x-on:click.outside="confirming = false">
                         <button type="button"
                                 x-bind:class="confirming
-                                    ? 'bg-red-600 text-white ring-red-700 hover:bg-red-500'
-                                    : 'bg-white text-emerald-700 ring-emerald-600/30 hover:bg-emerald-50'"
+                                    ? 'bg-red-600 text-white ring-red-700 hover:bg-red-500 dark:bg-red-500 dark:ring-red-400 dark:hover:bg-red-400'
+                                    : 'bg-white dark:bg-gray-900 text-emerald-700 dark:text-emerald-300 ring-emerald-600/30 dark:ring-emerald-400/30 hover:bg-emerald-50 dark:hover:bg-emerald-900/40'"
                                 class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
                                 x-on:click="
                                     if (! confirming) {
@@ -228,7 +228,7 @@
                 <button type="button"
                         wire:click="closeFailed"
                         aria-label="Close failed job modal"
-                        class="rounded-md p-1 text-gray-400 hover:bg-gray-950/5 hover:text-gray-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                        class="rounded-md p-1 text-gray-400 dark:text-gray-400 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
                     <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
                     </svg>
@@ -239,11 +239,11 @@
         <div class="p-4" x-show="view === 'job'">
             {{-- Identity hero — displayName + connection/queue --}}
             <section data-section="base" class="mb-6">
-                <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">Failed</p>
-                <div class="rounded-xl bg-linear-to-br from-red-50 to-white p-4 ring-1 ring-red-600/10">
+                <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Failed</p>
+                <div class="rounded-xl bg-linear-to-br from-red-50 to-white p-4 ring-1 ring-red-600/10 dark:from-red-900/40 dark:to-gray-900 dark:ring-red-400/30">
                     <dl>
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Class</dt>
-                        <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $failedDisplayName ?? '—' }}</dd>
+                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
+                        <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $failedDisplayName ?? '—' }}</dd>
                     </dl>
                     <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                         <x-queue-insights::meta-pill label="Connection" :value="$failed['connection'] ?? null"/>
@@ -266,27 +266,27 @@
                     <button type="button"
                             data-section="chain"
                             x-on:click="view = 'chain'"
-                            class="mt-3 block w-full text-left rounded-xl bg-white p-4 ring-1 ring-gray-950/5 transition hover:bg-gray-50 hover:ring-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                            class="mt-3 block w-full text-left rounded-xl bg-white dark:bg-gray-900 p-4 ring-1 ring-gray-950/5 dark:ring-white/10 transition hover:bg-gray-50 dark:hover:bg-gray-800 hover:ring-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
                             aria-label="View full chain details">
                         <div class="flex items-center justify-between gap-2">
-                            <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Chain</p>
-                            <span class="text-[10px] font-medium text-emerald-700">View {{ $failedChain['remaining'] }} chained {{ $failedChain['remaining'] === 1 ? 'job' : 'jobs' }} →</span>
+                            <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Chain</p>
+                            <span class="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">View {{ $failedChain['remaining'] }} chained {{ $failedChain['remaining'] === 1 ? 'job' : 'jobs' }} →</span>
                         </div>
                         <dl class="mt-2 space-y-1 text-xs">
                             <div class="flex flex-wrap items-baseline gap-x-2">
-                                <dt class="text-gray-400">Next</dt>
-                                <dd class="break-all font-mono text-gray-900">{{ $failedChain['next_class'] }}</dd>
+                                <dt class="text-gray-400 dark:text-gray-400">Next</dt>
+                                <dd class="break-all font-mono text-gray-900 dark:text-gray-100">{{ $failedChain['next_class'] }}</dd>
                                 @if($failedChain['remaining'] > 1)
-                                    <dd class="text-gray-500">(+{{ $failedChain['remaining'] - 1 }} more chained)</dd>
+                                    <dd class="text-gray-500 dark:text-gray-300">(+{{ $failedChain['remaining'] - 1 }} more chained)</dd>
                                 @endif
                             </div>
                             @if($failedChain['chain_queue'] !== null || $failedChain['chain_connection'] !== null)
                                 <div class="flex flex-wrap items-baseline gap-x-2">
-                                    <dt class="text-gray-400">Queue</dt>
-                                    <dd class="font-mono text-gray-700">{{ $failedChain['chain_queue'] ?? '—' }}</dd>
+                                    <dt class="text-gray-400 dark:text-gray-400">Queue</dt>
+                                    <dd class="font-mono text-gray-700 dark:text-gray-300">{{ $failedChain['chain_queue'] ?? '—' }}</dd>
                                     @if($failedChain['chain_connection'] !== null)
-                                        <dd class="text-gray-400">·</dd>
-                                        <dd class="font-mono text-gray-700">{{ $failedChain['chain_connection'] }}</dd>
+                                        <dd class="text-gray-400 dark:text-gray-400">·</dd>
+                                        <dd class="font-mono text-gray-700 dark:text-gray-300">{{ $failedChain['chain_connection'] }}</dd>
                                     @endif
                                 </div>
                             @endif
@@ -295,51 +295,51 @@
                 @endif
 
                 {{-- Metrics row --}}
-                <dl class="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5">
-                    <div class="bg-white p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Attempts</dt>
+                <dl class="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10">
+                    <div class="bg-white dark:bg-gray-900 p-4">
+                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Attempts</dt>
                         <dd class="mt-1 flex items-baseline gap-1.5">
                             @if($failedAttempts === null)
-                                <span class="text-lg font-semibold tracking-tight text-gray-400">—</span>
+                                <span class="text-lg font-semibold tracking-tight text-gray-400 dark:text-gray-400">—</span>
                             @else
-                                <span class="text-lg font-semibold tracking-tight tabular-nums text-gray-900">{{ $failedAttempts }}</span>
+                                <span class="text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">{{ $failedAttempts }}</span>
                                 @if($failedMaxTries !== null)
-                                    <span class="text-xs tabular-nums text-gray-400">of {{ $failedMaxTries }}</span>
+                                    <span class="text-xs tabular-nums text-gray-400 dark:text-gray-400">of {{ $failedMaxTries }}</span>
                                 @endif
                             @endif
                         </dd>
                     </div>
-                    <div class="bg-white p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Failed at</dt>
+                    <div class="bg-white dark:bg-gray-900 p-4">
+                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Failed at</dt>
                         <dd class="mt-1">
-                            <x-queue-insights::qi-time :at="$failedAtRaw" class="block truncate text-sm font-medium text-gray-900"/>
+                            <x-queue-insights::qi-time :at="$failedAtRaw" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
                             @if($failedAtRaw)
-                                <x-queue-insights::qi-time :at="$failedAtRaw" format="absolute-mono" class="block truncate text-[10px] text-gray-400"/>
+                                <x-queue-insights::qi-time :at="$failedAtRaw" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
                             @endif
                         </dd>
                         {{-- Wait time — `—` when no sample (legacy / driver). --}}
-                        <dd class="mt-1.5 text-[11px] tabular-nums text-gray-500"
+                        <dd class="mt-1.5 text-[11px] tabular-nums text-gray-500 dark:text-gray-300"
                             title="Wait time = enqueue → worker pickup">
-                            <span class="text-gray-400">wait</span>
-                            <span class="font-medium text-gray-700">{{ $failedWaitHumanized ?? '—' }}</span>
+                            <span class="text-gray-400 dark:text-gray-400">wait</span>
+                            <span class="font-medium text-gray-700 dark:text-gray-300">{{ $failedWaitHumanized ?? '—' }}</span>
                             @if(is_numeric($failedWaitMs) && (int) $failedWaitMs > 0)
-                                <span class="text-gray-400">({{ (int) $failedWaitMs }} ms)</span>
+                                <span class="text-gray-400 dark:text-gray-400">({{ (int) $failedWaitMs }} ms)</span>
                             @endif
                         </dd>
                     </div>
-                    <div class="bg-white p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Row ID</dt>
-                        <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900">
+                    <div class="bg-white dark:bg-gray-900 p-4">
+                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Row ID</dt>
+                        <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
                             #{{ $failed['id'] ?? '—' }}</dd>
                     </div>
                 </dl>
 
                 {{-- UUID --}}
-                <dl class="mt-3 flex items-center gap-2 border-t border-gray-950/5 pt-3">
-                    <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400">UUID</dt>
+                <dl class="mt-3 flex items-center gap-2 border-t border-gray-950/5 dark:border-white/10 pt-3">
+                    <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">UUID</dt>
                     <dd class="flex min-w-0 flex-1 items-center gap-1.5">
                         <code id="qi-failed-uuid"
-                              class="truncate rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600">{{ $failed['uuid'] ?? '—' }}</code>
+                              class="truncate rounded bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-300">{{ $failed['uuid'] ?? '—' }}</code>
                         <x-queue-insights::copy-button target="qi-failed-uuid" label="Copy UUID" variant="icon" class="shrink-0"/>
                     </dd>
                 </dl>
@@ -351,7 +351,7 @@
             @if(is_string($failedException) && $failedException !== '')
                 <section data-section="trace" class="mb-4">
                     <div class="mb-2 flex items-center justify-between gap-3">
-                        <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Exception &amp; stack trace</p>
+                        <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Exception &amp; stack trace</p>
                         <x-queue-insights::copy-button
                             target="qi-failed-stack"
                             label="Copy stack trace"
@@ -365,7 +365,7 @@
                 treatment as the completed-jobs Raw tab via the shared component. --}}
             @if(is_string($failedPayloadRaw) && $failedPayloadRaw !== '')
                 <section data-section="payload" class="mb-2">
-                    <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Payload</p>
+                    <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
                     <x-queue-insights::structured-payload :payload="$failedPayloadDecoded ?? $failedPayloadRaw"/>
                 </section>
             @endif
@@ -392,26 +392,26 @@
                 $chainTruncated = $chainTotal > $chainCap;
             @endphp
             <div class="p-4" x-show="view === 'chain'" x-cloak data-section="chain-detail">
-                <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">Chain ({{ $failedChain['remaining'] }} {{ $failedChain['remaining'] === 1 ? 'job' : 'jobs' }} after this one)</p>
-                <ol class="overflow-hidden rounded-xl ring-1 ring-gray-950/5 divide-y divide-gray-950/5">
+                <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Chain ({{ $failedChain['remaining'] }} {{ $failedChain['remaining'] === 1 ? 'job' : 'jobs' }} after this one)</p>
+                <ol class="overflow-hidden rounded-xl ring-1 ring-gray-950/5 dark:ring-white/10 divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($chainJobs as $i => $job)
                         <li>
                             <button type="button"
                                     x-on:click="chainIndex = {{ $i }}; view = 'chain-detail'"
                                     aria-label="View details for chained job {{ $i + 1 }}"
-                                    class="flex w-full items-start gap-3 bg-white p-4 text-left transition hover:bg-gray-50 focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500">
-                                <span aria-hidden="true" class="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-950/[0.04] text-[11px] font-semibold tabular-nums text-gray-600 ring-1 ring-inset ring-gray-950/10">{{ $i + 1 }}</span>
+                                    class="flex w-full items-start gap-3 bg-white dark:bg-gray-900 p-4 text-left transition hover:bg-gray-50 dark:hover:bg-gray-800 focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500">
+                                <span aria-hidden="true" class="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-950/[0.04] text-[11px] font-semibold tabular-nums text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">{{ $i + 1 }}</span>
                                 <div class="min-w-0 flex-1">
-                                    <p class="break-all font-mono text-sm text-gray-900">{{ $job['class'] }}</p>
+                                    <p class="break-all font-mono text-sm text-gray-900 dark:text-gray-100">{{ $job['class'] }}</p>
                                     <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                                         <x-queue-insights::meta-pill label="Connection" :value="$job['connection'] ?? null" size="sm"/>
                                         <x-queue-insights::meta-pill label="Queue" :value="$job['queue'] ?? null" size="sm"/>
                                         @if($i === 0)
-                                            <span class="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>
+                                            <span class="rounded-md bg-emerald-50 dark:bg-emerald-900/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">next</span>
                                         @endif
                                     </div>
                                 </div>
-                                <svg class="mt-1 size-3 shrink-0 text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                <svg class="mt-1 size-3 shrink-0 text-gray-400 dark:text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                     <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
                                 </svg>
                             </button>
@@ -419,11 +419,11 @@
                     @endforeach
                 </ol>
                 @if($chainTruncated)
-                    <p class="mt-2 text-[11px] text-amber-700">
+                    <p class="mt-2 text-[11px] text-amber-700 dark:text-amber-300">
                         Showing the first {{ $chainCap }} of {{ $chainTotal }} chained jobs. The remaining {{ $chainTotal - $chainCap }} are hidden to keep the modal responsive.
                     </p>
                 @endif
-                <p class="mt-3 text-[11px] text-gray-500">
+                <p class="mt-3 text-[11px] text-gray-500 dark:text-gray-300">
                     Chain context comes from the failed_jobs payload — the next link's own connection/queue overrides the parent chain defaults when set. These jobs haven't run yet, so individual run history isn't available here.
                 </p>
             </div>
@@ -437,14 +437,14 @@
             <div class="p-4" x-show="view === 'chain-detail'" x-cloak>
                 @foreach($chainJobs as $i => $job)
                     <div x-show="chainIndex === {{ $i }}" x-cloak>
-                        <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500">
+                        <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">
                             Chained job {{ $i + 1 }} of {{ $chainTotal }}
-                            @if($i === 0)<span class="ml-1 rounded-md bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">next</span>@endif
+                            @if($i === 0)<span class="ml-1 rounded-md bg-emerald-50 dark:bg-emerald-900/40 px-1.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">next</span>@endif
                         </p>
-                        <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10">
+                        <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
                             <dl>
-                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Class</dt>
-                                <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900">{{ $job['class'] }}</dd>
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
+                                <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $job['class'] }}</dd>
                             </dl>
                             <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                                 <x-queue-insights::meta-pill label="Connection" :value="$job['connection'] ?? null"/>
@@ -452,16 +452,16 @@
                             </div>
                         </div>
 
-                        <dl class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5">
-                            <div class="bg-white p-4">
-                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Position</dt>
-                                <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900">
-                                    {{ $i + 1 }} <span class="text-xs tabular-nums text-gray-400">of {{ $chainTotal }}</span>
+                        <dl class="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10">
+                            <div class="bg-white dark:bg-gray-900 p-4">
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Position</dt>
+                                <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
+                                    {{ $i + 1 }} <span class="text-xs tabular-nums text-gray-400 dark:text-gray-400">of {{ $chainTotal }}</span>
                                 </dd>
                             </div>
-                            <div class="bg-white p-4">
-                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400">Status</dt>
-                                <dd class="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700">
+                            <div class="bg-white dark:bg-gray-900 p-4">
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Status</dt>
+                                <dd class="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
                                     <span aria-hidden="true" class="inline-block size-1.5 rounded-full bg-gray-400"></span>
                                     not yet dispatched
                                 </dd>
@@ -477,17 +477,17 @@
                             $chainProps = is_array($job['properties'] ?? null) ? $job['properties'] : [];
                         @endphp
                         @if(count($chainProps) > 0)
-                            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5">
-                                <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Job instance</p>
+                            <div class="mt-3 rounded-lg bg-white dark:bg-gray-900 ring-1 ring-gray-950/5 dark:ring-white/10">
+                                <p class="border-b border-gray-950/5 dark:border-white/10 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job instance</p>
                                 <x-queue-insights::serialized-properties :properties="$chainProps"/>
                             </div>
                         @else
-                            <div class="mt-3 rounded-lg bg-gray-50 px-4 py-3 text-[11px] text-gray-500 ring-1 ring-inset ring-gray-950/5">
+                            <div class="mt-3 rounded-lg bg-gray-50 dark:bg-gray-800 px-4 py-3 text-[11px] text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/5 dark:ring-white/10">
                                 No constructor properties available for this chained job — either it carries no user-bound data, or its serialized body wasn't parseable (e.g. encrypted blob).
                             </div>
                         @endif
 
-                        <p class="mt-4 text-[11px] text-gray-500">
+                        <p class="mt-4 text-[11px] text-gray-500 dark:text-gray-300">
                             @if($i === 0)
                                 This job runs first once the failed parent is retried — Laravel re-dispatches the chain head with the remaining {{ $chainTotal - 1 }} {{ $chainTotal === 2 ? 'link' : 'links' }} attached.
                             @else

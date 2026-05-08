@@ -5,7 +5,7 @@
 <button type="button"
         x-on:click.stop="$wire.openBatch(@js($batchId))"
         x-on:keydown.enter.stop x-on:keydown.space.stop
-        class="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[10px] font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20 hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-500"
+        class="inline-flex items-center gap-1 rounded bg-indigo-50 dark:bg-indigo-900/40 px-1.5 py-0.5 font-mono text-[10px] font-medium text-indigo-700 dark:text-indigo-300 ring-1 ring-inset ring-indigo-600/20 dark:ring-indigo-400/30 hover:bg-indigo-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-indigo-500"
         title="Open batch {{ $batchId }}"
         aria-label="Open batch {{ $batchId }}">
     <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">

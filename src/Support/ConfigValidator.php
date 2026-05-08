@@ -334,4 +334,31 @@ final class ConfigValidator
             }
         }
     }
+
+    /**
+     * Validate the dashboard block — currently only the `theme.enabled`
+     * kill switch (the rest of the block is loose by design so hosts
+     * can override middleware / path / polling without ceremony).
+     *
+     * @param  array<array-key, mixed>  $dashboard
+     */
+    public static function validateDashboard(array $dashboard): void
+    {
+        $theme = $dashboard['theme'] ?? null;
+        if ($theme === null) {
+            return;
+        }
+
+        if (! is_array($theme)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.dashboard.theme must be an array.'
+            );
+        }
+
+        if (array_key_exists('enabled', $theme) && ! is_bool($theme['enabled'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.dashboard.theme.enabled must be a boolean.'
+            );
+        }
+    }
 }

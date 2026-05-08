@@ -14,7 +14,7 @@
 
 <li @class([
         "grid grid-cols-12 items-center gap-4 px-4 {$py}",
-        'cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
+        'cursor-pointer transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 focus-visible:bg-emerald-50/40 dark:focus-visible:bg-emerald-900/30 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500' => $clickable,
     ])
     @if($clickable && $wireAction !== null)
         role="button"

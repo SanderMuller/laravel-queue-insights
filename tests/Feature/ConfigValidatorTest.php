@@ -389,3 +389,27 @@ it('rejects a non-array prometheus.middleware', function (): void {
     expect(fn () => ConfigValidator::validatePrometheus(['middleware' => 'foo']))
         ->toThrow(QueueInsightsConfigException::class, 'middleware must be null or an array');
 });
+
+it('accepts a dashboard block without a theme key', function (): void {
+    expect(fn () => ConfigValidator::validateDashboard([]))->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateDashboard(['enabled' => true, 'polling' => false]))->not->toThrow(Throwable::class);
+});
+
+it('accepts a well-formed dashboard.theme block', function (): void {
+    expect(fn () => ConfigValidator::validateDashboard(['theme' => ['enabled' => true]]))
+        ->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateDashboard(['theme' => ['enabled' => false]]))->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateDashboard(['theme' => []]))->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-array dashboard.theme', function (): void {
+    expect(fn () => ConfigValidator::validateDashboard(['theme' => 'on']))
+        ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme must be an array');
+});
+
+it('rejects a non-bool dashboard.theme.enabled', function (): void {
+    expect(fn () => ConfigValidator::validateDashboard(['theme' => ['enabled' => 'yes']]))
+        ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme.enabled must be a boolean')
+        ->and(fn () => ConfigValidator::validateDashboard(['theme' => ['enabled' => 1]]))
+        ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme.enabled must be a boolean');
+});

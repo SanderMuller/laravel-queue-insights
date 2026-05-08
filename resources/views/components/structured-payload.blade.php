@@ -89,19 +89,19 @@
     <div class="space-y-3">
         {{-- Job config --}}
         @if(count($presentConfig) > 0)
-            <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
-                <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Job config</p>
-                <dl class="divide-y divide-gray-950/5">
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <p class="border-b border-gray-950/5 px-4 py-2 dark:border-white/10 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job config</p>
+                <dl class="divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($presentConfig as $k)
                         <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs">
-                            <dt class="font-mono font-medium text-gray-600">
+                            <dt class="font-mono font-medium text-gray-600 dark:text-gray-300">
                                 @if(isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
                                 @endif
                             </dt>
-                            <dd class="break-all font-mono {{ $body[$k] === null ? 'text-gray-400' : 'text-gray-900' }}">{{ $renderConfigValue($k, $body[$k]) }}</dd>
+                            <dd class="break-all font-mono {{ $body[$k] === null ? 'text-gray-400 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100' }}">{{ $renderConfigValue($k, $body[$k]) }}</dd>
                         </div>
                     @endforeach
                 </dl>
@@ -110,26 +110,26 @@
 
         {{-- Execution state --}}
         @if(count($presentExecution) > 0)
-            <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
-                <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Execution</p>
-                <dl class="divide-y divide-gray-950/5">
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <p class="border-b border-gray-950/5 px-4 py-2 dark:border-white/10 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Execution</p>
+                <dl class="divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($presentExecution as $k)
                         @php
                             $v = $body[$k];
                             $ts = in_array($k, ['createdAt', 'pushedAt'], true) ? $renderTimestamp($v) : null;
                         @endphp
                         <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs">
-                            <dt class="font-mono font-medium text-gray-600">
+                            <dt class="font-mono font-medium text-gray-600 dark:text-gray-300">
                                 @if(isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
                                 @endif
                             </dt>
-                            <dd class="break-all font-mono {{ $v === null ? 'text-gray-400' : 'text-gray-900' }}">
+                            <dd class="break-all font-mono {{ $v === null ? 'text-gray-400 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100' }}">
                                 @if($ts !== null)
                                     <x-queue-insights::qi-time :at="$ts"/>
-                                    <span class="ml-1 text-[10px] text-gray-400">({{ $v }})</span>
+                                    <span class="ml-1 text-[10px] text-gray-400 dark:text-gray-400">({{ $v }})</span>
                                 @else
                                     {{ $v === null ? 'null' : (is_scalar($v) ? (string) $v : (string) json_encode($v, JSON_UNESCAPED_SLASHES)) }}
                                 @endif
@@ -142,11 +142,11 @@
 
         {{-- Tags --}}
         @if(count($tags) > 0)
-            <div class="rounded-lg bg-white px-4 py-3 ring-1 ring-gray-950/5">
-                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Tags</p>
+            <div class="rounded-lg bg-white px-4 py-3 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Tags</p>
                 <ul role="list" class="flex flex-wrap gap-1.5">
                     @foreach($tags as $tag)
-                        <li class="rounded bg-gray-950/5 px-2 py-0.5 font-mono text-[11px] text-gray-700 ring-1 ring-inset ring-gray-950/5">{{ is_scalar($tag) ? (string) $tag : (string) json_encode($tag, JSON_UNESCAPED_SLASHES) }}</li>
+                        <li class="rounded bg-gray-950/5 px-2 py-0.5 font-mono text-[11px] text-gray-700 ring-1 ring-inset ring-gray-950/5 dark:bg-white/10 dark:text-gray-200 dark:ring-white/10">{{ is_scalar($tag) ? (string) $tag : (string) json_encode($tag, JSON_UNESCAPED_SLASHES) }}</li>
                     @endforeach
                 </ul>
             </div>
@@ -156,20 +156,20 @@
             an older sanitizer config (max_field_bytes hit). New stream entries written
             after the sanitizer fix preserve serialized blobs intact. --}}
         @if($instanceTruncated && $instanceData === null)
-            <div class="rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-900 ring-1 ring-inset ring-amber-600/20">
+            <div class="rounded-lg bg-amber-50 px-4 py-3 text-xs text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-400/30">
                 <p class="font-medium">Job instance unavailable</p>
-                <p class="mt-1 text-amber-800">The serialized command was truncated when this entry was captured (older sanitizer config). New entries will surface the full instance data.</p>
+                <p class="mt-1 text-amber-800 dark:text-amber-300">The serialized command was truncated when this entry was captured (older sanitizer config). New entries will surface the full instance data.</p>
             </div>
         @endif
 
         {{-- Job instance data — extracted properties from the serialized command.
             Visible by default since this is usually what you actually want to see. --}}
         @if($instanceData !== null && count($instanceData['properties']) > 0)
-            <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
-                <div class="flex items-center justify-between border-b border-gray-950/5 px-4 py-2">
-                    <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Job instance</p>
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <div class="flex items-center justify-between border-b border-gray-950/5 px-4 py-2 dark:border-white/10">
+                    <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job instance</p>
                     @if($instanceData['class'] !== null)
-                        <p class="break-all font-mono text-[11px] text-gray-500">{{ $instanceData['class'] }}</p>
+                        <p class="break-all font-mono text-[11px] text-gray-500 dark:text-gray-300">{{ $instanceData['class'] }}</p>
                     @endif
                 </div>
                 <x-queue-insights::serialized-properties :properties="$instanceData['properties']"/>
@@ -178,22 +178,22 @@
 
         {{-- Raw serialized command — collapsed by default. Only useful for low-level debug. --}}
         @if(is_string($dataCommand) && $dataCommand !== '')
-            <div class="rounded-lg bg-white ring-1 ring-gray-950/5" x-data="{ expanded: false }">
-                <div class="flex items-center justify-between border-b border-gray-950/5 px-4 py-2">
-                    <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500">Serialized command</p>
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10" x-data="{ expanded: false }">
+                <div class="flex items-center justify-between border-b border-gray-950/5 px-4 py-2 dark:border-white/10">
+                    <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Serialized command</p>
                     <button type="button"
                             @click="expanded = ! expanded"
-                            class="rounded bg-gray-950/5 px-2 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                            class="rounded bg-gray-950/5 px-2 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20">
                         <span x-show="! expanded">show</span>
                         <span x-show="expanded" x-cloak>hide</span>
                     </button>
                 </div>
                 <div class="px-4 py-2 text-xs">
                     @if($dataCommandName)
-                        <p class="font-mono text-gray-600">{{ $dataCommandName }}</p>
+                        <p class="font-mono text-gray-600 dark:text-gray-300">{{ $dataCommandName }}</p>
                     @endif
-                    <p class="mt-0.5 text-[10px] text-gray-500 tabular-nums">PHP-serialized object, {{ number_format(strlen($dataCommand)) }} bytes</p>
-                    <pre x-show="expanded" x-cloak class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-gray-50 p-2 font-mono text-[11px] text-gray-800 ring-1 ring-inset ring-gray-950/10">{{ $dataCommand }}</pre>
+                    <p class="mt-0.5 text-[10px] text-gray-500 tabular-nums dark:text-gray-300">PHP-serialized object, {{ number_format(strlen($dataCommand)) }} bytes</p>
+                    <pre x-show="expanded" x-cloak class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-gray-50 p-2 font-mono text-[11px] text-gray-800 ring-1 ring-inset ring-gray-950/10 dark:bg-white/5 dark:text-gray-200 dark:ring-white/10">{{ $dataCommand }}</pre>
                 </div>
             </div>
         @endif
@@ -203,9 +203,9 @@
             into-tree UX Sentry uses for "Additional Data". Scalars stay
             inline with truncate-and-expand for long strings. --}}
         @if(count($otherKeys) > 0)
-            <div class="rounded-lg bg-white ring-1 ring-gray-950/5">
-                <p class="border-b border-gray-950/5 px-4 py-2 text-[10px] font-medium uppercase tracking-wider text-gray-500">Other fields</p>
-                <dl class="divide-y divide-gray-950/5">
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+                <p class="border-b border-gray-950/5 px-4 py-2 dark:border-white/10 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Other fields</p>
+                <dl class="divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($otherKeys as $k)
                         @php
                             $v = $body[$k];
@@ -215,21 +215,21 @@
                         @endphp
                         <div class="@if(! $isContainer) grid grid-cols-[max-content_1fr] gap-x-4 @endif px-4 py-2 text-xs"
                              @if($truncated) x-data="{ expanded: false }" @endif>
-                            <dt class="font-mono font-medium text-gray-600 {{ $isContainer ? 'mb-1 block' : '' }}">
+                            <dt class="font-mono font-medium text-gray-600 dark:text-gray-300 {{ $isContainer ? 'mb-1 block' : '' }}">
                                 @if(isset($fieldHelp[$k]))
                                     <abbr title="{{ $fieldHelp[$k] }}" class="cursor-help decoration-gray-300 decoration-dotted underline-offset-2 [text-decoration-line:underline]">{{ $k }}</abbr>
                                 @else
                                     {{ $k }}
                                 @endif
                             </dt>
-                            <dd class="{{ $isContainer ? '-mx-4 mt-1 border-t border-gray-950/5 bg-gray-950/[0.02]' : 'break-all font-mono ' . ($v === null ? 'text-gray-400' : 'text-gray-900') }}">
+                            <dd class="{{ $isContainer ? '-mx-4 mt-1 border-t border-gray-950/5 bg-gray-950/[0.02] dark:border-white/10 dark:bg-white/5' : 'break-all font-mono ' . ($v === null ? 'text-gray-400 dark:text-gray-400' : 'text-gray-900 dark:text-gray-100') }}">
                                 @if($isContainer)
                                     <x-queue-insights::nested-data :data="$v"/>
                                 @elseif($truncated)
                                     <span x-show="! expanded">{{ substr($rendered, 0, 200) }}…</span>
                                     <span x-show="expanded" x-cloak>{{ $rendered }}</span>
                                     <button type="button" @click="expanded = ! expanded"
-                                            class="ml-1 rounded bg-gray-950/5 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10">
+                                            class="ml-1 rounded bg-gray-950/5 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20">
                                         <span x-show="! expanded">expand</span>
                                         <span x-show="expanded" x-cloak>collapse</span>
                                     </button>
@@ -244,8 +244,8 @@
         @endif
     </div>
 @elseif(is_string($body) && $body !== '')
-    <div class="rounded-lg bg-white p-4 ring-1 ring-gray-950/5">
-        <p class="mb-2 text-xs text-gray-500">Raw body (not JSON-decodable):</p>
-        <pre class="whitespace-pre-wrap break-all font-mono text-xs text-gray-900">{{ $body }}</pre>
+    <div class="rounded-lg bg-white p-4 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+        <p class="mb-2 text-xs text-gray-500 dark:text-gray-300">Raw body (not JSON-decodable):</p>
+        <pre class="whitespace-pre-wrap break-all font-mono text-xs text-gray-900 dark:text-gray-100">{{ $body }}</pre>
     </div>
 @endif
