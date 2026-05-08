@@ -4,6 +4,42 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.12.0 - 2026-05-08
+
+**Scheduler observability** — capture, dashboard panel, and missed/hung detection for `Illuminate\Console\Events\Scheduled*`. Off by default; existing hosts opt in via one env var. Plus a one-line breaking change for hosts on SQS — `aws/aws-sdk-php` is no longer a hard `require`.
+
+#### Highlights
+
+- **Scheduled-task capture** — the package now listens on `ScheduledTaskStarting` / `Finished` / `Failed` / `Skipped` / `BackgroundTaskFinished` and records per-task definition snapshots (cron, command summary, `runInBackground`, `withoutOverlapping`, `onOneServer`) plus per-run records (start, finish, exit code, runtime, host, captured output). Output capture is three-mode (`off` / `metadata` / `full`) mirroring the existing job-payload capture knobs and short-circuits the host's bound `PayloadSanitizer` for the `full` path.
+- **Dashboard panel** — a new lazy-loaded **Schedule** tab on `/queue-insights` renders headline tiles (runs / failed / skipped / hung / missed / runtime p95 over 24h), an hourly throughput sparkline, a needs-attention vs. healthy task split, and a paginated recent-runs table with task / status / host / date filters. Click any task row to narrow recent runs to that task. Gated by an optional `viewScheduleInsights` ability — falls back to the existing `viewQueueInsights` when the ability isn't defined.
+- **Missed + hung detection** — `php artisan queue-insights:schedule:sweep` (run on its own short cron, e.g. `* * * * *`) walks each captured task and flags a run **missed** when the cron expression's next-fire passes without a `Starting` event landing inside `sweeper.drift_seconds` (default 90 s), or **hung** when no `Finished` / `Failed` arrives within `expected_runtime + grace_seconds` (default 300 s). Expected runtime is the rolling p95 from aggregates and falls back to grace alone for tasks with fewer than `hung.min_runs_for_p95` (default 10) recorded runs.
+- **Typed events** — `SanderMuller\QueueInsights\Events\ScheduledTaskMissed`, `ScheduledTaskHung`, and `ScheduledTaskFailed` always fire when detected, regardless of cooldown or alert-channel configuration. Cooldown gates **only** outbound notifications via the existing `QueueAlertNotification` plumbing — host listeners can route each event independently.
+- **Job-to-schedule attribution** — when scheduler observability and pending tracking are both enabled, jobs dispatched inside a scheduled task's run window are stamped with the active task key + run id on the per-uuid pending hash, so the dashboard can answer "which scheduled task dispatched this job" without an extra config surface.
+- **`queue-insights:schedule:list`** — read-only CLI table of every captured task with cron expression, command summary, and 24h counters. Useful for sanity-checking that capture is wired up before mounting the dashboard panel.
+
+#### Breaking changes
+
+- `aws/aws-sdk-php` moved from `require` to `suggest`. Hosts on Redis / database / sync queues drop ~15 MB of unused install footprint; hosts that snapshot at least one SQS connection must add the SDK to their own `composer.json` (`composer require aws/aws-sdk-php:^3.0`) or `queue-insights:snapshot` will fatal with `Class "Aws\Sqs\SqsClient" not found` on the first SQS tick. See [UPGRADING.md](UPGRADING.md) for the migration step and how to tell whether you're affected.
+
+#### Upgrade notes
+
+Scheduler observability is **off by default** — set `QUEUE_INSIGHTS_SCHEDULER_ENABLED=true` (and restart workers + php-fpm so the listener wiring picks up) to start capturing. Output capture defaults to `metadata` (exit code only); flip `QUEUE_INSIGHTS_SCHEDULER_CAPTURE=full` if you want stdout/stderr stored alongside each run, after auditing your `PayloadSanitizer` for the new surface.
+
+Hosts that previously ran `vendor:publish --tag=queue-insights-config` need to merge the new `scheduler` block into their published config — `mergeConfigFrom` is a shallow merge, so the package defaults are silently ignored for the missing key. Copy the block from `config/queue-insights.php` in the package source.
+
+Run the sweeper on its own short cron once capture is enabled, otherwise missed / hung runs go undetected:
+
+```php
+// app/Console/Kernel.php
+$schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
+```
+### What's Changed
+
+* chore(deps-dev): update predis/predis requirement from ^2.2 to ^2.2 || ^3.0 by @dependabot[bot] in https://github.com/SanderMuller/laravel-queue-insights/pull/7
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.11.0...0.12.0
+
 ## 0.11.0 - 2026-05-08
 
 Dashboard **dark mode** + a per-page dropdown for the Completed and Failed lists. Both default-on for new and existing installs; no breaking API changes.
@@ -201,6 +237,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
  ],
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -309,6 +346,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 ],
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -344,6 +382,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 ```
@@ -466,6 +505,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 ```
