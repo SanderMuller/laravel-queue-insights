@@ -7,6 +7,7 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageClaim;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
@@ -61,6 +62,7 @@ final class RecordJobQueued
             $this->writePendingTracking($redis, $event, $uuid, $payload);
             $this->writeBatchTracking($redis, $uuid, $payload, (string) $event->connectionName);
             $this->resolveChainLineage($event, $uuid, $payload);
+            $this->writeScheduleAttribution($redis, $uuid);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
                 'exception' => $throwable::class,
@@ -330,6 +332,49 @@ final class RecordJobQueued
             $parentUuid,
             Config::int('chain_lineage.lineage_ttl_seconds', 604800),
         );
+    }
+
+    /**
+     * Stamp the active scheduled-task frame onto this queued job's
+     * metadata so the dashboard can answer "which scheduled task
+     * dispatched this job?". No-op when nothing is on the stack
+     * (i.e. queued from an HTTP request, queue worker, tinker
+     * session, etc.) or when the package's pending-tracking is off
+     * (the per-uuid pending hash is the only stable join surface).
+     *
+     * Two writes per attribution:
+     *   - `qi:pending:{uuid}` HSET schedule_task_key + schedule_run_id
+     *   - `qi:sched:run-jobs:{runId}` ZADD (score=now, member=uuid)
+     *     so `ScheduleReader::jobsDispatchedDuring($runId)` is a
+     *     single ZRANGE.
+     */
+    private function writeScheduleAttribution(RedisConnection $redis, string $uuid): void
+    {
+        if (! Config::bool('scheduler.enabled', false)) {
+            return;
+        }
+
+        if (! Config::bool('pending.enabled', true)) {
+            return;
+        }
+
+        $frame = ScheduleContext::current();
+        if ($frame === null) {
+            return;
+        }
+
+        $hashKey = KeyPrefix::make("pending:{$uuid}");
+        $redis->command('hset', [$hashKey, 'schedule_task_key', $frame['task_key']]);
+        $redis->command('hset', [$hashKey, 'schedule_run_id', $frame['run_id']]);
+
+        $jobsKey = KeyPrefix::make("sched:run-jobs:{$frame['run_id']}");
+        $redis->command('zadd', [$jobsKey, Date::now()->getTimestamp(), $uuid]);
+        // Cap the per-run job index so a fan-out task (e.g. an importer
+        // queueing 100k jobs) can't grow the zset unbounded. Trim the
+        // oldest by score; the dashboard surfaces the most-recent slice.
+        $cap = Config::int('scheduler.retention.run_jobs_max', 5000);
+        $redis->command('zremrangebyrank', [$jobsKey, 0, -($cap + 1)]);
+        $redis->command('expire', [$jobsKey, Config::int('scheduler.retention.run_ttl_seconds', 604800)]);
     }
 
     /**

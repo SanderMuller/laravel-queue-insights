@@ -5,12 +5,14 @@ namespace Workbench\App\Providers;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
+use Override;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use Workbench\App\Http\Middleware\SeedPreviewState;
 use Workbench\App\Support\PreviewSeeder;
 
 final class WorkbenchServiceProvider extends ServiceProvider
 {
+    #[Override]
     public function register(): void
     {
         // Singleton so the seeded-once guard survives Livewire polling

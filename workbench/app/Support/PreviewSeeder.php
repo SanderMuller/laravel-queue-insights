@@ -3,8 +3,10 @@
 namespace Workbench\App\Support;
 
 use Carbon\Carbon;
+use GuzzleHttp\Exception\ConnectException;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schema;
@@ -50,7 +52,7 @@ final class PreviewSeeder
         self::applyConfig();
         $this->resetState();
 
-        $now = Carbon::now();
+        $now = Date::now();
         $redis = $this->redis();
 
         $this->seedSnapshotsLive($redis, $now);
@@ -64,6 +66,7 @@ final class PreviewSeeder
         $this->seedWaitSamples($redis, $now);
         $this->seedDurationSamples($redis);
         $this->seedChainLineage();
+        $this->seedScheduler($redis, $now);
 
         $this->seeded = true;
     }
@@ -121,6 +124,12 @@ final class PreviewSeeder
 
         // Backward-chain lineage on by default — the preview demonstrates it.
         config()->set('queue-insights.chain_lineage.enabled', true);
+
+        // Scheduler observability on — the preview seeds a realistic mix
+        // of tasks + runs so the Schedule tab is fully demo-able.
+        config()->set('queue-insights.scheduler.enabled', true);
+        config()->set('queue-insights.scheduler.alerts.enabled', true);
+        config()->set('queue-insights.scheduler.sweeper.enabled', false);  // suppress auto-registration during preview boots
 
         // Silenced-jobs feature dogfood — `PingThirdPartyVendor` is seeded
         // with a 45% failure rate (vs the next-noisiest class at 18%) so
@@ -260,12 +269,15 @@ LUA,
             if ($depth !== null) {
                 $redis->command('setex', [KeyPrefix::make("live:depth:{$connection}:{$key}"), $liveTtl, (string) $depth]);
             }
+
             if ($inflight !== null) {
                 $redis->command('setex', [KeyPrefix::make("live:inflight:{$connection}:{$key}"), $liveTtl, (string) $inflight]);
             }
+
             if ($delayed !== null) {
                 $redis->command('setex', [KeyPrefix::make("live:delayed:{$connection}:{$key}"), $liveTtl, (string) $delayed]);
             }
+
             if (is_string($error)) {
                 $redis->command('setex', [
                     KeyPrefix::make("snapshot:error:{$connection}:{$key}"),
@@ -273,11 +285,12 @@ LUA,
                     $error,
                 ]);
             }
+
             // backlog growth samples (used by the optional backlog_growing
             // alert; only the depth=450 mail queue gets points so the
             // alert can be opt-in toggled by the operator).
             if ($connection === 'redis' && $queue === 'mail' && is_int($depth)) {
-                for ($i = 9; $i >= 0; $i--) {
+                for ($i = 9; $i >= 0; --$i) {
                     $ts = $now->copy()->subSeconds($i * 60)->getTimestamp();
                     $sampleDepth = $depth - ($i * 30);
                     $redis->command('zadd', [
@@ -286,8 +299,10 @@ LUA,
                         "{$ts}:{$sampleDepth}",
                     ]);
                 }
+
                 $redis->command('expire', [KeyPrefix::make("samples:depth:{$connection}:{$key}"), 7200]);
             }
+
             // Stale flag mimics "snapshot ran a while ago" — the dashboard
             // shows a small "stale" badge per queue. We model it by keeping
             // the value but expiring soon (workbench polls fast).
@@ -323,7 +338,7 @@ LUA,
             // dashboard's bar chart renders. Varies by hour-of-day with a
             // sine-shaped business-hours peak so the chart shows a real
             // diurnal pattern instead of a single tall bar at "now".
-            $base = 30 + ((int) abs(crc32($class)) % 80);
+            $base = 30 + (abs(crc32($class)) % 80);
             $failureWeight = match ($class) {
                 'App\\Jobs\\PingThirdPartyVendor' => 0.45,
                 'App\\Jobs\\NotifyImportFinished' => 0.18,
@@ -337,7 +352,7 @@ LUA,
                 // Diurnal scaler: 0.3 at night → 1.0 at midday, plus
                 // class-specific phase offset so different classes peak
                 // at slightly different hours.
-                $phase = ((int) abs(crc32($class)) % 6) / 6.0; // 0..1
+                $phase = (abs(crc32($class)) % 6) / 6.0; // 0..1
                 $hourOfDay = ((int) $hour->format('G') + ($phase * 24)) % 24;
                 $diurnal = 0.3 + 0.7 * (sin(($hourOfDay - 6) / 24 * 2 * M_PI) + 1) / 2;
                 $processed = (int) round($base * $diurnal) + ($i % 5);
@@ -390,6 +405,7 @@ LUA,
             foreach ($durations as $ms) {
                 $redis->command('rpush', [$sampleKey, (string) $ms]);
             }
+
             $redis->command('expire', [$sampleKey, 2592000]);
         }
     }
@@ -503,7 +519,7 @@ LUA,
 
         // Filler rows so the completed list has multi-page content. No
         // chain / lineage on these so they don't pollute the demo flow.
-        for ($i = 1; $i <= 30; $i++) {
+        for ($i = 1; $i <= 30; ++$i) {
             $cls = ['App\\Jobs\\SendWelcomeEmail', 'App\\Jobs\\GenerateReport', 'App\\Jobs\\AuditCustomerSync'][$i % 3];
             $row = [
                 'class' => $cls,
@@ -829,6 +845,7 @@ LUA,
             $redis->command('rpush', [$uuidsKey, $uuid]);
             $redis->command('setex', [KeyPrefix::make("batch:uuid:{$uuid}"), $ttl, $batchId]);
         }
+
         $redis->command('expire', [$uuidsKey, $ttl]);
 
         // DB-side row — Laravel's BatchRepository::find() reads this.
@@ -870,8 +887,9 @@ LUA,
                 $uuid = "preview-wait-{$connection}-{$queueKey}-{$i}";
                 $redis->command('setex', [KeyPrefix::make("wait:{$uuid}"), 604800, (string) $waitMs]);
                 $redis->command('zadd', [$waitKey, $now->copy()->subSeconds($i)->getTimestamp(), $uuid]);
-                $i++;
+                ++$i;
             }
+
             $redis->command('expire', [$waitKey, 604800]);
         }
     }
@@ -929,11 +947,13 @@ LUA,
         foreach ($fields as $k => $v) {
             $clean[$k] = (string) $v;
         }
+
         $flat = [];
         foreach ($clean as $k => $v) {
             $flat[] = $k;
             $flat[] = $v;
         }
+
         $result = RedisEval::exec(
             $redis,
             "return redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1], '*', unpack(ARGV, 2))",
@@ -975,9 +995,11 @@ LUA,
         if ($state !== null) {
             $fields['state'] = $state;
         }
-        if ($startedAt !== null) {
+
+        if ($startedAt instanceof Carbon) {
             $fields['started_at'] = (string) $startedAt->getTimestamp();
         }
+
         if ($parentUuid !== null) {
             $fields['parent_uuid'] = $parentUuid;
         }
@@ -985,6 +1007,7 @@ LUA,
         foreach ($fields as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
         }
+
         $redis->command('expire', [$hashKey, $ttl]);
 
         // In production, `RecordJobProcessing::markInFlight` ZREMs the
@@ -996,6 +1019,409 @@ LUA,
             $redis->command('zadd', [$zsetKey, $availableAt->getTimestamp(), $uuid]);
             $redis->command('expire', [$zsetKey, $ttl]);
         }
+    }
+
+    /**
+     * Seed the scheduler subsystem with a realistic mix of tasks + runs.
+     * Mirrors what `ScheduleSnapshotter` + the five `RecordScheduled*`
+     * listeners + the sweeper would write in production. Drives the
+     * Schedule dashboard tab, the headline tiles, the per-task
+     * needs-attention/healthy split, and the queue↔schedule attribution
+     * `↗ Schedule` chip.
+     *
+     * Tasks (with their demo-state):
+     *   - SyncCustomers (every 5 min)        — healthy, p95 ~1.2s
+     *   - GenerateInvoices (daily)           — healthy, longer runtime
+     *   - PruneCache (every minute)          — healthy, very fast
+     *   - NightlyBackup (daily, background)  — NEEDS ATTENTION (1 hung)
+     *   - SyncStripeCustomers (every 10 min) — NEEDS ATTENTION (recent failed run)
+     *   - closure@routes/console.php:42      — healthy unnamed closure
+     */
+    private function seedScheduler(RedisConnection $redis, Carbon $now): void
+    {
+        $tasks = $this->schedulerPreviewTasks();
+
+        $this->seedSchedulerSnapshot($redis, $tasks, $now);
+        $this->seedSchedulerAggregates($redis, $tasks, $now);
+        $this->seedSchedulerCounters($redis, $tasks, $now);
+        $this->seedSchedulerRuns($redis, $tasks, $now);
+        $this->seedSchedulerInFlightAndHung($redis, $tasks, $now);
+        $this->seedSchedulerJobAttribution($redis, $tasks, $now);
+    }
+
+    /**
+     * @return list<array{
+     *   key: string,
+     *   description: string,
+     *   command: string,
+     *   expression: string,
+     *   type: string,
+     *   runInBackground: bool,
+     *   onOneServer: bool,
+     *   evenInMaintenanceMode: bool,
+     *   withoutOverlapping: bool,
+     *   mutexName: string,
+     *   p95_ms: int,
+     *   failure_rate: float,
+     *   skip_rate: float,
+     *   demo_failing_first_run: bool,
+     *   demo_hung: bool,
+     *   demo_in_flight: bool,
+     *   demo_skipped_run: bool,
+     *   demo_attribution_source: bool,
+     * }>
+     */
+    private function schedulerPreviewTasks(): array
+    {
+        // demo-state flags (right of `skip_rate`):
+        //   failing | hung | in_flight | skipped_run | attribution_source
+        $defs = [
+            ['App\\Console\\Commands\\SyncCustomers', '*/5 * * * *', 'command', false, false, true, 1200, 0.02, 0.0, false, false, true, false, true],
+            ['App\\Console\\Commands\\GenerateInvoices', '0 1 * * *', 'command', false, true, true, 18400, 0.0, 0.0, false, false, false, false, false],
+            ['App\\Console\\Commands\\PruneCache', '* * * * *', 'command', false, false, true, 95, 0.0, 0.0, false, false, false, false, false],
+            ['App\\Console\\Commands\\NightlyBackup', '0 2 * * *', 'command', true, true, false, 240000, 0.0, 0.0, false, true, false, false, false],
+            ['App\\Console\\Commands\\SyncStripeCustomers', '*/10 * * * *', 'command', false, false, true, 4200, 0.18, 0.05, true, false, false, false, false],
+            ['closure@routes/console.php:42', '0 */6 * * *', 'closure', false, false, false, 380, 0.0, 0.12, false, false, false, true, false],
+        ];
+
+        $out = [];
+        foreach ($defs as [$desc, $expr, $type, $bg, $oneServer, $woOverlap, $p95, $failRate, $skipRate, $failing, $hung, $inFlight, $skippedRun, $attribution]) {
+            $mutex = 'framework/schedule-' . hash('sha256', $expr . $desc);
+            $out[] = [
+                'key' => hash('sha256', $mutex),
+                'description' => $desc,
+                'command' => $type === 'closure' ? 'closure' : "'php' 'artisan' " . $desc,
+                'expression' => $expr,
+                'type' => $type,
+                'runInBackground' => $bg,
+                'onOneServer' => $oneServer,
+                'evenInMaintenanceMode' => false,
+                'withoutOverlapping' => $woOverlap,
+                'mutexName' => $mutex,
+                'p95_ms' => $p95,
+                'failure_rate' => $failRate,
+                'skip_rate' => $skipRate,
+                'demo_failing_first_run' => $failing,
+                'demo_hung' => $hung,
+                'demo_in_flight' => $inFlight,
+                'demo_skipped_run' => $skippedRun,
+                'demo_attribution_source' => $attribution,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $tasks
+     */
+    private function seedSchedulerSnapshot(RedisConnection $redis, array $tasks, Carbon $now): void
+    {
+        $tasksKey = KeyPrefix::make('sched:tasks');
+        $orderKey = KeyPrefix::make('sched:tasks:order');
+
+        $summaries = [];
+        foreach ($tasks as $task) {
+            $summary = [
+                'description' => $task['description'],
+                'command' => $task['command'],
+                'expression' => $task['expression'],
+                'timezone' => 'UTC',
+                'runInBackground' => $task['runInBackground'],
+                'onOneServer' => $task['onOneServer'],
+                'evenInMaintenanceMode' => $task['evenInMaintenanceMode'],
+                'withoutOverlapping' => $task['withoutOverlapping'],
+                'mutexName' => $task['mutexName'],
+                'type' => $task['type'],
+            ];
+            $summaries[$task['key']] = $summary;
+
+            $redis->command('hset', [$tasksKey, $task['key'], (string) json_encode($summary)]);
+            $redis->command('rpush', [$orderKey, $task['key']]);
+        }
+
+        $redis->command('set', [
+            KeyPrefix::make('sched:snapshot:hash'),
+            hash('sha256', (string) json_encode($summaries)),
+        ]);
+        $redis->command('set', [
+            KeyPrefix::make('sched:snapshot:at'),
+            (string) $now->getTimestampMs(),
+        ]);
+    }
+
+    /**
+     * 24h of hourly aggregate buckets + runtime samples. Drives the
+     * sparkline + the per-task p95.
+     *
+     * @param  list<array<string, mixed>>  $tasks
+     */
+    private function seedSchedulerAggregates(RedisConnection $redis, array $tasks, Carbon $now): void
+    {
+        $aggTtl = 192 * 3600;
+
+        foreach ($tasks as $task) {
+            $key = $task['key'];
+            // Approximate fires-per-hour from the cron expression. Good
+            // enough for a demo — exact value isn't important.
+            $firesPerHour = match ($task['expression']) {
+                '* * * * *' => 60,
+                '*/5 * * * *' => 12,
+                '*/10 * * * *' => 6,
+                '0 */6 * * *' => 1,
+                '0 1 * * *', '0 2 * * *' => 1,
+                default => 4,
+            };
+
+            for ($i = 23; $i >= 0; --$i) {
+                $hour = $now->copy()->utc()->subHours($i)->startOfHour();
+                $bucket = $hour->format('YmdH');
+                $aggKey = KeyPrefix::make("sched:agg:{$key}:{$bucket}");
+                $samplesKey = KeyPrefix::make("sched:samples:{$key}:{$bucket}");
+
+                $diurnal = 0.4 + 0.6 * (sin(((int) $hour->format('G') - 6) / 24 * 2 * M_PI) + 1) / 2;
+                $totalFires = max(1, (int) round($firesPerHour * $diurnal));
+                $failed = (int) round($totalFires * $task['failure_rate']);
+                $success = max(0, $totalFires - $failed);
+
+                $p95 = (int) $task['p95_ms'];
+                $runtimeSum = $totalFires * (int) round($p95 * 0.65);
+
+                $redis->command('hset', [$aggKey, 'success_count', (string) $success]);
+                if ($failed > 0) {
+                    $redis->command('hset', [$aggKey, 'failed_count', (string) $failed]);
+                }
+
+                $redis->command('hset', [$aggKey, 'runtime_sum_ms', (string) $runtimeSum]);
+                $redis->command('expire', [$aggKey, $aggTtl]);
+
+                // Runtime samples — use a small spread around p95 so the
+                // computed percentile lands close to the configured value.
+                for ($j = 0; $j < min(20, $totalFires); ++$j) {
+                    $variance = ($j - 10) * 30;
+                    $redis->command('rpush', [$samplesKey, (string) max(10, $p95 + $variance)]);
+                }
+
+                $redis->command('expire', [$samplesKey, $aggTtl]);
+            }
+        }
+    }
+
+    /**
+     * Lifetime counters (no TTL). Drives last-run/last-failed tooltips +
+     * needs-attention/healthy split.
+     *
+     * @param  list<array<string, mixed>>  $tasks
+     */
+    private function seedSchedulerCounters(RedisConnection $redis, array $tasks, Carbon $now): void
+    {
+        foreach ($tasks as $task) {
+            $key = $task['key'];
+            $countersKey = KeyPrefix::make("sched:counters:{$key}");
+
+            $totalRuns = 1200 + abs(crc32($key)) % 800;
+            $totalFailed = (int) round($totalRuns * $task['failure_rate']);
+            $totalSkipped = (int) round($totalRuns * $task['skip_rate']);
+
+            $redis->command('hset', [$countersKey, 'total_runs', (string) $totalRuns]);
+            $redis->command('hset', [$countersKey, 'total_failed', (string) $totalFailed]);
+            $redis->command('hset', [$countersKey, 'total_skipped', (string) $totalSkipped]);
+            $redis->command('hset', [$countersKey, 'last_run_at', (string) $now->copy()->subSeconds((abs(crc32($key))) % 600)->getTimestampMs()]);
+            if ($totalFailed > 0) {
+                $redis->command('hset', [$countersKey, 'last_failed_at', (string) $now->copy()->subMinutes(8)->getTimestampMs()]);
+            }
+
+            $redis->command('hset', [$countersKey, 'last_success_at', (string) $now->copy()->subMinutes(2)->getTimestampMs()]);
+
+            // The NightlyBackup task is staged with one hung run below.
+            if ($task['description'] === 'App\\Console\\Commands\\NightlyBackup') {
+                $redis->command('hset', [$countersKey, 'total_hung', '1']);
+            }
+        }
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $tasks
+     */
+    private function seedSchedulerRuns(RedisConnection $redis, array $tasks, Carbon $now): void
+    {
+        $allKey = KeyPrefix::make('sched:runs:all');
+        $runTtl = 604800;
+        $hosts = ['web-01', 'web-02'];
+        $runsAdded = 0;
+
+        foreach ($tasks as $task) {
+            $key = $task['key'];
+            $runsKey = KeyPrefix::make("sched:runs:{$key}");
+            $isFailing = $task['demo_failing_first_run'];
+
+            // 5 historical runs per task, spread across the last 6 hours.
+            for ($i = 0; $i < 5; ++$i) {
+                $startedAt = $now->copy()->subMinutes(($i + 1) * 23 + (abs(crc32($key))) % 7);
+                $finishedAt = $startedAt->copy()->addMilliseconds((int) round((int) $task['p95_ms'] * 0.7));
+                $runId = "preview-run-{$key}-{$i}";
+
+                $statusForcedFail = ($isFailing && $i === 0);
+                $status = $statusForcedFail ? 'failed' : 'success';
+                $exitCode = $statusForcedFail ? 1 : 0;
+
+                $runHashKey = KeyPrefix::make("sched:run:{$key}:{$runId}");
+                $redis->command('hset', [$runHashKey, 'started_at', (string) $startedAt->getTimestampMs()]);
+                $redis->command('hset', [$runHashKey, 'finished_at', (string) $finishedAt->getTimestampMs()]);
+                $redis->command('hset', [$runHashKey, 'runtime_ms', (string) ((int) round((int) $task['p95_ms'] * 0.7))]);
+                $redis->command('hset', [$runHashKey, 'exit_code', (string) $exitCode]);
+                $redis->command('hset', [$runHashKey, 'status', $status]);
+                $redis->command('hset', [$runHashKey, 'host_id', $hosts[$runsAdded % 2]]);
+                $redis->command('hset', [$runHashKey, 'is_background', $task['runInBackground'] ? '1' : '0']);
+                if ($statusForcedFail) {
+                    $exception = json_encode([
+                        'class' => ConnectException::class,
+                        'message' => 'cURL error 28: Operation timed out after 5000 ms',
+                        'file' => '/preview/Stack.php',
+                        'line' => 42,
+                        'trace_tail' => "#0 /preview/Stack.php(42): preview()\n#1 {main}",
+                    ]);
+                    $redis->command('hset', [$runHashKey, 'exception', (string) $exception]);
+                }
+
+                $redis->command('expire', [$runHashKey, $runTtl]);
+
+                $redis->command('zadd', [$runsKey, $startedAt->getTimestampMs(), $runId]);
+                $redis->command('zadd', [$allKey, $startedAt->getTimestampMs(), "{$key}:{$runId}"]);
+                ++$runsAdded;
+            }
+
+            $redis->command('expire', [$runsKey, $runTtl]);
+
+            // Tasks flagged with `demo_skipped_run` get one synthetic
+            // skipped run so the dashboard's skip-reason path has data.
+            if ($task['demo_skipped_run']) {
+                $skippedAt = $now->copy()->subHours(7);
+                $skippedRunId = "preview-run-{$key}-skipped";
+                $skippedHashKey = KeyPrefix::make("sched:run:{$key}:{$skippedRunId}");
+                $redis->command('hset', [$skippedHashKey, 'started_at', (string) $skippedAt->getTimestampMs()]);
+                $redis->command('hset', [$skippedHashKey, 'finished_at', (string) $skippedAt->getTimestampMs()]);
+                $redis->command('hset', [$skippedHashKey, 'status', 'skipped']);
+                $redis->command('hset', [$skippedHashKey, 'skip_reason', 'between']);
+                $redis->command('hset', [$skippedHashKey, 'host_id', 'web-01']);
+                $redis->command('expire', [$skippedHashKey, $runTtl]);
+                $redis->command('zadd', [$runsKey, $skippedAt->getTimestampMs(), $skippedRunId]);
+                $redis->command('zadd', [$allKey, $skippedAt->getTimestampMs(), "{$key}:{$skippedRunId}"]);
+            }
+        }
+    }
+
+    /**
+     * One hung task (NightlyBackup) + one in-flight run (SyncCustomers)
+     * so the dashboard's running-tasks chrome and needs-attention split
+     * both render real cells.
+     *
+     * @param  list<array<string, mixed>>  $tasks
+     */
+    private function seedSchedulerInFlightAndHung(RedisConnection $redis, array $tasks, Carbon $now): void
+    {
+        $indexKey = KeyPrefix::make('sched:running-index');
+
+        foreach ($tasks as $task) {
+            $key = $task['key'];
+
+            if ($task['demo_hung']) {
+                // Hung run — running pointer present, expected_finish in
+                // past, status=hung on the run hash.
+                $runId = "preview-run-{$key}-hung";
+                $startedAt = $now->copy()->subHours(3);
+                $expectedFinishAt = $now->copy()->subHour();
+
+                $runHashKey = KeyPrefix::make("sched:run:{$key}:{$runId}");
+                $redis->command('hset', [$runHashKey, 'started_at', (string) $startedAt->getTimestampMs()]);
+                $redis->command('hset', [$runHashKey, 'status', 'hung']);
+                $redis->command('hset', [$runHashKey, 'host_id', 'web-02']);
+                $redis->command('hset', [$runHashKey, 'is_background', '1']);
+                $redis->command('expire', [$runHashKey, 604800]);
+
+                $runsKey = KeyPrefix::make("sched:runs:{$key}");
+                $redis->command('zadd', [$runsKey, $startedAt->getTimestampMs(), $runId]);
+                $redis->command('zadd', [
+                    KeyPrefix::make('sched:runs:all'),
+                    $startedAt->getTimestampMs(),
+                    "{$key}:{$runId}",
+                ]);
+
+                $runningKey = KeyPrefix::make("sched:running:{$key}");
+                $redis->command('hset', [$runningKey, 'run_id', $runId]);
+                $redis->command('hset', [$runningKey, 'started_at_ms', (string) $startedAt->getTimestampMs()]);
+                $redis->command('hset', [$runningKey, 'expected_finish_at_ms', (string) $expectedFinishAt->getTimestampMs()]);
+                $redis->command('zadd', [$indexKey, $expectedFinishAt->getTimestampMs(), $key]);
+            }
+
+            if ($task['demo_in_flight']) {
+                // Active in-flight run — `status=starting`, expected
+                // finish in the future. Surfaces as a live row.
+                $runId = "preview-run-{$key}-running";
+                $startedAt = $now->copy()->subSeconds(20);
+                $expectedFinishAt = $now->copy()->addSeconds(40);
+
+                $runHashKey = KeyPrefix::make("sched:run:{$key}:{$runId}");
+                $redis->command('hset', [$runHashKey, 'started_at', (string) $startedAt->getTimestampMs()]);
+                $redis->command('hset', [$runHashKey, 'status', 'starting']);
+                $redis->command('hset', [$runHashKey, 'host_id', 'web-01']);
+                $redis->command('hset', [$runHashKey, 'is_background', '0']);
+                $redis->command('expire', [$runHashKey, 604800]);
+
+                $runsKey = KeyPrefix::make("sched:runs:{$key}");
+                $redis->command('zadd', [$runsKey, $startedAt->getTimestampMs(), $runId]);
+                $redis->command('zadd', [
+                    KeyPrefix::make('sched:runs:all'),
+                    $startedAt->getTimestampMs(),
+                    "{$key}:{$runId}",
+                ]);
+
+                $runningKey = KeyPrefix::make("sched:running:{$key}");
+                $redis->command('hset', [$runningKey, 'run_id', $runId]);
+                $redis->command('hset', [$runningKey, 'started_at_ms', (string) $startedAt->getTimestampMs()]);
+                $redis->command('hset', [$runningKey, 'expected_finish_at_ms', (string) $expectedFinishAt->getTimestampMs()]);
+                $redis->command('zadd', [$indexKey, $expectedFinishAt->getTimestampMs(), $key]);
+            }
+        }
+    }
+
+    /**
+     * Demo the queue↔schedule attribution surface: pick the most recent
+     * SyncCustomers run, attach two seeded pending uuids to its
+     * `qi:sched:run-jobs:{runId}` zset, and stamp the schedule frame
+     * onto those pending hashes.
+     *
+     * @param  list<array<string, mixed>>  $tasks
+     */
+    private function seedSchedulerJobAttribution(RedisConnection $redis, array $tasks, Carbon $now): void
+    {
+        $sourceKey = null;
+        foreach ($tasks as $task) {
+            if ($task['demo_attribution_source']) {
+                $sourceKey = $task['key'];
+
+                break;
+            }
+        }
+
+        if ($sourceKey === null) {
+            return;
+        }
+
+        $runId = "preview-run-{$sourceKey}-0";
+        $jobsKey = KeyPrefix::make("sched:run-jobs:{$runId}");
+
+        // Attribute the existing seeded pending uuids to this run so the
+        // dashboard can demonstrate "jobs dispatched during this run".
+        foreach (['preview-pending-1', 'preview-inflight-1'] as $uuid) {
+            $redis->command('zadd', [$jobsKey, $now->getTimestamp(), $uuid]);
+
+            $hashKey = KeyPrefix::make("pending:{$uuid}");
+            $redis->command('hset', [$hashKey, 'schedule_task_key', $sourceKey]);
+            $redis->command('hset', [$hashKey, 'schedule_run_id', $runId]);
+        }
+
+        $redis->command('expire', [$jobsKey, 604800]);
     }
 
     private function redis(): RedisConnection

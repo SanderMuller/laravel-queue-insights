@@ -24,6 +24,10 @@
      */
 
     $hasPendingAny = ($pendingEnabled ?? false) && (count($inFlightRows) + count($pendingRows) + count($delayedRows)) > 0;
+    // Schedule observability is gated on the package config flag; the
+    // child Livewire panel handles the per-user `viewScheduleInsights`
+    // Gate at mount time so the tab button can stay route-side cheap.
+    $scheduleEnabled = \SanderMuller\QueueInsights\Support\Config::bool('scheduler.enabled', false);
 @endphp
 
 <div x-data="{ tab: 'overview' }"
@@ -35,9 +39,10 @@
             pending: {{ ($pendingEnabled ?? false) ? 'true' : 'false' }},
             batches: {{ ($batchesEnabled ?? false) ? 'true' : 'false' }},
             silenced: {{ (count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0 ? 'true' : 'false' }},
+            schedule: {{ $scheduleEnabled ? 'true' : 'false' }},
         };
         const apply = () => {
-            const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|classes|silenced|alerts)$/);
+            const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|classes|silenced|schedule|alerts)$/);
             if (! m) return;
             const target = m[1];
             tab = (target in conditional && ! conditional[target]) ? 'overview' : target;
@@ -65,6 +70,9 @@
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'classes', 'label' => 'Classes', 'badge' => count($classes)])
             @if((count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0)
                 @include('queue-insights::partials.tabs.tab-button', ['name' => 'silenced', 'label' => 'Silenced', 'badge' => count($silencedClasses) + count($silencedPatterns ?? [])])
+            @endif
+            @if($scheduleEnabled)
+                @include('queue-insights::partials.tabs.tab-button', ['name' => 'schedule', 'label' => 'Schedule', 'badge' => null])
             @endif
             @include('queue-insights::partials.tabs.tab-button', ['name' => 'alerts', 'label' => 'Alert rules', 'badge' => null])
         </nav>
@@ -98,6 +106,11 @@
     @if((count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0)
         <div x-show="tab==='silenced'" x-cloak>
             @include('queue-insights::partials.tabs.pane-silenced')
+        </div>
+    @endif
+    @if($scheduleEnabled)
+        <div x-show="tab==='schedule'" x-cloak>
+            <livewire:queue-insights-schedule-panel />
         </div>
     @endif
     <div x-show="tab==='alerts'" x-cloak>

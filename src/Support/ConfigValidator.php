@@ -336,6 +336,19 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the scheduler block. Type-checks the toggle, the capture
+     * mode, retention/hung/sweeper integers, and the heartbeat URL shape.
+     * Hard exception on misconfiguration matches the rest of the validator
+     * surface.
+     *
+     * @param  array<array-key, mixed>  $scheduler
+     */
+    public static function validateScheduler(array $scheduler): void
+    {
+        SchedulerConfigValidator::validate($scheduler);
+    }
+
+    /**
      * Validate the dashboard block — currently only the `theme.enabled`
      * kill switch (the rest of the block is loose by design so hosts
      * can override middleware / path / polling without ceremony).

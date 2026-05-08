@@ -2,6 +2,11 @@
 
 namespace SanderMuller\QueueInsights;
 
+use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
+use Illuminate\Console\Events\ScheduledTaskFailed;
+use Illuminate\Console\Events\ScheduledTaskFinished;
+use Illuminate\Console\Events\ScheduledTaskSkipped;
+use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
@@ -25,6 +30,8 @@ use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
 use SanderMuller\QueueInsights\Console\DefaultWorkerOutputStreams;
 use SanderMuller\QueueInsights\Console\DefaultWorkerProcessFactory;
 use SanderMuller\QueueInsights\Console\QueueInsightsPrometheusPushCommand;
+use SanderMuller\QueueInsights\Console\QueueInsightsScheduleListCommand;
+use SanderMuller\QueueInsights\Console\QueueInsightsScheduleSweepCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsSnapshotCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsWorkCommand;
 use SanderMuller\QueueInsights\Console\WorkerOutputStreams;
@@ -35,10 +42,16 @@ use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Http\Livewire\AlertRulesPanel;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
+use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
+use SanderMuller\QueueInsights\Listeners\RecordScheduledBackgroundTaskFinished;
+use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
+use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
+use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskSkipped;
+use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
 use SanderMuller\QueueInsights\Prometheus\ClassFilter as PrometheusClassFilter;
 use SanderMuller\QueueInsights\Prometheus\Collector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\AlertActiveCollector;
@@ -58,6 +71,7 @@ use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotErrorsCollector;
 use SanderMuller\QueueInsights\Prometheus\PrometheusAuthMiddleware;
 use SanderMuller\QueueInsights\Prometheus\Registry as PrometheusRegistry;
 use SanderMuller\QueueInsights\Prometheus\Renderer as PrometheusRenderer;
+use SanderMuller\QueueInsights\Scheduler\ScheduleSnapshotter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
@@ -182,6 +196,8 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 QueueInsightsSnapshotCommand::class,
                 QueueInsightsWorkCommand::class,
                 QueueInsightsPrometheusPushCommand::class,
+                QueueInsightsScheduleListCommand::class,
+                QueueInsightsScheduleSweepCommand::class,
             ]);
         }
 
@@ -222,6 +238,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateRetention($section($cfg, 'retention'));
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
         ConfigValidator::validateDashboard($section($cfg, 'dashboard'));
+        ConfigValidator::validateScheduler($section($cfg, 'scheduler'));
 
         // Silenced fails loud on a non-array shape rather than coercing
         // to `[]` like the other section validators — a `silenced =>
@@ -254,6 +271,54 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $this->registerSchedule();
         $this->registerDashboard();
         $this->registerPrometheus();
+        $this->registerSchedulerObservability($cfg);
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $cfg
+     */
+    private function registerSchedulerObservability(array $cfg): void
+    {
+        $scheduler = is_array($cfg['scheduler'] ?? null) ? $cfg['scheduler'] : [];
+        if (($scheduler['enabled'] ?? false) !== true) {
+            return;
+        }
+
+        $events = $this->app->make(Dispatcher::class);
+        if ($events instanceof Dispatcher) {
+            $events->listen(
+                ScheduledTaskStarting::class,
+                RecordScheduledTaskStarting::class,
+            );
+            $events->listen(
+                ScheduledTaskFinished::class,
+                RecordScheduledTaskFinished::class,
+            );
+            $events->listen(
+                ScheduledTaskFailed::class,
+                RecordScheduledTaskFailed::class,
+            );
+            $events->listen(
+                ScheduledTaskSkipped::class,
+                RecordScheduledTaskSkipped::class,
+            );
+            $events->listen(
+                ScheduledBackgroundTaskFinished::class,
+                RecordScheduledBackgroundTaskFinished::class,
+            );
+        }
+
+        // Rebuild the snapshot once every provider has registered its
+        // tasks. `app->booted` fires after register/boot finish on
+        // every provider in the stack, so `Schedule::events()` is fully
+        // populated by then.
+        $this->app->booted(function (): void {
+            if (! $this->app->bound(Schedule::class)) {
+                return;
+            }
+
+            $this->app->make(ScheduleSnapshotter::class)->rebuild();
+        });
     }
 
     private function registerDashboard(): void
@@ -273,6 +338,10 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         // it here keeps the parent dashboard's initial render free of the
         // panel's builder + 98-line blade pass.
         Livewire::component('queue-insights-alert-rules-panel', AlertRulesPanel::class);
+        // Schedule observability panel — also lazy. Renders empty body when
+        // `scheduler.enabled = false` so the tab strip can decide whether
+        // to surface the tab without paying for a full reader pass.
+        Livewire::component('queue-insights-schedule-panel', ScheduleInsightsPanel::class);
 
         $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
     }
@@ -304,6 +373,16 @@ final class QueueInsightsServiceProvider extends ServiceProvider
             $schedule->command('queue-insights:snapshot')
                 ->everyMinute()
                 ->withoutOverlapping();
+
+            if (Config::bool('scheduler.enabled', false) && Config::bool('scheduler.sweeper.enabled', true)) {
+                // `onOneServer` so multi-host installs don't double-flag a
+                // single missed/hung run; `withoutOverlapping` so a long
+                // sweep pass never stacks behind the next minute's tick.
+                $schedule->command('queue-insights:schedule:sweep')
+                    ->everyMinute()
+                    ->onOneServer()
+                    ->withoutOverlapping();
+            }
         });
     }
 

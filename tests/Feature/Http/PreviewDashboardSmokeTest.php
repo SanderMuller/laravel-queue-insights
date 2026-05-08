@@ -2,6 +2,8 @@
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
+use Livewire\Livewire;
+use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -60,6 +62,52 @@ it('PreviewSeeder hydrates the dashboard surface against real Redis state', func
     expect($svc->allInFlightJobs())->toHaveCount(2)
         ->and($svc->allPendingJobs())->toHaveCount(2)
         ->and($svc->allDelayedJobs())->toHaveCount(2);
+});
+
+it('seeds scheduler tasks + runs + counters so the Schedule tab is fully demo-able', function (): void {
+    resolve(PreviewSeeder::class)->seed();
+
+    $redis = Redis::connection('default');
+
+    // Six tasks land in the snapshot (5 commands + 1 closure).
+    expect($redis->command('llen', ['qmpreview:sched:tasks:order']))->toBe(6)
+        ->and($redis->command('hlen', ['qmpreview:sched:tasks']))->toBe(6);
+
+    // Snapshot meta written.
+    expect($redis->command('get', ['qmpreview:sched:snapshot:hash']))->toBeString()
+        ->and($redis->command('get', ['qmpreview:sched:snapshot:at']))->toBeString();
+
+    // Recent runs index has the exact seeded count: 5 historical per
+    // task × 6 tasks = 30, plus the closure's synthetic skipped run, the
+    // NightlyBackup hung run, and the SyncCustomers in-flight run = 33.
+    // Tightened from `>=30` so a regression that drops the
+    // skipped/hung/in-flight branches surfaces here instead of as a
+    // missing row in the running preview.
+    expect($redis->command('zcard', ['qmpreview:sched:runs:all']))->toBe(33);
+
+    // Running-index zset carries the in-flight + hung tasks.
+    expect($redis->command('zcard', ['qmpreview:sched:running-index']))->toBe(2);
+
+    // Queue↔schedule attribution: the existing `preview-pending-1` hash
+    // got the schedule frame stamped on it, and the run-jobs zset has
+    // the dispatched uuids.
+    expect($redis->command('hget', ['qmpreview:pending:preview-pending-1', 'schedule_run_id']))
+        ->toBeString()
+        ->toContain('preview-run-');
+});
+
+it('schedule panel hydrates against seeded preview state without error', function (): void {
+    resolve(PreviewSeeder::class)->seed();
+
+    Livewire::withoutLazyLoading();
+
+    Livewire::test(ScheduleInsightsPanel::class)
+        ->assertSee('Tasks')
+        ->assertSee('Recent runs')
+        ->assertSee('SyncCustomers')
+        ->assertSee('NightlyBackup')
+        ->assertSee('closure@routes/console.php:42')
+        ->assertSee('Hourly throughput');
 });
 
 it('seeded batches survive into Bus::findBatch / BatchReader::recentBatches', function (): void {

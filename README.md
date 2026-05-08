@@ -23,6 +23,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - [Ops runbook](#ops-runbook)
 - [Alerting](#alerting)
 - [Prometheus](#prometheus)
+- [Scheduler observability](#scheduler-observability)
 - [Testing](#testing)
 - [Changelog](#changelog)
 - [Contributing](#contributing)
@@ -49,6 +50,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, plus a `prometheus-push` command for short-lived workers.
+- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel, and ships a missed/hung sweeper plus typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
@@ -674,6 +676,67 @@ php artisan queue-insights:prometheus-push --accept-shared-grouping  # opt out o
 ```
 
 Exit codes mirror Symfony Console convention: `0` success, `1` Pushgateway HTTP failure, `2` config error (missing URL / unset instance without override).
+
+## Scheduler observability
+
+Enable via `QUEUE_INSIGHTS_SCHEDULER_ENABLED=true`. Off by default — existing queue-insights users opt in.
+
+When on, the package listens on Laravel's `Illuminate\Console\Events\Scheduled*` events and records:
+
+- **Per-task definition snapshots** — cron expression, command summary, queue connection, `runInBackground`, `withoutOverlapping`, `onOneServer`. Snapshot is hash-stable; a `php artisan schedule:list`-style render is rebuilt from these.
+- **Per-run records** — `Starting`, `Finished` (exit code + runtime), `Failed` (exception class + message), `Skipped` (reason), `BackgroundTaskFinished` (parent process exits before the child; the run is closed off the running pointer). Output capture is configurable: `off` / `metadata` (exit code only) / `full` (stdout/stderr after the bound `PayloadSanitizer` pass + byte cap).
+- **Counters + 24h aggregates** — per-task processed / failed / skipped / hung / missed counts and rolling p95 runtime.
+
+```bash
+# .env
+QUEUE_INSIGHTS_SCHEDULER_ENABLED=true
+QUEUE_INSIGHTS_SCHEDULER_CAPTURE=metadata   # off | metadata | full
+QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED=false
+```
+
+### Dashboard panel
+
+When the dashboard is mounted and `scheduler.dashboard.enabled = true`, a lazy-loaded **Scheduled tasks** panel renders below the queue panes. Empty-state copy guides first-time hosts; the panel hides itself when scheduler observability is disabled. Gate via the existing `viewQueueInsights` ability — there is no separate scheduler gate.
+
+### CLI
+
+```bash
+php artisan queue-insights:schedule:list    # snapshot table: cron, command, last run, counters
+php artisan queue-insights:schedule:sweep   # one-off sweep: flag missed + hung runs, dispatch events
+```
+
+Run the sweep on its own short cron (`* * * * *`) — the sweeper's own work is detect-only; it does not poll Redis on hot-path tick events.
+
+### Missed + hung detection
+
+A run is **missed** when the cron expression's next-fire timestamp passes without a `Starting` event landing inside `sweeper.drift_seconds` (default 90 s). A run is **hung** when no `Finished` / `Failed` event arrives within `expected_runtime + hung.grace_seconds` (default 300 s); expected runtime is the rolling p95 from aggregates and falls back to `grace_seconds` alone for tasks with fewer than `hung.min_runs_for_p95` (default 10) recorded runs.
+
+When `scheduler.alerts.enabled = true`, missed/hung/failed detections dispatch typed events with per-`(taskKey, rule)` cooldown (`scheduler.alerts.cooldown_seconds`, default 900). Events are always fired regardless of cooldown — cooldown gates **only** outbound notifications via the existing `QueueAlertNotification` plumbing.
+
+```text
+SanderMuller\QueueInsights\Events\ScheduledTaskMissed   { taskKey, task, expectedAtMs }
+SanderMuller\QueueInsights\Events\ScheduledTaskHung     { taskKey, runId, task?, … }
+SanderMuller\QueueInsights\Events\ScheduledTaskFailed   { taskKey, runId, task, … }
+```
+
+### External heartbeat
+
+In-process detection cannot catch a fully-dead scheduler (`schedule:run` not running at all). Configure an external pinger to hit a documented heartbeat URL on a schedule and alert if the URL goes silent:
+
+```php
+'scheduler' => [
+    'heartbeat' => [
+        'enabled' => true,
+        'url' => env('QUEUE_INSIGHTS_SCHEDULER_HEARTBEAT_URL'),
+    ],
+],
+```
+
+The host is responsible for the pinger (uptime monitor, healthchecks.io, …) — the package documents the contract but does not own the outbound side.
+
+### Retention
+
+Per-run records age out at `scheduler.retention.run_ttl_seconds` (default 7 d). The recent-runs index is capped at `runs_index_max` entries (default 10 000). Per-run job zsets (`qi:sched:run-jobs:{runId}`) are capped at `run_jobs_max` (default 5 000) so a fan-out task that dispatches a very large number of jobs cannot grow the index unbounded — oldest by score evicted first.
 
 ## Testing
 

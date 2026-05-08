@@ -310,6 +310,87 @@ return [
     ],
 
     /*
+     | Laravel scheduler observability. When enabled, the package listens on
+     | Illuminate\Console\Events\Scheduled* and records per-task definition
+     | snapshots, per-run records (start/finish/exit/runtime/host/output),
+     | per-task counters and rolling aggregates. Disabled by default —
+     | existing queue-insights users opt in.
+     |
+     | See internal/specs/cron-monitoring/ for the data plane + dashboard
+     | designs. Phase 1 (capture only) ships listeners + snapshot rebuild
+     | + a `queue-insights:schedule:list` CLI command. Phases 2-4 add the
+     | dashboard tab, missed/hung detection, and queue↔schedule correlation.
+     */
+    'scheduler' => [
+        'enabled' => env('QUEUE_INSIGHTS_SCHEDULER_ENABLED', false),
+
+        /*
+         | Per-run output capture. Same three-mode semantics as job payload
+         | capture above.
+         |   off      — no output captured. Exit code still recorded.
+         |   metadata — exit code only.
+         |   full     — exit code + stdout/stderr after PayloadSanitizer pass +
+         |              byte-cap.
+         */
+        'capture' => [
+            'output' => env('QUEUE_INSIGHTS_SCHEDULER_CAPTURE', 'metadata'),
+            'max_output_bytes' => 8192,
+        ],
+
+        'retention' => [
+            'run_ttl_seconds' => 604800,
+            'runs_index_max' => 10000,
+            'aggregate_ttl_hours' => 192,
+            // Cap the per-run jobs zset (`qi:sched:run-jobs:{runId}`) so
+            // a fan-out scheduled task that dispatches a very large
+            // number of jobs can't grow the index unbounded. Oldest by
+            // score evicted first.
+            'run_jobs_max' => 5000,
+        ],
+
+        /*
+         | Hung-task detection (Phase 3). A run is marked hung when no
+         | Finished/Failed event arrives within `expected_runtime + grace`.
+         | Expected runtime is the rolling p95 from aggregates; falls back
+         | to grace_seconds alone for tasks with fewer than min_runs_for_p95.
+         */
+        'hung' => [
+            'grace_seconds' => 300,
+            'min_runs_for_p95' => 10,
+        ],
+
+        /*
+         | Missed-run sweeper (Phase 3). A sweeper runs every sweep_seconds
+         | and compares each task's expected fires-since-last-sweep (from
+         | cron expression) to actual Starting events recorded.
+         */
+        'sweeper' => [
+            'enabled' => true,
+            'sweep_seconds' => 60,
+            'drift_seconds' => 90,
+        ],
+
+        /*
+         | External heartbeat URL the host hits from outside the app to
+         | detect total scheduler outage (in-process can't detect itself
+         | dead). Documented, not auto-configured.
+         */
+        'heartbeat' => [
+            'enabled' => false,
+            'url' => env('QUEUE_INSIGHTS_SCHEDULER_HEARTBEAT_URL'),
+        ],
+
+        'alerts' => [
+            'enabled' => env('QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED', false),
+            'cooldown_seconds' => 900,
+        ],
+
+        'dashboard' => [
+            'enabled' => true,
+        ],
+    ],
+
+    /*
      | Settings for the `queue-insights:work` multi-connection supervisor.
      |
      | shutdown_grace_seconds bounds the window a child has to drain after
