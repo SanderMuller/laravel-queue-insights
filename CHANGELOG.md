@@ -4,6 +4,28 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.11.0 - 2026-05-08
+
+Dashboard **dark mode** + a per-page dropdown for the Completed and Failed lists. Both default-on for new and existing installs; no breaking API changes.
+
+### Highlights
+
+- **Tri-state theme toggle** (sun / monitor / moon) in the dashboard header — `light`, `dark`, and `system` (follows `prefers-color-scheme`, default). The header itself stays Horizon-dark in both modes; the rest of the chrome — main background, hero, tabs, panes, modals, partials — flips between light and dark surfaces. WAI-ARIA APG segmented-control: `role="radiogroup"` with roving `tabindex` and arrow-key cycling.
+- **No flash of incorrect theme** on first paint — a synchronous inline script in `<head>` resolves the preference (`localStorage['qi-theme']`) before the body renders. Theme survives `wire:navigate` morphs without leaking listeners.
+- **Per-page dropdown** on the Completed and Failed tabs — operator-controlled choice between 10, 25, 50, and 100 rows per page, persisted via URL params (`cpp` / `fpp`) so deep-links round-trip the size. Default per-page is now **10** (was 25) to keep tab content above-fold-friendly on a laptop viewport.
+- **`Illuminate\Pagination\LengthAwarePaginator`-backed pagination** for both lists. The page-name parameters (`cp` / `fp`) and existing deep-link URLs are unchanged — bookmarks from 0.10 still resolve.
+- **Disable dark mode entirely** via `QUEUE_INSIGHTS_DARK_MODE=false` — the head script, color-scheme meta, and toggle component all skip emission and the dashboard reverts to its pre-feature always-light rendering.
+
+### Upgrade notes
+
+Hosts that previously ran `vendor:publish --tag=queue-insights-config` need to merge the new `dashboard.theme` block into their published config — `mergeConfigFrom` is a **shallow** merge, so the package default of `enabled => true` is silently ignored for the missing key. The env-var kill switch can't fire until the key exists. See [UPGRADING.md](UPGRADING.md) for the exact block to add.
+
+Hosts that published the layout view face a similar reconcile: the new layout adds an inline FOIT script + `tailwind.config` block + theme-toggle render that won't reach a frozen published copy. UPGRADING.md walks through the three reconcile paths (re-publish / manual diff merge / keep-as-is).
+
+Operators on system-dark hosts will land in dark mode immediately on upgrade — the default `system` mode follows `prefers-color-scheme`. Refresh runbooks/screenshots that assume the always-light look, or set the env var to opt out.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.10.0...0.11.0
+
 ## 0.10.0 - 2026-05-07
 
 `silenced_patterns` glob fallback for the existing silenced list, a new `<x-qi-time>` blade component, and a dashboard layout pass. No breaking changes; existing installs see no behavioural change until `silenced_patterns` is populated.
@@ -178,6 +200,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 +    ],
  ],
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -285,6 +308,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
     'ttl_seconds' => 604800,
 ],
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -320,6 +344,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.2.1...0.3.0
@@ -399,13 +424,21 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ### Added
 
 - **Live queue gauges** — per-queue depth / in-flight / delayed across SQS, Redis, database. 24 h history per metric. Stale-snapshot indicator + per-queue snapshot-error badge.
+  
 - **Per-job-class metrics** — last 24 h processed / failed / avg + p95 + max duration / last run. Click-through filter on Recent completed.
+  
 - **Throughput sparkline** — 24 h hourly rollup of processed + failed across all classes. Alpine hover tooltip (no 500 ms native-`<title>` lag), failed series colour-banded.
+  
 - **Recent completed + failed lists.** Completed is stream-backed, metadata-only by default; opt-in payload capture (`metadata` or `full`) with pluggable `PayloadSanitizer`. Failed reads `failed_jobs` table. Full-row click opens modal; keyboard-accessible (Enter / Space), focus-visible outlines.
+  
 - **Structured details modal** — identity hero (FQCN + connection + queue), metrics row, grouped raw-fields panel. JSON tab + Raw fields tab. Decoded `data.command` properties via safe `unserialize(allowed_classes: false)` — recursive Blade renderer with click-to-expand for nested objects. Capture-mode badge surfaces active retention level. Parsed stack-trace component (vendor frames toggleable) on failed modal. Copy buttons (bg flash + check swap) for stream id / UUID / stack trace / Markdown export of failed-job context (dynamic fence length so embedded triple-backticks don't break export).
+  
 - **Wait-time capture** — `JobQueued` listener decodes `payload.uuid`, stamps `pushed:{uuid}`; `JobProcessing` computes `wait_ms`. Per-queue p50 / p95 (rolling 1000 most-recent samples; renders `—` until 10 samples). Per-job Wait line in modals next to Duration. 7-day clock-skew guard rejects implausible samples.
+  
 - **Failed-jobs filter** — Livewire filter row (collapsed default) over connection / queue / class FQCN / date range. URL-persistent via `#[Url]`. Class filter is anchored prefix substring on `payload.displayName`, wrapped in `LOWER(...)` for cross-database parity (MySQL / Postgres / SQLite).
+  
 - **Retry failed jobs** — single retry in failed modal; bulk retry next to Recent failed when filters active. Routes through Laravel's `queue:retry` Artisan (works on all drivers, idempotent). Two-click in-button confirm. Server-enforced safety:
+  
   - Distinct `retryFailedJobs` Gate (separate from read-only `viewQueueInsights`).
   - `RateLimiter` 30 retries / minute / user.
   - Bulk **hard-rejects** when filters empty or matching set > 100 rows — no silent truncation.
@@ -413,6 +446,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
   - Audit log entry per retry with sanitized filter context (control bytes neutralised, length-capped at 80 chars).
   
 - **Embeddable** — standalone Livewire + Blade dashboard. No Filament/Nova coupling. Mounts at `/queue-insights` (gated by `viewQueueInsights`) or embeds via `<livewire:queue-insights-dashboard>`. Composer constraint `livewire/livewire: ^3.0 || ^4.0` (Pulse-style dual support).
+  
 
 ### Compatibility
 
@@ -432,6 +466,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 ```
 Service provider auto-discovers. See [README](https://github.com/SanderMuller/laravel-queue-insights/blob/main/README.md) for snapshot config, gate setup, embedding pattern.
