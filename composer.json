@@ -14,7 +14,6 @@
     ],
     "require": {
         "php": "^8.3",
-        "aws/aws-sdk-php": "^3.0",
         "illuminate/console": "^11.0||^12.0||^13.0",
         "illuminate/contracts": "^11.0||^12.0||^13.0",
         "illuminate/notifications": "^11.0||^12.0||^13.0",
@@ -23,6 +22,7 @@
         "illuminate/support": "^11.0||^12.0||^13.0"
     },
     "require-dev": {
+        "aws/aws-sdk-php": "^3.0",
         "dg/bypass-finals": "^1.9",
         "driftingly/rector-laravel": "^2.3",
         "larastan/larastan": "^3.9.3",
@@ -43,14 +43,14 @@
         "predis/predis": "^2.2 || ^3.0",
         "rector/rector": "^2.4.1",
         "rector/type-perfect": "^2.1.2",
-        "sandermuller/package-boost": "^0.11.0",
-        "spatie/ray": "^1.48.0",
+        "sandermuller/package-boost": "^0.14.0",
         "spaze/phpstan-disallowed-calls": "^4.10",
         "symplify/phpstan-extensions": "^12.0.2",
         "tomasvotruba/cognitive-complexity": "^1.1",
         "tomasvotruba/type-coverage": "^2.1"
     },
     "suggest": {
+        "aws/aws-sdk-php": "Required only when snapshotting SQS queues (mirrors illuminate/queue's own suggest).",
         "livewire/livewire": "Required only to use the bundled dashboard route. Capture + snapshot run without it.",
         "guzzlehttp/guzzle": "Required only when the slack alert channel is enabled (provides the HTTP client used by `Illuminate\\Http\\Client\\Factory`).",
         "illuminate/mail": "Required only when the mail alert channel is enabled (provides the `mail.manager` binding).",

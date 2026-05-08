@@ -2,7 +2,27 @@
 
 This file lists the migration steps between major / minor versions of `laravel-queue-insights`. Patch releases never require manual steps. The Changelog (`CHANGELOG.md`) is the canonical record of what changed; this file covers only the steps a host must perform to land cleanly on the new version.
 
-## 0.11.x — Dashboard dark mode + paginated lists
+## 0.12.x — `aws/aws-sdk-php` moved to `suggest`
+
+`aws/aws-sdk-php` was a hard `require` of this package, even for hosts running purely on Redis, database, or sync queues. It now lives under `suggest`, mirroring `illuminate/queue`'s own approach — the SDK is only loaded at runtime when `SqsSnapshotDriver` is constructed (the `use Aws\Sqs\SqsClient` alias does not trigger autoload on its own).
+
+> ⚠ **Breaking change for hosts on SQS that did NOT explicitly require `aws/aws-sdk-php` in their app's `composer.json`.** Previously the SDK arrived transitively via this package; after upgrading it is no longer pulled in, and the snapshot command will fatal with `Class "Aws\Sqs\SqsClient" not found` the first time a `sqs`-driver connection is snapshotted.
+
+### Action required
+
+Hosts that snapshot at least one SQS connection must add the SDK to their own `composer.json`:
+
+```bash
+composer require aws/aws-sdk-php:^3.0
+```
+
+Hosts on Redis / database / sync queues only: nothing to do — install footprint drops by ~15 MB.
+
+### How to tell whether you're affected
+
+Check your `config/queue.php` (or env-driven equivalent) for any connection with `'driver' => 'sqs'` that appears in your `config/queue-insights.php` `snapshots` block. If yes, add the explicit `require`. If no, ignore.
+
+
 
 The dashboard now ships with a tri-state theme toggle (`light` / `dark` / `system`) and dark-mode styling on every surface. The feature is **default-on** for new installs and existing hosts that have not published the layout view or the config file.
 
