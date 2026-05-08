@@ -121,7 +121,7 @@ it('does not attribute jobs when the schedule context is empty', function (): vo
         delay: null,
     ));
 
-    expect(R::raw('hget', "qmtest:pending:{$uuid}", 'schedule_task_key'))->toBeNull();
+    expect(R::str('hget', "qmtest:pending:{$uuid}", 'schedule_task_key'))->toBeNull();
 });
 
 it('hostDistribution counts per host across recent runs', function (): void {
