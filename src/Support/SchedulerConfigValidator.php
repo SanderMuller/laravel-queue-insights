@@ -22,6 +22,7 @@ final class SchedulerConfigValidator
     public static function validate(array $scheduler): void
     {
         self::validateBoolean($scheduler, 'enabled', 'queue-insights.scheduler.enabled');
+        self::validateBoolean($scheduler, 'snapshot_rebuild', 'queue-insights.scheduler.snapshot_rebuild');
 
         self::validateCaptureBlock($scheduler['capture'] ?? null);
 

@@ -34,6 +34,15 @@
         // (1970-01-01), almost always wrong for a missing timestamp.
         $intTs = (int) $at;
         if ($intTs > 0) {
+            // Auto-detect ms-scale timestamps. Anything >= 10^12 in unix-
+            // seconds would be year 33658 (impossible for real data); ms
+            // since epoch crosses 10^12 at year 2001. The schedule
+            // subsystem stores started_at / finished_at / snapshot:at in
+            // ms, so this lets the same component accept either unit
+            // without a per-call-site `:ms` flag.
+            if ($intTs >= 1_000_000_000_000) {
+                $intTs = (int) ($intTs / 1000);
+            }
             try { $carbon = Date::createFromTimestamp($intTs); } catch (\Throwable) { $carbon = null; }
         }
     } elseif (is_string($at) && $at !== '') {

@@ -50,7 +50,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, plus a `prometheus-push` command for short-lived workers.
-- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel, and ships a missed/hung sweeper plus typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events.
+- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), and ships a missed/hung sweeper plus typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
@@ -696,7 +696,11 @@ QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED=false
 
 ### Dashboard panel
 
-When the dashboard is mounted and `scheduler.dashboard.enabled = true`, a lazy-loaded **Scheduled tasks** panel renders below the queue panes. Empty-state copy guides first-time hosts; the panel hides itself when scheduler observability is disabled. Gate via the existing `viewQueueInsights` ability — there is no separate scheduler gate.
+When the dashboard is mounted and `scheduler.dashboard.enabled = true`, a lazy-loaded **Scheduled tasks** panel renders below the queue panes. Empty-state copy guides first-time hosts; the panel hides itself when scheduler observability is disabled. Gate via the existing `viewQueueInsights` ability, or define a narrower `viewScheduleInsights` Gate to gate scheduler reads independently.
+
+Click a row in the **Tasks** card to open the per-task drilldown — cron expression + flag pills, 24h tile grid, host-distribution bar (suppressed for single-host tasks), recent-runs table scoped to the task. Click a row in **Recent runs** to open the per-run drilldown — exception block (failed runs), output viewer (full-capture only; closure tasks render an "output capture not supported" hint), skip-reason explainer, correlated-jobs section listing every job uuid the run dispatched (click-through opens the queue-side modal). Both modals are URL-bound (`?s_tk=` + `?s_rid=`) so deep-links round-trip; aged-out runs render an "Expired" empty state. A markdown-export copy button on the run modal hands the full context to AI agents or trackers.
+
+The package rebuilds the snapshot on `app->booted` from the live `Schedule::events()`. Hosts that pre-seed the snapshot keys themselves (custom import script, fixture seeder, etc.) can opt out with `QUEUE_INSIGHTS_SCHEDULER_SNAPSHOT_REBUILD=false` to keep their own data on every boot.
 
 ### CLI
 

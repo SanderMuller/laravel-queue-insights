@@ -82,6 +82,7 @@ parameters:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Unit/Prometheus/
+                - tests/Unit/Scheduler/
             reportUnmatched: false
         -
             identifier: return.internalClass

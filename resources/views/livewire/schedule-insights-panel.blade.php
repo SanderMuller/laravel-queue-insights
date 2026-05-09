@@ -35,24 +35,17 @@
         }
         return number_format($ms / 1000, 2) . 's';
     };
-    $statusBadge = static function (string $status): array {
-        return match ($status) {
-            'success' => ['label' => '✓ ok', 'cls' => 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 ring-emerald-600/20 dark:ring-emerald-400/30'],
-            'failed'  => ['label' => '✗ failed', 'cls' => 'bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-300 ring-red-600/20 dark:ring-red-400/30'],
-            'skipped' => ['label' => '↷ skipped', 'cls' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 ring-gray-950/10 dark:ring-white/10'],
-            'hung'    => ['label' => '⏳ hung', 'cls' => 'bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 ring-amber-600/20 dark:ring-amber-400/30'],
-            'missed'  => ['label' => '⏰ missed', 'cls' => 'bg-amber-50 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 ring-amber-600/20 dark:ring-amber-400/30'],
-            'starting' => ['label' => '… running', 'cls' => 'bg-sky-50 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300 ring-sky-600/20 dark:ring-sky-400/30'],
-            default   => ['label' => $status, 'cls' => 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 ring-gray-950/10 dark:ring-white/10'],
-        };
-    };
-
-    // task_key → human label (description ?? command). The recent-runs
-    // table only carries the opaque hash; this map turns it into the
-    // same one-liner operators saw in the Tasks card.
+    // task_key → human label (description ?? short(command)). The recent-runs
+    // table only carries the opaque hash; this map turns it into the same
+    // one-liner operators saw in the Tasks card. Commands are shortened
+    // (`'/Users/.../bin/php' 'artisan' …` → `php artisan …`) for list
+    // surfaces — the drilldown modal still shows the full unmodified
+    // command so debugging an unusual binary path stays possible.
     $taskLabels = [];
     foreach ($tasksAll as $row) {
-        $taskLabels[$row['task_key']] = $row['description'] ?? $row['command'];
+        $taskLabels[$row['task_key']] = ($row['description'] !== null && $row['description'] !== '')
+            ? $row['description']
+            : \SanderMuller\QueueInsights\Scheduler\CommandLabel::short($row['command']);
     }
 
     $sparklineSuccess = array_sum(array_column($sparkline, 'success'));
@@ -169,9 +162,9 @@
                             @php $runsTotal = max(1, (int) ($row['stats']['runs'] ?? 0)); @endphp
                             <li>
                                 <button type="button"
-                                        wire:click="$set('taskFilter', '{{ $row['task_key'] }}')"
+                                        wire:click="openTaskModal('{{ $row['task_key'] }}')"
                                         class="grid w-full grid-cols-12 items-center gap-3 py-2 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-white/5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                                    <span class="col-span-12 sm:col-span-6 truncate font-medium text-gray-900 dark:text-gray-100">{{ $row['description'] ?? $row['command'] }}</span>
+                                    <span class="col-span-12 sm:col-span-6 truncate font-medium text-gray-900 dark:text-gray-100">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</span>
                                     <span class="col-span-6 sm:col-span-2 truncate font-mono text-xs text-gray-500 dark:text-gray-300" title="{{ $row['expression'] }}">{{ $row['expression'] }}</span>
                                     <span class="col-span-3 sm:col-span-2 text-xs tabular-nums text-red-700 dark:text-red-300">
                                         ✗{{ $row['stats']['failed'] }}<span class="text-gray-400 dark:text-gray-400"> / {{ $runsTotal }}</span>
@@ -189,9 +182,9 @@
                         @foreach($healthy as $row)
                             <li>
                                 <button type="button"
-                                        wire:click="$set('taskFilter', '{{ $row['task_key'] }}')"
+                                        wire:click="openTaskModal('{{ $row['task_key'] }}')"
                                         class="grid w-full grid-cols-12 items-center gap-3 py-2 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-white/5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                                    <span class="col-span-12 sm:col-span-6 truncate text-gray-900 dark:text-gray-100">{{ $row['description'] ?? $row['command'] }}</span>
+                                    <span class="col-span-12 sm:col-span-6 truncate text-gray-900 dark:text-gray-100">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</span>
                                     <span class="col-span-6 sm:col-span-2 truncate font-mono text-xs text-gray-500 dark:text-gray-300" title="{{ $row['expression'] }}">{{ $row['expression'] }}</span>
                                     <span class="col-span-3 sm:col-span-2 text-xs tabular-nums text-emerald-700 dark:text-emerald-300">✓{{ $row['stats']['runs'] }}</span>
                                     <span class="col-span-3 sm:col-span-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-300">p95 {{ $formatDuration($row['stats']['p95_ms']) }}</span>
@@ -213,7 +206,7 @@
                         <select wire:model.live="taskFilter" class="h-8 rounded-md border-0 bg-white dark:bg-gray-900 px-2 text-xs text-gray-900 dark:text-gray-100 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 focus:ring-2 focus:ring-inset focus:ring-emerald-500">
                             <option value="">all</option>
                             @foreach($tasksAll as $row)
-                                <option value="{{ $row['task_key'] }}">{{ $row['description'] ?? $row['command'] }}</option>
+                                <option value="{{ $row['task_key'] }}">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</option>
                             @endforeach
                         </select>
                     </label>
@@ -269,27 +262,11 @@
                             </thead>
                             <tbody class="divide-y divide-gray-950/5 dark:divide-white/10">
                                 @foreach($recentRuns as $run)
-                                    @php
-                                        $badge = $statusBadge($run['status']);
-                                        $label = $taskLabels[$run['task_key']] ?? null;
-                                    @endphp
-                                    <tr>
-                                        <td class="px-3 py-2 align-top">
-                                            @if($label !== null)
-                                                <p class="truncate text-gray-900 dark:text-gray-100" title="{{ $label }}">{{ $label }}</p>
-                                                <p class="font-mono text-[11px] text-gray-400 dark:text-gray-500">{{ substr($run['task_key'], 0, 8) }}</p>
-                                            @else
-                                                <p class="font-mono text-xs text-gray-700 dark:text-gray-300">{{ substr($run['task_key'], 0, 8) }}</p>
-                                            @endif
-                                        </td>
-                                        <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['host_id'] }}</td>
-                                        <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $formatTime($run['started_at_ms']) }}</td>
-                                        <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $formatDuration($run['runtime_ms']) }}</td>
-                                        <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['exit_code'] ?? '—' }}</td>
-                                        <td class="px-3 py-2 align-top">
-                                            <span class="inline-flex items-center rounded-md py-1 pr-2 pl-1.5 text-xs font-medium ring-1 ring-inset {{ $badge['cls'] }}">{{ $badge['label'] }}</span>
-                                        </td>
-                                    </tr>
+                                    @include('queue-insights::partials.schedule-run-row', [
+                                        'run' => $run,
+                                        'showTask' => true,
+                                        'taskLabels' => $taskLabels,
+                                    ])
                                 @endforeach
                             </tbody>
                         </table>
@@ -324,5 +301,25 @@
                 </div>
             @endif
         </div>
+    @endif
+
+    {{-- Drilldown modals — rendered as siblings of the panel content
+         so the backdrop covers the whole viewport. Each one is gated
+         on its slot being non-empty; closing zeroes the slot. --}}
+    @if($selectedTask !== null)
+        <x-queue-insights::schedule-task-modal
+            :task="$selectedTask"
+            :stats="$selectedTask['stats']"
+            :counters="$selectedTask['counters']"
+            :hostDistribution="$selectedTaskHosts"
+            :recentRuns="$selectedTaskRuns"/>
+    @endif
+
+    @if($selectedRunId !== '')
+        <x-queue-insights::schedule-run-modal
+            :run="$selectedRun"
+            :output="$selectedRunOutput"
+            :taskLabel="$selectedRunTaskLabel"
+            :isClosure="$selectedRunIsClosure"/>
     @endif
 </section>

@@ -325,6 +325,15 @@ return [
         'enabled' => env('QUEUE_INSIGHTS_SCHEDULER_ENABLED', false),
 
         /*
+         | Booted-time snapshot rebuild. The package re-reads `Schedule::events()`
+         | on every `app->booted` and rewrites `qi:sched:tasks` + `qi:sched:tasks:order`.
+         | Disable when the host pre-seeds the snapshot keys itself (custom import
+         | script, workbench preview seeder) — otherwise that pre-seed gets
+         | overwritten on the next request boot.
+         */
+        'snapshot_rebuild' => env('QUEUE_INSIGHTS_SCHEDULER_SNAPSHOT_REBUILD', true),
+
+        /*
          | Per-run output capture. Same three-mode semantics as job payload
          | capture above.
          |   off      — no output captured. Exit code still recorded.

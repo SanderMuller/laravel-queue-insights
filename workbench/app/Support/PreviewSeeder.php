@@ -130,6 +130,11 @@ final class PreviewSeeder
         config()->set('queue-insights.scheduler.enabled', true);
         config()->set('queue-insights.scheduler.alerts.enabled', true);
         config()->set('queue-insights.scheduler.sweeper.enabled', false);  // suppress auto-registration during preview boots
+        // Suppress the booted-time snapshotter rebuild — otherwise every
+        // Livewire poll's app->booted fires it and overwrites the
+        // seeded 6-task fixture with the workbench's actual schedule
+        // (just the auto-registered `queue-insights:snapshot`).
+        config()->set('queue-insights.scheduler.snapshot_rebuild', false);
 
         // Silenced-jobs feature dogfood — `PingThirdPartyVendor` is seeded
         // with a 45% failure rate (vs the next-noisiest class at 18%) so
@@ -1069,23 +1074,24 @@ LUA,
      *   demo_in_flight: bool,
      *   demo_skipped_run: bool,
      *   demo_attribution_source: bool,
+     *   demo_captured_output: bool,
      * }>
      */
     private function schedulerPreviewTasks(): array
     {
         // demo-state flags (right of `skip_rate`):
-        //   failing | hung | in_flight | skipped_run | attribution_source
+        //   failing | hung | in_flight | skipped_run | attribution_source | captured_output
         $defs = [
-            ['App\\Console\\Commands\\SyncCustomers', '*/5 * * * *', 'command', false, false, true, 1200, 0.02, 0.0, false, false, true, false, true],
-            ['App\\Console\\Commands\\GenerateInvoices', '0 1 * * *', 'command', false, true, true, 18400, 0.0, 0.0, false, false, false, false, false],
-            ['App\\Console\\Commands\\PruneCache', '* * * * *', 'command', false, false, true, 95, 0.0, 0.0, false, false, false, false, false],
-            ['App\\Console\\Commands\\NightlyBackup', '0 2 * * *', 'command', true, true, false, 240000, 0.0, 0.0, false, true, false, false, false],
-            ['App\\Console\\Commands\\SyncStripeCustomers', '*/10 * * * *', 'command', false, false, true, 4200, 0.18, 0.05, true, false, false, false, false],
-            ['closure@routes/console.php:42', '0 */6 * * *', 'closure', false, false, false, 380, 0.0, 0.12, false, false, false, true, false],
+            ['App\\Console\\Commands\\SyncCustomers', '*/5 * * * *', 'command', false, false, true, 1200, 0.02, 0.0, false, false, true, false, true, true],
+            ['App\\Console\\Commands\\GenerateInvoices', '0 1 * * *', 'command', false, true, true, 18400, 0.0, 0.0, false, false, false, false, false, false],
+            ['App\\Console\\Commands\\PruneCache', '* * * * *', 'command', false, false, true, 95, 0.0, 0.0, false, false, false, false, false, false],
+            ['App\\Console\\Commands\\NightlyBackup', '0 2 * * *', 'command', true, true, false, 240000, 0.0, 0.0, false, true, false, false, false, false],
+            ['App\\Console\\Commands\\SyncStripeCustomers', '*/10 * * * *', 'command', false, false, true, 4200, 0.18, 0.05, true, false, false, false, false, false],
+            ['closure@routes/console.php:42', '0 */6 * * *', 'closure', false, false, false, 380, 0.0, 0.12, false, false, false, true, false, false],
         ];
 
         $out = [];
-        foreach ($defs as [$desc, $expr, $type, $bg, $oneServer, $woOverlap, $p95, $failRate, $skipRate, $failing, $hung, $inFlight, $skippedRun, $attribution]) {
+        foreach ($defs as [$desc, $expr, $type, $bg, $oneServer, $woOverlap, $p95, $failRate, $skipRate, $failing, $hung, $inFlight, $skippedRun, $attribution, $capturedOutput]) {
             $mutex = 'framework/schedule-' . hash('sha256', $expr . $desc);
             $out[] = [
                 'key' => hash('sha256', $mutex),
@@ -1106,6 +1112,7 @@ LUA,
                 'demo_in_flight' => $inFlight,
                 'demo_skipped_run' => $skippedRun,
                 'demo_attribution_source' => $attribution,
+                'demo_captured_output' => $capturedOutput,
             ];
         }
 
@@ -1279,9 +1286,17 @@ LUA,
                         'message' => 'cURL error 28: Operation timed out after 5000 ms',
                         'file' => '/preview/Stack.php',
                         'line' => 42,
-                        'trace_tail' => "#0 /preview/Stack.php(42): preview()\n#1 {main}",
+                        'trace_tail' => "#0 /preview/Stack.php(42): preview()\n#1 /preview/Worker.php(118): App\\Console\\Commands\\SyncStripeCustomers::handle()\n#2 {main}",
                     ]);
                     $redis->command('hset', [$runHashKey, 'exception', (string) $exception]);
+                }
+
+                // Attach a captured stdout blob to the most recent run of the
+                // designated demo task so the per-run modal exercises its
+                // output viewer in the live preview.
+                if ($task['demo_captured_output'] && $i === 0 && ! $statusForcedFail) {
+                    $output = "Synced 4 customers in 312ms\nUpdated 2 stale records\nDispatched 4 follow-up jobs\n";
+                    $redis->command('hset', [$runHashKey, 'output', $output]);
                 }
 
                 $redis->command('expire', [$runHashKey, $runTtl]);

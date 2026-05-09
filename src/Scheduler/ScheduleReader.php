@@ -307,6 +307,80 @@ final class ScheduleReader
     }
 
     /**
+     * Hydrated detail for a single scheduled run. `output` is intentionally
+     * omitted — it can grow to `max_output_bytes` and the dashboard fetches
+     * it via the separate `runOutput()` accessor only when the modal is
+     * actually rendering it.
+     *
+     * Returns `null` when the per-run hash is absent (post-7d TTL or
+     * never-existed deep-link). Callers MUST treat null as the "Expired"
+     * state — never 500.
+     *
+     * @return ?array{
+     *   task_key: string,
+     *   run_id: string,
+     *   started_at_ms: ?int,
+     *   finished_at_ms: ?int,
+     *   runtime_ms: ?int,
+     *   exit_code: ?int,
+     *   status: string,
+     *   skip_reason: ?string,
+     *   host_id: string,
+     *   is_background: bool,
+     *   recovered_from_hung: bool,
+     *   exception: ?array<array-key, mixed>,
+     *   has_output: bool,
+     *   correlated_jobs: list<string>,
+     * }
+     */
+    public function runDetail(string $taskKey, string $runId): ?array
+    {
+        if ($taskKey === '' || $runId === '') {
+            return null;
+        }
+
+        $hash = $this->redis()
+            ->command('hgetall', [KeyPrefix::make("sched:run:{$taskKey}:{$runId}")]);
+        if (! is_array($hash) || $hash === []) {
+            return null;
+        }
+
+        return [
+            'task_key' => $taskKey,
+            'run_id' => $runId,
+            'started_at_ms' => HashFields::nullableInt($hash, 'started_at'),
+            'finished_at_ms' => HashFields::nullableInt($hash, 'finished_at'),
+            'runtime_ms' => HashFields::nullableInt($hash, 'runtime_ms'),
+            'exit_code' => HashFields::nullableInt($hash, 'exit_code'),
+            'status' => HashFields::string($hash, 'status', 'starting'),
+            'skip_reason' => HashFields::nullableString($hash['skip_reason'] ?? null),
+            'host_id' => HashFields::string($hash, 'host_id', 'unknown'),
+            'is_background' => HashFields::bool01($hash, 'is_background'),
+            'recovered_from_hung' => HashFields::bool01($hash, 'recovered_from_hung'),
+            'exception' => HashFields::decodeJson($hash['exception'] ?? null),
+            'has_output' => is_string($hash['output'] ?? null) && $hash['output'] !== '',
+            'correlated_jobs' => $this->jobsDispatchedDuring($runId),
+        ];
+    }
+
+    /**
+     * Per-run captured stdout/stderr blob. Separated from `runDetail` so the
+     * panel-level recent-runs page never accidentally pulls multi-KB output
+     * payloads while paging.
+     */
+    public function runOutput(string $taskKey, string $runId): ?string
+    {
+        if ($taskKey === '' || $runId === '') {
+            return null;
+        }
+
+        $value = $this->redis()
+            ->command('hget', [KeyPrefix::make("sched:run:{$taskKey}:{$runId}"), 'output']);
+
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    /**
      * @return ?int unix milliseconds, or null when no snapshot has been written
      */
     public function snapshotAtMs(): ?int

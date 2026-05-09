@@ -11,6 +11,7 @@ use Livewire\Attributes\Lazy;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\Scheduler\AggregatesQuery;
+use SanderMuller\QueueInsights\Scheduler\CommandLabel;
 use SanderMuller\QueueInsights\Scheduler\ScheduleReader;
 use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
@@ -49,7 +50,23 @@ final class ScheduleInsightsPanel extends Component
     #[Url(as: 's_p', except: 1)]
     public int $page = 1;
 
-    public function mount(): void
+    /**
+     * Selected task for the per-task drilldown modal. URL-bound so
+     * deep-links round-trip; cleared by `closeTaskModal`.
+     */
+    #[Url(as: 's_tk', except: '')]
+    public string $selectedTaskKey = '';
+
+    /**
+     * Selected scheduled run for the per-run drilldown modal. Composite
+     * shape `{taskKey}:{runId}` — mirrors the `qi:sched:runs:all` zset
+     * member format so a deep-linked operator URL is one HGET away from
+     * resolved. Cleared by `closeRunModal`.
+     */
+    #[Url(as: 's_rid', except: '')]
+    public string $selectedRunId = '';
+
+    public function mount(ScheduleReader $reader): void
     {
         // Two-step gate: host app may register `viewScheduleInsights`
         // (preferred — narrower than queue access), otherwise fall back
@@ -58,6 +75,16 @@ final class ScheduleInsightsPanel extends Component
         // already authorized it).
         if (Gate::has('viewScheduleInsights') && ! Gate::allows('viewScheduleInsights', Auth::user())) {
             abort(403);
+        }
+
+        // Deep-link slot validation — fail soft. A bookmarked run id
+        // that has aged out clears the slot silently so the panel
+        // renders without the modal. Spec rule #6.
+        if ($this->selectedRunId !== '') {
+            [$taskKey, $runId] = $this->splitRunSlot($this->selectedRunId);
+            if ($taskKey === '' || $runId === '' || $reader->runDetail($taskKey, $runId) === null) {
+                $this->selectedRunId = '';
+            }
         }
     }
 
@@ -81,6 +108,66 @@ final class ScheduleInsightsPanel extends Component
         if (in_array($name, ['taskFilter', 'statusFilter', 'hostFilter', 'from', 'to', 'perPage'], true)) {
             $this->page = 1;
         }
+    }
+
+    public function openTaskModal(string $taskKey): void
+    {
+        if ($taskKey === '') {
+            return;
+        }
+
+        $this->selectedTaskKey = $taskKey;
+    }
+
+    public function closeTaskModal(): void
+    {
+        $this->selectedTaskKey = '';
+    }
+
+    public function openRunModal(string $taskKey, string $runId): void
+    {
+        if ($taskKey === '' || $runId === '') {
+            return;
+        }
+
+        $this->selectedRunId = $taskKey . ':' . $runId;
+    }
+
+    public function closeRunModal(): void
+    {
+        $this->selectedRunId = '';
+    }
+
+    /**
+     * Click-through from a correlated-job uuid in the run modal.
+     * Forwarded to the parent `QueueInsightsDashboard` via a Livewire
+     * event — the parent owns the queue-side modal slots and runs the
+     * uuid → surface resolution that drives `openByUuid`. Silenced
+     * filters are NOT honoured here (CLAUDE.md silenced-jobs rule).
+     */
+    public function openJobByUuid(string $uuid): void
+    {
+        if ($uuid === '') {
+            return;
+        }
+
+        // Close the run modal first so the parent's queue-side modal
+        // doesn't stack on top of it.
+        $this->closeRunModal();
+        $this->dispatch('qi-open-job-by-uuid', uuid: $uuid);
+    }
+
+    /**
+     * @return array{0: string, 1: string}
+     */
+    private function splitRunSlot(string $slot): array
+    {
+        $parts = explode(':', $slot, 2);
+        if (count($parts) !== 2) {
+            return ['', ''];
+        }
+
+        return [$parts[0], $parts[1]];
     }
 
     public function render(ScheduleReader $reader, AggregatesQuery $aggregates): View
@@ -121,6 +208,9 @@ final class ScheduleInsightsPanel extends Component
         $page = max(1, $this->page);
         $snapshotAtMs = $reader->snapshotAtMs();
 
+        $taskModal = $this->hydrateTaskModal($reader, $tasksWithStats);
+        $runModal = $this->hydrateRunModal($reader, $tasksWithStats);
+
         return ViewFactory::make('queue-insights::livewire.schedule-insights-panel', [
             'enabled' => Config::bool('scheduler.enabled', false),
             'snapshotAtMs' => $snapshotAtMs,
@@ -140,7 +230,103 @@ final class ScheduleInsightsPanel extends Component
             'to' => $this->to,
             'perPage' => $perPage,
             'page' => $page,
+            'selectedTask' => $taskModal['task'],
+            'selectedTaskHosts' => $taskModal['hosts'],
+            'selectedTaskRuns' => $taskModal['runs'],
+            'selectedRun' => $runModal['run'],
+            'selectedRunOutput' => $runModal['output'],
+            'selectedRunTaskLabel' => $runModal['label'],
+            'selectedRunIsClosure' => $runModal['is_closure'],
         ]);
+    }
+
+    /**
+     * Hydrate the per-task modal payload. Returns empty placeholders
+     * when the slot is unset or the task isn't in the snapshot — the
+     * modal is gated by `selectedTaskKey !== ''` in the view.
+     *
+     * @param  list<array<string, mixed>>  $tasksWithStats
+     * @return array{task: ?array<string, mixed>, hosts: array<string, int>, runs: list<array<string, mixed>>}
+     */
+    private function hydrateTaskModal(ScheduleReader $reader, array $tasksWithStats): array
+    {
+        if ($this->selectedTaskKey === '') {
+            return ['task' => null, 'hosts' => [], 'runs' => []];
+        }
+
+        $task = null;
+        foreach ($tasksWithStats as $row) {
+            if (($row['task_key'] ?? null) === $this->selectedTaskKey) {
+                $task = $row;
+
+                break;
+            }
+        }
+
+        if ($task === null) {
+            return ['task' => null, 'hosts' => [], 'runs' => []];
+        }
+
+        return [
+            'task' => $task,
+            'hosts' => $reader->hostDistribution($this->selectedTaskKey),
+            'runs' => $reader->recentRuns(['task' => $this->selectedTaskKey], 50, 1),
+        ];
+    }
+
+    /**
+     * Hydrate the per-run modal payload. `run === null` drives the
+     * "Expired" empty state in the modal partial.
+     *
+     * @param  list<array<string, mixed>>  $tasksWithStats
+     * @return array{run: ?array<string, mixed>, output: ?string, label: ?string, is_closure: bool}
+     */
+    private function hydrateRunModal(ScheduleReader $reader, array $tasksWithStats): array
+    {
+        if ($this->selectedRunId === '') {
+            return ['run' => null, 'output' => null, 'label' => null, 'is_closure' => false];
+        }
+
+        [$runTaskKey, $runId] = $this->splitRunSlot($this->selectedRunId);
+        if ($runTaskKey === '' || $runId === '') {
+            return ['run' => null, 'output' => null, 'label' => null, 'is_closure' => false];
+        }
+
+        $run = $reader->runDetail($runTaskKey, $runId);
+        if ($run === null) {
+            return ['run' => null, 'output' => null, 'label' => null, 'is_closure' => false];
+        }
+
+        [$label, $isClosure] = $this->resolveRunLabel($runTaskKey, $tasksWithStats);
+
+        $output = null;
+        if ($run['has_output'] && ! $isClosure) {
+            $output = $reader->runOutput($runTaskKey, $runId);
+        }
+
+        return ['run' => $run, 'output' => $output, 'label' => $label, 'is_closure' => $isClosure];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $tasksWithStats
+     * @return array{0: ?string, 1: bool}
+     */
+    private function resolveRunLabel(string $taskKey, array $tasksWithStats): array
+    {
+        foreach ($tasksWithStats as $row) {
+            if (($row['task_key'] ?? null) !== $taskKey) {
+                continue;
+            }
+
+            $label = is_string($row['description'] ?? null) && $row['description'] !== ''
+                ? $row['description']
+                : (is_string($row['command'] ?? null) ? CommandLabel::short($row['command']) : null);
+            $isClosure = ($row['type'] ?? '') === 'closure';
+
+            return [$label, $isClosure];
+        }
+
+        return [null, false];
     }
 
     private function parseToMs(string $value): ?int

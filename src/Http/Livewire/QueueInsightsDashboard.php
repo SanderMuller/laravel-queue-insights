@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
 use Livewire\Attributes\Layout;
+use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
@@ -299,6 +300,17 @@ final class QueueInsightsDashboard extends Component
      * Aged-out parents (no surface match) fall through to a flash banner
      * instead of silently navigating nowhere.
      */
+    /**
+     * Listener for the schedule panel's correlated-job click-through.
+     * Forwards to `openByUuid` so the resolution + chain-back stack
+     * behaviour is identical to the queue-side click paths.
+     */
+    #[On('qi-open-job-by-uuid')]
+    public function openJobByUuidFromSchedule(string $uuid): void
+    {
+        $this->openByUuid($uuid);
+    }
+
     public function openByUuid(string $uuid, ?string $fromClass = null): void
     {
         $target = UuidResolver::resolve($uuid);

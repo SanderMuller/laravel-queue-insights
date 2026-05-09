@@ -30,6 +30,20 @@ final class HashFields
     }
 
     /**
+     * Coerce a `'1'` / `'0'` / numeric flag stored on a Redis hash to a
+     * native bool. Mirrors how the listeners write the flag — anything
+     * other than literal `'1'` (or numeric 1) reads as false.
+     *
+     * @param  array<array-key, mixed>  $hash
+     */
+    public static function bool01(array $hash, string $field): bool
+    {
+        $value = $hash[$field] ?? null;
+
+        return (is_string($value) || is_numeric($value)) && (string) $value === '1';
+    }
+
+    /**
      * @param  array<array-key, mixed>  $hash
      */
     public static function string(array $hash, string $field, string $default): string

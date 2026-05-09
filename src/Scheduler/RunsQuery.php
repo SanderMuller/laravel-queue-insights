@@ -110,10 +110,6 @@ final class RunsQuery
      */
     private function projectRunRow(string $taskKey, string $runId, array $hash): array
     {
-        $isBackgroundRaw = $hash['is_background'] ?? null;
-        $isBackground = (is_string($isBackgroundRaw) || is_numeric($isBackgroundRaw))
-            && (string) $isBackgroundRaw === '1';
-
         return [
             'task_key' => $taskKey,
             'run_id' => $runId,
@@ -124,7 +120,7 @@ final class RunsQuery
             'status' => HashFields::string($hash, 'status', 'starting'),
             'skip_reason' => HashFields::nullableString($hash['skip_reason'] ?? null),
             'host_id' => HashFields::string($hash, 'host_id', 'unknown'),
-            'is_background' => $isBackground,
+            'is_background' => HashFields::bool01($hash, 'is_background'),
             'exception' => HashFields::decodeJson($hash['exception'] ?? null),
             'output' => HashFields::nullableString($hash['output'] ?? null),
         ];
