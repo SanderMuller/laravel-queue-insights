@@ -458,6 +458,18 @@ return [
         ],
 
         /*
+         | Per-task metric cardinality control. Task rosters are small
+         | (~100 typical), so default is `allow_all`. `allow_list` for
+         | hosts who want to scrape only a subset; `top_n_by_recency`
+         | is intentionally NOT supported (would require a new write
+         | path — see internal/specs/cron-monitoring/07-platform-extensions.md §1.3).
+         */
+        'task_filter' => [
+            'mode' => 'allow_all',
+            'tasks' => [],
+        ],
+
+        /*
          | Per-metric toggles. Disable any family the host doesn't need
          | to keep the scrape body lean. The master gate is the
          | top-level `enabled` flag above.
@@ -476,6 +488,16 @@ return [
             'snapshot_alive' => true,
             'snapshot_age' => true,
             'snapshot_errors_total' => true,
+            // Scheduler families — opt-in. Master gate is also
+            // `scheduler.enabled`; both must be true to emit samples.
+            'scheduler_runs_total' => false,
+            'scheduler_runtime_sum' => false,
+            'scheduler_last_run_timestamp' => false,
+            'scheduler_hung_total' => false,
+            'scheduler_missed_total' => false,
+            'scheduler_in_flight' => false,
+            'scheduler_snapshot_age' => false,
+            'scheduler_sweeper_age' => false,
         ],
 
         /*

@@ -33,6 +33,51 @@ it('returns 200 with text/plain content-type and renders queue_depth', function 
         ->toContain('queue_insights_queue_depth{connection="sqs",queue="work"} 7')->not->toEndWith("# EOF\n");
 });
 
+it('renders scheduler families when scheduler is enabled and toggles are on', function (): void {
+    config()->set('queue-insights.scheduler.enabled', true);
+    config()->set('queue-insights.prometheus.metrics.scheduler_runs_total', true);
+    config()->set('queue-insights.prometheus.metrics.scheduler_hung_total', true);
+    config()->set('queue-insights.prometheus.metrics.scheduler_in_flight', true);
+
+    R::conn()->command('rpush', [KeyPrefix::make('sched:tasks:order'), 'sync-customers']);
+    R::conn()->command('hset', [KeyPrefix::make('sched:counters:sync-customers'), 'total_runs', '12']);
+    R::conn()->command('hset', [KeyPrefix::make('sched:counters:sync-customers'), 'total_failed', '2']);
+    R::conn()->command('hset', [KeyPrefix::make('sched:counters:sync-customers'), 'total_hung', '1']);
+    R::conn()->command('zadd', [KeyPrefix::make('sched:running-index'), 9999, 'sync-customers']);
+
+    $body = $this->withHeader('Authorization', 'Bearer secret-token')
+        ->get('/metrics')
+        ->getContent();
+
+    expect($body)
+        ->toContain('# TYPE queue_insights_scheduled_task_runs_total counter')
+        ->toContain('queue_insights_scheduled_task_runs_total{status="success",task="sync-customers"} 10')
+        ->toContain('queue_insights_scheduled_task_runs_total{status="failed",task="sync-customers"} 2')
+        ->toContain('# TYPE queue_insights_scheduled_task_hung_total counter')
+        ->toContain('queue_insights_scheduled_task_hung_total{task="sync-customers"} 1')
+        ->toContain('# TYPE queue_insights_scheduled_task_in_flight gauge')
+        ->toContain('queue_insights_scheduled_task_in_flight{task="sync-customers"} 1');
+});
+
+it('emits no scheduler families when scheduler.enabled is false even with metric toggles on', function (): void {
+    config()->set('queue-insights.scheduler.enabled', false);
+    config()->set('queue-insights.prometheus.metrics.scheduler_runs_total', true);
+    config()->set('queue-insights.prometheus.metrics.scheduler_hung_total', true);
+    config()->set('queue-insights.prometheus.metrics.scheduler_in_flight', true);
+
+    R::conn()->command('rpush', [KeyPrefix::make('sched:tasks:order'), 'sync-customers']);
+    R::conn()->command('hset', [KeyPrefix::make('sched:counters:sync-customers'), 'total_hung', '5']);
+
+    $body = $this->withHeader('Authorization', 'Bearer secret-token')
+        ->get('/metrics')
+        ->getContent();
+
+    expect($body)
+        ->not->toContain('queue_insights_scheduled_task_')
+        ->not->toContain('queue_insights_scheduled_snapshot_')
+        ->not->toContain('queue_insights_scheduled_sweeper_');
+});
+
 it('negotiates openmetrics flavour from Accept header and appends # EOF', function (): void {
     R::conn()->command('setex', [KeyPrefix::make('live:depth:sqs:work'), 90, '3']);
 

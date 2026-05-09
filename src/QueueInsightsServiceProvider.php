@@ -65,12 +65,22 @@ use SanderMuller\QueueInsights\Prometheus\Collectors\OldestInflightAgeCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\OldestPendingAgeCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\PendingCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\QueueDepthCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\HungTotalCollector as SchedulerHungTotalCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\InFlightCollector as SchedulerInFlightCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\LastRunTimestampCollector as SchedulerLastRunTimestampCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\MissedTotalCollector as SchedulerMissedTotalCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\RunsTotalCollector as SchedulerRunsTotalCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\RuntimeSumCollector as SchedulerRuntimeSumCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\SnapshotAgeCollector as SchedulerSnapshotAgeCollector;
+use SanderMuller\QueueInsights\Prometheus\Collectors\Scheduler\SweeperAgeCollector as SchedulerSweeperAgeCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotAgeCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotAliveCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\SnapshotErrorsCollector;
 use SanderMuller\QueueInsights\Prometheus\PrometheusAuthMiddleware;
 use SanderMuller\QueueInsights\Prometheus\Registry as PrometheusRegistry;
 use SanderMuller\QueueInsights\Prometheus\Renderer as PrometheusRenderer;
+use SanderMuller\QueueInsights\Prometheus\Scheduler\CountersReader as SchedulerCountersReader;
+use SanderMuller\QueueInsights\Prometheus\Scheduler\TaskFilter as SchedulerTaskFilter;
 use SanderMuller\QueueInsights\Scheduler\ScheduleSnapshotter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
@@ -130,6 +140,15 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         // ZRANGE per scrape instead of three. `scoped` so the memoise
         // dies with the request.
         $this->app->scoped(PrometheusClassFilter::class);
+        // Same memoise pattern as ClassFilter — the eight scheduler
+        // collectors share one LRANGE on `sched:tasks:order` per scrape.
+        $this->app->scoped(SchedulerTaskFilter::class);
+        // Per-task counters-hash reader: five scheduler collectors all
+        // read fields from `sched:counters:{task}`. The reader does one
+        // HGETALL per task per scrape, memoised on the instance, so the
+        // round-trip count collapses from 5×N to N. `scoped` so the
+        // memoise dies with the request.
+        $this->app->scoped(SchedulerCountersReader::class);
         $this->app->bind(PrometheusRegistry::class, function (Application $app): PrometheusRegistry {
             $collectorClasses = [
                 QueueDepthCollector::class,
@@ -145,6 +164,18 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 DurationAggregateCollector::class,
                 SnapshotErrorsCollector::class,
                 AlertActiveCollector::class,
+                // Scheduler families — gated additionally on
+                // `scheduler.enabled` inside each collector's
+                // `isEnabled()`. Registry's try/catch protects siblings
+                // if any individual collector throws.
+                SchedulerRunsTotalCollector::class,
+                SchedulerRuntimeSumCollector::class,
+                SchedulerLastRunTimestampCollector::class,
+                SchedulerHungTotalCollector::class,
+                SchedulerMissedTotalCollector::class,
+                SchedulerInFlightCollector::class,
+                SchedulerSnapshotAgeCollector::class,
+                SchedulerSweeperAgeCollector::class,
             ];
 
             $collectors = [];

@@ -169,6 +169,11 @@ final class RunStore
 
         // Lifetime counters — no TTL.
         $redis->command('hincrby', [$countersKey, 'total_runs', 1]);
+        // Lifetime runtime sum (ms). Pairs with `total_runs` to give a
+        // monotonic mean for the Prometheus exporter — the per-bucket
+        // `runtime_sum_ms` on `sched:agg:*` rolls hourly and TTLs out,
+        // so cannot back a Prometheus counter on its own.
+        $redis->command('hincrby', [$countersKey, 'runtime_sum_ms', $args['runtime_ms']]);
         $redis->command('hset', [$countersKey, 'last_run_at', (string) $args['finished_at_ms']]);
         if ($args['status'] === 'failed') {
             $redis->command('hincrby', [$countersKey, 'total_failed', 1]);

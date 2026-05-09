@@ -49,7 +49,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
-- **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, plus a `prometheus-push` command for short-lived workers.
+- **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
 - **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), and ships a missed/hung sweeper plus typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
@@ -656,6 +656,49 @@ A two-tier cache (per-request memoise + 5 s Redis cache, key `prom:cache:rendere
 
 Each metric family has its own toggle under `prometheus.metrics.*` (default-on) — disable any family the host doesn't need to keep the scrape body lean.
 
+### Scheduler metrics
+
+When `scheduler.enabled = true` AND each per-family toggle below is set, the exporter emits scheduler-side families. **Default OFF** — adoption is opt-in per family (mirrors the per-class queue metrics stance).
+
+| Metric | Type | Labels | Notes |
+|---|---|---|---|
+| `queue_insights_scheduled_task_runs_total` | counter | `task`, `status` | Status: `success` (= `total_runs - total_failed`), `failed`, `skipped`. Hung + missed are separate families below. |
+| `queue_insights_scheduled_task_runtime_sum_seconds_total` | counter | `task` | Lifetime runtime sum, seconds. Pair with `queue_insights_scheduled_task_runs_total` for mean: `rate(sum) / rate(runs_total{status=~"success\|failed"})`. Sample omitted until the first finished run. |
+| `queue_insights_scheduled_task_last_run_timestamp` | gauge | `task`, `status` | Unix ts (seconds) of last run per status. Page on `time() - queue_insights_scheduled_task_last_run_timestamp{status="success"} > N`. Sample omitted when no run of that status exists. |
+| `queue_insights_scheduled_task_hung_total` | counter | `task` | Detections from `HungTaskReconciler`. |
+| `queue_insights_scheduled_task_missed_total` | counter | `task` | Detections from `MissedRunReconciler`. |
+| `queue_insights_scheduled_task_in_flight` | gauge | `task` | 1 when the task is mid-run (Started without Finished/Failed). Sample omitted when not running. |
+| `queue_insights_scheduled_snapshot_age_seconds` | gauge | (none) | Seconds since the schedule snapshot was last rewritten on app boot. **Omitted when never written** (alerts use `absent(...)` cleanly). |
+| `queue_insights_scheduled_sweeper_age_seconds` | gauge | (none) | Seconds since `MissedRunReconciler` last completed a tick. Alert on `> 2 × sweeper.sweep_seconds`. |
+
+Toggle each family independently:
+
+```php
+'prometheus' => [
+    'metrics' => [
+        // ...
+        'scheduler_runs_total' => true,
+        'scheduler_runtime_sum' => true,
+        'scheduler_last_run_timestamp' => true,
+        'scheduler_hung_total' => true,
+        'scheduler_missed_total' => true,
+        'scheduler_in_flight' => true,
+        'scheduler_snapshot_age' => true,
+        'scheduler_sweeper_age' => true,
+    ],
+
+    // Per-task cardinality control. Task rosters are typically <100,
+    // so the default is `allow_all`. `top_n_by_recency` is intentionally
+    // not supported — see internal/specs/cron-monitoring/07-platform-extensions.md §1.3.
+    'task_filter' => [
+        'mode' => 'allow_all',  // | allow_list
+        'tasks' => [],          // taskKey list, used when mode = allow_list
+    ],
+],
+```
+
+`runtime_max_seconds` is intentionally NOT shipped in v1 — would need a Lua HSET-IF-GREATER write path. Operators who need lifetime max can compute `max_over_time(queue_insights_scheduled_task_runtime_sum_seconds_total[N])` Prometheus-side as a coarse proxy, or run the per-task duration sparkline in the dashboard for exact values.
+
 ### Push gateway (short-lived workers / CLI)
 
 For processes that exit before any scrape can land, `php artisan queue-insights:prometheus-push` does a one-shot collect + PUT to a configured Pushgateway. Long-running workers should be **scraped, not pushed** — push-mode is for CLI scripts and scheduled tasks where pull-mode can't reach the process.
@@ -715,7 +758,7 @@ Run the sweep on its own short cron (`* * * * *`) — the sweeper's own work is 
 
 A run is **missed** when the cron expression's next-fire timestamp passes without a `Starting` event landing inside `sweeper.drift_seconds` (default 90 s). A run is **hung** when no `Finished` / `Failed` event arrives within `expected_runtime + hung.grace_seconds` (default 300 s); expected runtime is the rolling p95 from aggregates and falls back to `grace_seconds` alone for tasks with fewer than `hung.min_runs_for_p95` (default 10) recorded runs.
 
-When `scheduler.alerts.enabled = true`, missed/hung/failed detections dispatch typed events with per-`(taskKey, rule)` cooldown (`scheduler.alerts.cooldown_seconds`, default 900). Events are always fired regardless of cooldown — cooldown gates **only** outbound notifications via the existing `QueueAlertNotification` plumbing.
+When `scheduler.alerts.enabled = true`, missed/hung/failed detections dispatch typed events with per-`(taskKey, rule)` cooldown (`scheduler.alerts.cooldown_seconds`, default 900). Cooldown gates the **event dispatch itself** — when an alert is suppressed by cooldown, no event fires. Host listeners on `ScheduledTaskFailed` / `Missed` / `Hung` therefore only see the leading edge of an alerting condition; subsequent ticks within the cooldown window are silent until cooldown expires.
 
 ```text
 SanderMuller\QueueInsights\Events\ScheduledTaskMissed   { taskKey, task, expectedAtMs }
@@ -723,9 +766,11 @@ SanderMuller\QueueInsights\Events\ScheduledTaskHung     { taskKey, runId, task?,
 SanderMuller\QueueInsights\Events\ScheduledTaskFailed   { taskKey, runId, task, … }
 ```
 
+The package does not ship a built-in notification pipeline for these events — host apps subscribe and forward to Slack / Mail / PagerDuty / Sentry from their own listeners. Routing scheduler alerts through `QueueAlertNotification` is planned (see `internal/specs/cron-monitoring/07-platform-extensions.md` §2) but not yet shipped.
+
 ### External heartbeat
 
-In-process detection cannot catch a fully-dead scheduler (`schedule:run` not running at all). Configure an external pinger to hit a documented heartbeat URL on a schedule and alert if the URL goes silent:
+In-process detection cannot catch a fully-dead scheduler (`schedule:run` not running at all). The sweeper command **POSTs out** to an operator-supplied heartbeat URL after every successful tick — a Healthchecks.io / Cronitor / Oh Dear / Sentry Crons / Better Stack ping endpoint. Configure the destination URL and the receiving SaaS alerts when posts go silent:
 
 ```php
 'scheduler' => [
@@ -736,7 +781,7 @@ In-process detection cannot catch a fully-dead scheduler (`schedule:run` not run
 ],
 ```
 
-The host is responsible for the pinger (uptime monitor, healthchecks.io, …) — the package documents the contract but does not own the outbound side.
+Payload is a small JSON body (`host_id`, `timestamp`, `tasks_swept`); the sweeper times the request out at 5 s and logs a warning on failure rather than blocking. The host owns the receiving uptime monitor; the package owns the outbound POST.
 
 ### Retention
 

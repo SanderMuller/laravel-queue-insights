@@ -4,6 +4,7 @@ namespace SanderMuller\QueueInsights\Support;
 
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Prometheus\ClassFilter;
+use SanderMuller\QueueInsights\Prometheus\Scheduler\TaskFilter;
 
 /**
  * Prometheus-block validator. Extracted from `ConfigValidator` to keep
@@ -26,6 +27,7 @@ final class PrometheusConfigValidator
         self::validateToken($prometheus);
         self::validateAllowIps($prometheus);
         self::validateClassFilter($prometheus);
+        self::validateTaskFilter($prometheus);
         self::validateMetrics($prometheus);
         self::validateCacheTtl($prometheus);
     }
@@ -224,6 +226,73 @@ final class PrometheusConfigValidator
             throw new QueueInsightsConfigException(
                 'queue-insights.prometheus.class_filter.top_n must be a positive integer.'
             );
+        }
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $config
+     */
+    private static function validateTaskFilter(array $config): void
+    {
+        if (! isset($config['task_filter'])) {
+            return;
+        }
+
+        $filter = $config['task_filter'];
+        if (! is_array($filter)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.prometheus.task_filter must be an array.'
+            );
+        }
+
+        self::validateTaskFilterMode($filter);
+        self::validateTaskFilterTasks($filter);
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $filter
+     */
+    private static function validateTaskFilterMode(array $filter): void
+    {
+        if (! isset($filter['mode'])) {
+            return;
+        }
+
+        $mode = $filter['mode'];
+        $allowed = [
+            TaskFilter::MODE_ALLOW_ALL,
+            TaskFilter::MODE_ALLOW_LIST,
+        ];
+        if (! is_string($mode) || ! in_array($mode, $allowed, true)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.prometheus.task_filter.mode must be one of: '
+                . implode(', ', $allowed) . '.'
+            );
+        }
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $filter
+     */
+    private static function validateTaskFilterTasks(array $filter): void
+    {
+        if (! isset($filter['tasks'])) {
+            return;
+        }
+
+        $tasks = $filter['tasks'];
+        if (! is_array($tasks)) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.prometheus.task_filter.tasks must be a list of taskKey strings.'
+            );
+        }
+
+        foreach ($tasks as $i => $entry) {
+            if (! is_string($entry) || $entry === '') {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.prometheus.task_filter.tasks[{$i}] must be a non-empty string."
+                );
+            }
         }
     }
 

@@ -92,9 +92,9 @@ final class ClassFilter
      */
     private function allowAll(string $connection): array
     {
-        $raw = $this->redisCommand('zrange', [KeyPrefix::make("classes:{$connection}"), 0, -1]);
-
-        return $this->coerceList($raw);
+        return StringList::coerce(
+            $this->redisCommand('zrange', [KeyPrefix::make("classes:{$connection}"), 0, -1]),
+        );
     }
 
     /**
@@ -103,28 +103,10 @@ final class ClassFilter
     private function topNByRecency(string $connection): array
     {
         $topN = max(1, Config::int('prometheus.class_filter.top_n', 50));
-        $raw = $this->redisCommand('zrevrange', [KeyPrefix::make("classes:{$connection}"), 0, $topN - 1]);
 
-        return $this->coerceList($raw);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function coerceList(mixed $raw): array
-    {
-        if (! is_array($raw)) {
-            return [];
-        }
-
-        $out = [];
-        foreach ($raw as $entry) {
-            if (is_string($entry) && $entry !== '') {
-                $out[] = $entry;
-            }
-        }
-
-        return $out;
+        return StringList::coerce(
+            $this->redisCommand('zrevrange', [KeyPrefix::make("classes:{$connection}"), 0, $topN - 1]),
+        );
     }
 
     /**

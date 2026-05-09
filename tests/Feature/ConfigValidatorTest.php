@@ -385,6 +385,27 @@ it('rejects a non-string class_filter.classes entry', function (): void {
         ->toThrow(QueueInsightsConfigException::class, 'must be a non-empty string');
 });
 
+it('rejects an unknown task_filter.mode', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['task_filter' => ['mode' => 'top_n_by_recency']]))
+        ->toThrow(QueueInsightsConfigException::class, 'task_filter.mode must be one of');
+});
+
+it('rejects a non-array task_filter.tasks', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['task_filter' => ['tasks' => 'foo']]))
+        ->toThrow(QueueInsightsConfigException::class, 'task_filter.tasks must be a list');
+});
+
+it('rejects a non-string task_filter.tasks entry', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus(['task_filter' => ['tasks' => ['']]]))
+        ->toThrow(QueueInsightsConfigException::class, 'must be a non-empty string');
+});
+
+it('accepts a well-formed task_filter block', function (): void {
+    expect(fn () => ConfigValidator::validatePrometheus([
+        'task_filter' => ['mode' => 'allow_list', 'tasks' => ['task-key-a', 'task-key-b']],
+    ]))->not->toThrow(Throwable::class);
+});
+
 it('rejects a non-array prometheus.middleware', function (): void {
     expect(fn () => ConfigValidator::validatePrometheus(['middleware' => 'foo']))
         ->toThrow(QueueInsightsConfigException::class, 'middleware must be null or an array');
