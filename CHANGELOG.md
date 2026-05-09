@@ -4,6 +4,26 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.13.0 - 2026-05-09
+
+### Highlights
+
+- **Per-task drilldown modal** — click any task in the **Tasks** card on the Schedule tab. Modal renders the cron expression + flag pills (`runInBackground` / `onOneServer` / `withoutOverlapping` / `evenInMaintenanceMode`), a six-tile 24h grid (runs / failed / hung / skipped / missed / runtime p95), the next-due timestamp computed via `dragonmantank/cron-expression` against the task's own timezone, and a recent-runs table scoped to that task. Closure-only tasks render a "Output capture not supported by Laravel for closure tasks" hint above the stats grid; commands don't see it. URL-bound under `?s_tk=` so deep-links round-trip.
+- **Per-run drilldown modal** — click any row in the panel-level **Recent runs** table or in the per-task modal's runs table. Modal carries a status-coloured accent stripe, the host id + started-at + runtime + exit-code grid, the `recovered_from_hung` badge when applicable, a structured exception block (class + message + file:line + trace), an output `<pre>` (suppressed for closure tasks even when `has_output=1`), and a skip-reason explainer covering all five `SkipReasonResolver` outcomes (`mutex` / `one_server` / `maintenance` / `between` / `filter`). A copy-as-Markdown button on the header hands the full context to AI agents or trackers. URL-bound under `?s_rid={taskKey}:{runId}` so deep-links round-trip; aged-out runs render an "Expired" empty state instead of 500ing.
+- **Host-distribution bar chart** — the per-task modal walks the last 200 runs and renders a per-host bar (count + percentage). Suppressed for tasks that ran on a single host so single-fleet operators don't see visual noise. Answers the "is `onOneServer` actually distributing fairly?" question Laravel has no built-in tool for.
+- **Correlated-jobs section** — every uuid the run dispatched (read from the `qi:sched:run-jobs:{runId}` zset already written by `RecordJobQueued`) is listed under a dedicated header on the run modal. Clicking a uuid emits `qi-open-job-by-uuid`, which the parent `QueueInsightsDashboard` resolves via `UuidResolver::resolve` and opens the matching queue-side modal — completed / failed / pending — through the existing `openByUuid` chain. Silenced filters are not honoured here per the read-side-only silencing rule; once the operator has the uuid, the modal always opens.
+- **Two new reader methods** — `ScheduleReader::runDetail($taskKey, $runId)` returns the per-run hash plus correlated-jobs list (null on aged-out runs); `ScheduleReader::runOutput($taskKey, $runId)` separately fetches the captured stdout/stderr blob so paged recent-runs lists never accidentally pull multi-KB payloads. Both are part of the public read API and shape-stable.
+- **Scheduler-side Prometheus metrics** — eight new families exposed on `/metrics` when both `scheduler.enabled = true` and the per-family toggle is set: `queue_insights_scheduled_task_runs_total{task,status}` (status: `success` / `failed` / `skipped`), `queue_insights_scheduled_task_runtime_sum_seconds_total{task}`, `queue_insights_scheduled_task_last_run_timestamp{task,status}`, `queue_insights_scheduled_task_hung_total{task}`, `queue_insights_scheduled_task_missed_total{task}`, `queue_insights_scheduled_task_in_flight{task}`, `queue_insights_scheduled_snapshot_age_seconds`, `queue_insights_scheduled_sweeper_age_seconds`. **Default off per family** (mirrors the per-class queue-metrics stance). Per-task cardinality control via `prometheus.task_filter` — `allow_all` (default) or `allow_list` with a whitelist of `taskKey`s; `top_n_by_recency` is intentionally not supported for v1 (would require a new write path). Snapshot + sweeper age gauges omit their sample when the underlying key has never been written so Prometheus alerts can use `absent(...)` cleanly. Backed by a new `runtime_sum_ms` counter on `qi:sched:counters:{taskKey}` that pairs with `total_runs` for a monotonic mean — the existing per-bucket `runtime_sum_ms` on `sched:agg:*` rolls hourly and TTLs out, so cannot back a Prometheus counter on its own.
+
+### Fixes
+
+- **`<x-qi-time>` now auto-detects ms-scale timestamps**. Bare ints `>= 10^12` are divided by 1000 before being handed to `Date::createFromTimestamp`, so the schedule subsystem's `started_at` / `finished_at` / `snapshot:at` fields stop rendering as "56297 years from now". Existing call sites passing unix-seconds are unaffected — no real seconds-timestamp will hit `10^12` for the next 32 millennia. No per-call-site `:ms` flag needed.
+- **`scheduler.snapshot_rebuild` flag (default `true`)** gates the `app->booted` callback that rewrites `qi:sched:tasks` + `qi:sched:tasks:order` from `Schedule::events()`. Hosts that pre-seed the snapshot keys themselves — workbench preview seeders, fixture-driven staging environments, custom import scripts — can set `QUEUE_INSIGHTS_SCHEDULER_SNAPSHOT_REBUILD=false` to keep their own data. The workbench preview turns it off internally so Livewire polls no longer collapse the 6-task fixture down to the package's single auto-registered `queue-insights:snapshot` task on every interaction.
+- **`Scheduler\CommandLabel::short()`** strips Laravel's `Event::compileCommand()` artefacts in list surfaces — a Herd-emitted `'/Users/foo/Library/Application Support/Herd/bin/php' 'artisan' 'queue-insights:snapshot'` becomes `php artisan queue-insights:snapshot`. Recognises macOS / Homebrew / Linux / Windows binary paths and preserves versioned suffixes (`php8.2`, `php-cli`). Applied to the Tasks card, the Recent runs row, the filter dropdown, and the per-run modal header. The per-task modal still shows the full unmodified command verbatim — operators debugging an unusual interpreter path keep that information.
+- **Scheduler alert cooldown semantics clarified.** The README previously claimed `ScheduledTaskFailed` / `Missed` / `Hung` events fire on every detection regardless of cooldown, with cooldown only gating outbound notifications. That was wrong — cooldown gates the **event dispatch itself**, so host listeners only see the leading edge of an alerting condition; subsequent ticks within the cooldown window are silent until cooldown expires. Behaviour unchanged; the docs now match the code.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.12.0...0.13.0
+
 ## 0.12.0 - 2026-05-08
 
 **Scheduler observability** — capture, dashboard panel, and missed/hung detection for `Illuminate\Console\Events\Scheduled*`. Off by default; existing hosts opt in via one env var. Plus a one-line breaking change for hosts on SQS — `aws/aws-sdk-php` is no longer a hard `require`.
@@ -32,6 +52,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 ```
 ### What's Changed
@@ -238,6 +259,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -347,6 +369,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -382,6 +405,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -505,6 +529,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
