@@ -4,6 +4,28 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.14.0 - 2026-05-10
+
+Scheduler alerts now route through the same `QueueAlertNotification` pipeline as queue alerts — one mental model, one set of channels (log / slack / mail), with an optional per-domain channel block for hosts that want scheduler alerts in a different Slack channel.
+
+### Highlights
+
+- **Scheduler alerts → unified pipeline.** `ScheduledTask{Failed,Hung,Missed}` now flow through `IssueDispatcher` and `QueueAlertNotification`. Typed events keep firing alongside, so existing host listeners stay wired.
+- **Per-domain channel routing.** New `scheduler.alerts.channels` config block (mirrors `alerts.channels` shape). Populate any channel inside it to route scheduler alerts separately; omit it and single-list installs fall back to `alerts.channels`.
+- **Slack + mail deep-links.** Scheduler payloads carry a `Run URL` field linking into the dashboard's per-run modal (`?s_rid={taskKey}:{runId}`); missed runs link to the per-task modal.
+- **Master-switch semantics.** Scheduler notifications gate on **both** `alerts.enabled` AND `scheduler.alerts.enabled`, so hosts running with typed events alone pre-upgrade don't suddenly start paging.
+
+### Breaking changes
+
+- Scheduler cooldown key namespace moved from `sched:alert:cooldown:{rule}:{taskKey}` to `alert:cooldown:scheduled_task_{rule}:task:{taskKey}`. The first sweep tick after upgrade may fire one duplicate alert per (task, rule) actively cooling down at the boundary. See [UPGRADING.md#scheduler-alerts-route-through-queuealertnotification](UPGRADING.md#scheduler-alerts-route-through-queuealertnotification) for the one-shot Redis cleanup.
+
+### What's Changed
+
+* feat(scheduler-alerts): unify into QueueAlertNotification + per-domain channels
+* refactor(dashboard): extract RetryAction + audit context out of Livewire
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.13.0...0.14.0
+
 ## 0.13.0 - 2026-05-09
 
 ### Highlights
@@ -52,6 +74,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 ```
@@ -260,6 +283,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -370,6 +394,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -405,6 +430,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -529,6 +555,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
