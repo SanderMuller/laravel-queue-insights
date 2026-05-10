@@ -9,7 +9,9 @@
 -- ARGV[1] = uuid
 -- ARGV[2] = started_at (unix seconds)
 -- ARGV[3] = ttl seconds (applied to hash + inflight zset)
-redis.call('HSET', KEYS[1], 'state', 'in_flight', 'started_at', ARGV[2])
+-- ARGV[4] = attempts (current pickup count; pending-row template renders a
+--           "retry" badge when this is > 1)
+redis.call('HSET', KEYS[1], 'state', 'in_flight', 'started_at', ARGV[2], 'attempts', ARGV[4])
 redis.call('EXPIRE', KEYS[1], ARGV[3])
 
 redis.call('ZREM', KEYS[2], ARGV[1])

@@ -107,6 +107,18 @@ it('swallows localStorage throw on read and write', function (): void {
     expect($html)->toContain('try { localStorage.setItem(KEY, pref); } catch (err) {}');
 });
 
+it('re-applies theme on livewire:navigated so the connection-scope picker preserves dark mode', function (): void {
+    // wire:navigate morphs <body> AND replaces <html> attributes from the
+    // freshly-fetched response, wiping the runtime-set `dark` class. Without
+    // a `livewire:navigated` listener that re-runs `apply(readPref())` the
+    // user's chosen theme is lost on every connection switch.
+    config()->set('queue-insights.dashboard.theme.enabled', true);
+
+    expect(renderQiLayout())
+        ->toContain("window.addEventListener('livewire:navigated'")
+        ->toContain('apply(readPref())');
+});
+
 it('apply() dispatches qi-theme-applied with preference + resolved scheme', function (): void {
     config()->set('queue-insights.dashboard.theme.enabled', true);
 

@@ -45,7 +45,9 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **24h throughput sparkline** + headline stats (jobs/min, past hour, max p95 wait + runtime).
 - **Queues grouped *Needs attention* vs *Healthy*** so a broken queue can't hide in a long list.
 - **Per-class metrics** — 24h processed / failed, avg + max duration, last run.
-- **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), per-page dropdown (10 / 25 / 50 / 100), all persisted in the URL.
+- **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), per-page dropdown (10 / 25 / 50 / 100), all persisted in the URL. Failed rows surface runtime alongside Completed (computed via a 30 d `failed-runtime:{uuid}` side-key written when the worker's `start:` stamp survives to `JobFailed`).
+- **Global queue + class scope across every tab.** Click a queue row on the Queues tab or a class row on the Classes tab to scope Failed, Completed, Pending, Classes, and Silenced lists in one move. URL-shareable (`?qk={conn}:{queue}`, `?ck={fqcn}`); inline scope strip above the tabs shows the active scope with per-chip clear; click an already-selected row to toggle off. Scoping a silenced class auto-reveals its rows on Failed + Completed.
+- **Retry badge** — pending, in-flight, and completed rows render an orange `retry N` chip with hover tooltip when the worker has picked the job up more than once. Backed by `attempts` stamped on the `pending:{uuid}` hash at `JobProcessing`.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
@@ -166,18 +168,33 @@ Guards on the retry path:
 To triage a failed job:
 
 1. Open the dashboard and find the row in the **Recent failed** list.
-2. Optional: click **Filter ⌄** above the list and narrow by connection, queue, class, or date range. The URL updates as you change a field, so the filtered view is shareable.
+2. Optional: narrow with the inline filter toolbar above the list — connection, queue, class, or date range. The URL updates as you change a field, so the filtered view is shareable.
 3. Click any row to open the failed-job modal. You'll see the exception, stack trace, payload, and metadata.
 4. To retry one job, click *Retry* in the modal header. The button flips to a red "Confirm retry?" for two seconds; click again to fire. The modal closes and a green banner confirms dispatch. If `queue:retry` exits non-zero, you get a red banner instead of a misleading success.
 5. To retry several at once, set at least one filter. A *Retry N jobs* button appears next to the section heading, with the same two-click confirm pattern. Anything matching more than 100 rows shows a *N matches · narrow to retry* hint instead of an action button.
 
 A failed retry never leaves the dashboard in a half-broken state. The row is either re-dispatched (and removed from `failed_jobs`) or left alone.
 
-### Filtering
+### Filtering & scoping
 
-Both *Recent completed* and *Recent failed* have a collapsible filter row above the list. Click **Filter ⌄** to expand. Each field binds to a short query-string key, so a narrowed view is shareable and bookmarkable.
+There are two layers. **Global scope** (queue + class) is set by clicking a row on the Queues or Classes tab and applies to every list pane — Failed, Completed, Pending, Silenced. **Per-pane filters** narrow within a tab on top of the active scope.
 
-Connection, Queue, and Class are populated as `<select>` dropdowns from the configured snapshots and the 24h class roster — no free-text typos.
+#### Global scope
+
+| Axis  | Set by                                                | Cleared by                                          | Query-string key |
+|-------|-------------------------------------------------------|-----------------------------------------------------|------------------|
+| Class | clicking a class row on the **Classes** tab           | clicking the same row again, or the chip's `×`      | `ck`             |
+| Queue | clicking the connection/queue cell on the **Queues** tab | clicking the same row again, or the chip's `×`      | `qk`             |
+
+Active scope renders as an inline `Filtering by queue=… · class=…` strip above the tab bar with a per-chip clear button. URL-shareable so a paste into chat preserves the operator's view.
+
+When the active class scope IS a class in `queue-insights.silenced`, both Failed and Completed auto-reveal silenced rows so the lists don't read empty after the click. The "Show silenced" checkbox on each pane stays available for an explicit override.
+
+#### Per-pane filters
+
+Both *Recent completed* and *Recent failed* have an always-visible filter toolbar above the list. Each field binds to a short query-string key, so a narrowed view is shareable and bookmarkable.
+
+Connection, Queue, and Class are populated as `<select>` dropdowns from the configured snapshots and the 24h class roster — no free-text typos. The Class dropdown on both panes binds to the global `?ck=` (same prop the Classes tab toggles), so picking a class on either pane scopes the other automatically.
 
 #### Recent failed filter
 
@@ -185,7 +202,7 @@ Connection, Queue, and Class are populated as `<select>` dropdowns from the conf
 |------------|------------------|----------------------------------------------------------------------|
 | Connection | `fc`             | Exact (`connection` column)                                          |
 | Queue      | `fq`             | Exact (`queue` column)                                               |
-| Class      | `fk`             | Anchored prefix substring on `payload.displayName`, case-insensitive |
+| Class      | `ck`             | Anchored prefix substring on `payload.displayName`, case-insensitive |
 | From       | `ffrom`          | `failed_at >= <Y-m-d> 00:00:00`                                      |
 | To         | `fto`            | `failed_at <= <Y-m-d> 23:59:59`                                      |
 
@@ -195,7 +212,7 @@ The filter row also drives the bulk-retry scope. The *Retry N jobs* button retri
 
 #### Recent completed filter
 
-Same five fields, separate state, separate query-string keys. Class is pre-filtered at the storage layer (per-class Redis stream key); the other four narrow the already-fetched 50-row default cap in PHP.
+Same five fields, separate state. Class is pre-filtered at the storage layer (per-class Redis stream key); the other four narrow the already-fetched 50-row default cap in PHP.
 
 | Field      | Query-string key | Match semantics                                          |
 |------------|------------------|----------------------------------------------------------|
@@ -221,6 +238,8 @@ A 7-day clock-skew guard rejects any wait sample over that, so a producer host w
 ### Pending & delayed jobs
 
 Each queue row in the dashboard has a collapsible inspector that shows individual pending and delayed jobs — class FQCN, queued-at humanized, and (for delayed) `runs in <countdown>`. The toggle button shows the tracked count next to the queue's badges; click to expand. The expand state is URL-shareable (`?qopen=connection:queue`).
+
+The Pending tab itself shows three sub-sections (in-flight / pending / delayed). Per-row chips surface live state: amber `running` with a pulsing dot for in-flight rows, indigo `delayed` with a hover tooltip showing total delay + queued/runs timestamps for delayed rows, and an orange `retry N` chip when the worker has picked the job up more than once (`attempts > 1`). The retry stamp is written by the `JobProcessing` listener via `MarkInFlight.lua` and ages out with the pending hash.
 
 The data is **event-captured into Redis**, not peeked from the queue driver. The `JobQueued` listener stamps a per-uuid hash + per-queue sorted set into the package's Redis namespace; `JobProcessing` / `JobProcessed` / `JobFailed` clean up. Driver-agnostic by design — works for SQS, where there's no way to peek individual messages without consuming them, alongside Redis and database queues.
 

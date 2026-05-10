@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Http\Livewire;
 
 use Illuminate\Contracts\View\View;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Gate;
@@ -10,6 +11,7 @@ use Illuminate\Support\Facades\View as ViewFactory;
 use Livewire\Attributes\Lazy;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Scheduler\AggregatesQuery;
 use SanderMuller\QueueInsights\Scheduler\CommandLabel;
 use SanderMuller\QueueInsights\Scheduler\ScheduleReader;
@@ -44,8 +46,8 @@ final class ScheduleInsightsPanel extends Component
     #[Url(as: 's_to', except: '')]
     public string $to = '';
 
-    #[Url(as: 's_pp', except: 50)]
-    public int $perPage = 50;
+    #[Url(as: 's_pp', except: 10)]
+    public int $perPage = 10;
 
     #[Url(as: 's_p', except: 1)]
     public int $page = 1;
@@ -65,6 +67,16 @@ final class ScheduleInsightsPanel extends Component
      */
     #[Url(as: 's_rid', except: '')]
     public string $selectedRunId = '';
+
+    public function boot(): void
+    {
+        // URL-hydration of `?s_pp=...` bypasses `updated()`, so clamp on every
+        // request. Mirrors `QueueInsightsDashboard::boot` for the queue
+        // dashboard's per-page props.
+        if (! in_array($this->perPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+            $this->perPage = 10;
+        }
+    }
 
     public function mount(ScheduleReader $reader): void
     {
@@ -105,9 +117,18 @@ final class ScheduleInsightsPanel extends Component
 
     public function updated(string $name): void
     {
+        if ($name === 'perPage' && ! in_array($this->perPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+            $this->perPage = 10;
+        }
+
         if (in_array($name, ['taskFilter', 'statusFilter', 'hostFilter', 'from', 'to', 'perPage'], true)) {
             $this->page = 1;
         }
+    }
+
+    public function gotoRunsPage(int $page): void
+    {
+        $this->page = max(1, $page);
     }
 
     public function openTaskModal(string $taskKey): void
@@ -204,9 +225,21 @@ final class ScheduleInsightsPanel extends Component
             }
         }
 
-        $perPage = max(10, min(200, $this->perPage));
-        $page = max(1, $this->page);
+        $perPage = $this->perPage;
         $snapshotAtMs = $reader->snapshotAtMs();
+
+        $totalRuns = $reader->countRuns($filters);
+        $totalPages = max(1, (int) ceil($totalRuns / $perPage));
+        $page = min(max(1, $this->page), $totalPages);
+
+        $recentRuns = $reader->recentRuns($filters, $perPage, $page);
+        $runsPaginator = new LengthAwarePaginator(
+            items: $recentRuns,
+            total: $totalRuns,
+            perPage: $perPage,
+            currentPage: $page,
+            options: ['pageName' => 's_p'],
+        );
 
         $taskModal = $this->hydrateTaskModal($reader, $tasksWithStats);
         $runModal = $this->hydrateRunModal($reader, $tasksWithStats);
@@ -220,8 +253,10 @@ final class ScheduleInsightsPanel extends Component
             'needsAttention' => $needsAttention,
             'healthy' => $healthy,
             'tasksAll' => $tasksWithStats,
-            'recentRuns' => $reader->recentRuns($filters, $perPage, $page),
-            'totalRuns' => $reader->countRuns($filters),
+            'recentRuns' => $recentRuns,
+            'totalRuns' => $totalRuns,
+            'runsPaginator' => $runsPaginator,
+            'perPageOptions' => DashboardData::PER_PAGE_OPTIONS,
             'distinctHosts' => $reader->distinctHosts(),
             'taskFilter' => $this->taskFilter,
             'statusFilter' => $this->statusFilter,

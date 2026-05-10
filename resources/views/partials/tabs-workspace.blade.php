@@ -30,26 +30,29 @@
     $scheduleEnabled = \SanderMuller\QueueInsights\Support\Config::bool('scheduler.enabled', false);
 @endphp
 
-<div x-data="{ tab: 'overview' }"
-     x-init="
+<div x-data="{
+        tab: 'overview',
         // Tabs that may be conditionally hidden — if the hash points at
         // one of these and the tab isn't rendered, fall back to overview
         // so the operator doesn't land on an empty x-show pane.
-        const conditional = {
+        conditional: {
             pending: {{ ($pendingEnabled ?? false) ? 'true' : 'false' }},
             batches: {{ ($batchesEnabled ?? false) ? 'true' : 'false' }},
             silenced: {{ (count($silencedClasses ?? []) + count($silencedPatterns ?? [])) > 0 ? 'true' : 'false' }},
             schedule: {{ $scheduleEnabled ? 'true' : 'false' }},
-        };
-        const apply = () => {
+        },
+        setTab(name) {
+            const target = (name in this.conditional && ! this.conditional[name]) ? 'overview' : name;
+            this.tab = target;
+            history.replaceState(null, '', '#qi-' + target);
+        },
+        readHash() {
             const m = (window.location.hash || '').match(/^#qi-(overview|queues|pending|batches|completed|failed|classes|silenced|schedule|alerts)$/);
-            if (! m) return;
-            const target = m[1];
-            tab = (target in conditional && ! conditional[target]) ? 'overview' : target;
-        };
-        apply();
-        window.addEventListener('hashchange', apply);
-     "
+            if (m) this.setTab(m[1]);
+        }
+     }"
+     x-init="readHash()"
+     x-on:hashchange.window="readHash()"
      class="flex flex-col gap-4">
 
     {{-- Sticky tab strip — bleeds into the page padding so the underline runs full-width.

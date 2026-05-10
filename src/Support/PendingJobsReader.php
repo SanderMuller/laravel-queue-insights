@@ -234,6 +234,7 @@ final class PendingJobsReader
         $state = $hash['state'] ?? null;
         $startedAt = $hash['started_at'] ?? null;
         $parentUuid = $hash['parent_uuid'] ?? null;
+        $attempts = $hash['attempts'] ?? null;
 
         return [
             'uuid' => $uuid,
@@ -246,6 +247,7 @@ final class PendingJobsReader
             'state' => is_string($state) && $state !== '' ? $state : null,
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
             'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
+            'attempts' => is_numeric($attempts) ? (int) $attempts : null,
         ];
     }
 
@@ -347,7 +349,7 @@ final class PendingJobsReader
     }
 
     /**
-     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}|null
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int}|null
      */
     private static function readHash(string $uuid): ?array
     {
@@ -369,6 +371,7 @@ final class PendingJobsReader
         $state = $hash['state'] ?? null;
         $startedAt = $hash['started_at'] ?? null;
         $parentUuid = $hash['parent_uuid'] ?? null;
+        $attempts = $hash['attempts'] ?? null;
 
         return [
             'uuid' => $uuid,
@@ -379,6 +382,7 @@ final class PendingJobsReader
             'state' => is_string($state) && $state !== '' ? $state : null,
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
             'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
+            'attempts' => is_numeric($attempts) ? (int) $attempts : null,
         ];
     }
 

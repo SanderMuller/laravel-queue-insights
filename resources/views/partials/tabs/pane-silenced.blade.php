@@ -5,16 +5,20 @@
      * checkbox + URL `?fs=1` reveals the same rows inline; this pane is the
      * one-click landing for "what's currently muted".
      *
-     * Mirrors Horizon's "Silenced jobs" tab in spirit: a roster, not a
-     * paginated archive — capped at one page per axis. Operators who need
-     * deep history toggle the per-pane "Show silenced" checkbox on the
-     * main Failed/Completed panes.
+     * Paginated per axis — silenced classes are typically the spammiest
+     * traffic so a one-page-per-axis cap underrepresented activity. Default
+     * 10 per page, URL-bound via `sfp` / `scp` (page) and `sfpp` / `scpp`
+     * (per page). Operators who need deep history can also toggle the
+     * per-pane "Show silenced" checkbox on the main Failed/Completed panes.
      *
      * Required scope vars:
-     *   $silencedClasses        — list<string> FQCNs in `queue-insights.silenced`
-     *   $silencedPatterns       — list<string> globs in `queue-insights.silenced_patterns`
-     *   $silencedFailedRows     — RowEnricher::failed() output, capped at PER_PAGE
-     *   $silencedCompletedRows  — RowEnricher::completed() output, capped at PER_PAGE
+     *   $silencedClasses             — list<string> FQCNs in `queue-insights.silenced`
+     *   $silencedPatterns            — list<string> globs in `queue-insights.silenced_patterns`
+     *   $silencedFailedRows          — RowEnricher::failed() output, current page
+     *   $silencedCompletedRows       — RowEnricher::completed() output, current page
+     *   $silencedFailedPaginator     — \Illuminate\Pagination\LengthAwarePaginator
+     *   $silencedCompletedPaginator  — \Illuminate\Pagination\LengthAwarePaginator
+     *   $perPageOptions              — list<int> shared with the main Failed/Completed panes
      *   $scopeConnection        — ?string scope (drives the empty-state message
      *                             so an operator on /queue-insights/{conn} sees
      *                             "No silenced-class activity on the {conn} connection"
@@ -71,19 +75,17 @@
     {{-- Failed (silenced) — uses the same row partial as the main Failed pane
         so retry button / chain chip / batch chip behaviour stays in lockstep. --}}
     <section>
-        <h3 class="text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
-            Failed <span class="font-normal text-gray-500 dark:text-gray-400">({{ count($silencedFailedRows) }})</span>
-        </h3>
-        @if(count($silencedFailedRows) === 0)
-            <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
+        <h3 class="mb-2 text-xs font-semibold tracking-wide text-red-700 dark:text-red-300">Failed <span class="font-normal text-red-500 dark:text-red-400 tabular-nums">({{ number_format($silencedFailedPaginator->total()) }})</span></h3>
+        @if($silencedFailedPaginator->total() === 0)
+            <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
                 {{ $emptyFailedMessage }}
             </div>
         @else
-            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
                 <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
-                    <div class="col-span-4">Job</div>
-                    <div class="col-span-3">Queue</div>
-                    <div class="col-span-2 text-right">Attempts</div>
+                    <div class="col-span-5">Job</div>
+                    <div class="col-span-2">Queue</div>
+                    <div class="col-span-2 text-right">Runtime</div>
                     <div class="col-span-2 text-right">Failed</div>
                     <div class="col-span-1"></div>
                 </div>
@@ -92,24 +94,28 @@
                         @include('queue-insights::partials.failed-list-row', ['f' => $f])
                     @endforeach
                 </ul>
+                @include('queue-insights::partials.pagination-controls', [
+                    'paginator' => $silencedFailedPaginator,
+                    'gotoMethod' => 'gotoSilencedFailedPage',
+                    'perPageModel' => 'silencedFailedPerPage',
+                    'perPageOptions' => $perPageOptions,
+                ])
             </div>
         @endif
     </section>
 
     {{-- Completed (silenced) — same shape, same row partial. --}}
     <section>
-        <h3 class="text-sm font-semibold tracking-tight text-gray-700 dark:text-gray-300">
-            Completed <span class="font-normal text-gray-500 dark:text-gray-400">({{ count($silencedCompletedRows) }})</span>
-        </h3>
-        @if(count($silencedCompletedRows) === 0)
-            <div class="mt-3 rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
+        <h3 class="mb-2 text-xs font-semibold tracking-wide text-gray-500 dark:text-gray-300">Completed <span class="font-normal text-gray-400 dark:text-gray-400 tabular-nums">({{ number_format($silencedCompletedPaginator->total()) }})</span></h3>
+        @if($silencedCompletedPaginator->total() === 0)
+            <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">
                 {{ $emptyCompletedMessage }}
             </div>
         @else
-            <div class="mt-3 rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+            <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
                 <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
-                    <div class="col-span-4">Job</div>
-                    <div class="col-span-3">Queue</div>
+                    <div class="col-span-5">Job</div>
+                    <div class="col-span-2">Queue</div>
                     <div class="col-span-2 text-right">Runtime</div>
                     <div class="col-span-2 text-right">Completed</div>
                     <div class="col-span-1"></div>
@@ -119,6 +125,12 @@
                         @include('queue-insights::partials.completed-row', ['row' => $row])
                     @endforeach
                 </ul>
+                @include('queue-insights::partials.pagination-controls', [
+                    'paginator' => $silencedCompletedPaginator,
+                    'gotoMethod' => 'gotoSilencedCompletedPage',
+                    'perPageModel' => 'silencedCompletedPerPage',
+                    'perPageOptions' => $perPageOptions,
+                ])
             </div>
         @endif
     </section>

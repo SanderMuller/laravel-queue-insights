@@ -156,3 +156,24 @@ it('hides the Pending section entirely when pending.enabled is false', function 
         ->assertDontSee('No pending jobs tracked.')
         ->assertDontSeeHtml('aria-label="Pending jobs"');
 });
+
+it('selectedQueue narrows the pending fetch to the scoped queue so cross-queue traffic cannot evict it', function (): void {
+    // Saturate the unrelated queue with > 50 jobs (the global candidate cap).
+    // Without scoped fetch narrowing, these would consume the candidate
+    // window and leave the scoped queue's single row missing from the list.
+    $now = Date::now()->getTimestamp();
+    for ($i = 0; $i < 60; ++$i) {
+        seedPendingForSection('uuid-other-' . $i, 'other', 'mail', 'App\\Jobs\\Spam', $now - 100 - $i);
+    }
+
+    seedPendingForSection('uuid-target', 'myredis', 'work', 'App\\Jobs\\Target', $now - 5);
+
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'myredis', 'work');
+
+    $pendingRows = $component->viewData('pendingRows');
+    expect($pendingRows)->toBeArray();
+    /** @var array<int, array<string, mixed>> $pendingRows */
+    expect($pendingRows)->toHaveCount(1)
+        ->and($pendingRows[0]['uuid'])->toBe('uuid-target');
+});

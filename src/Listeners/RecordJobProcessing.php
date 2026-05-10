@@ -52,7 +52,12 @@ final class RecordJobProcessing
             // it isn't accidentally skipped by an early return below (missing
             // pushed key, clock-skew rejection). If the worker successfully
             // picked up a job, it's in-flight regardless.
-            $this->markInFlight($redis, $uuid, $connection, $queue, (int) $now);
+            // `$event->job->attempts()` returns the current pickup count
+            // (1 on first try, ≥2 on retries / `release()`). Stamped on the
+            // pending hash so the in-flight row template can flag a retry
+            // without re-reading the failed_jobs table.
+            $attempts = (int) $event->job->attempts();
+            $this->markInFlight($redis, $uuid, $connection, $queue, (int) $now, $attempts);
             $redis->command('setex', [
                 KeyPrefix::make("start:{$uuid}"),
                 3600,
@@ -135,7 +140,7 @@ final class RecordJobProcessing
      * without a second write path. Cleanup on Processed/Failed deletes the
      * hash + both zset entries.
      */
-    private function markInFlight(RedisConnection $redis, string $uuid, string $connection, string $queue, int $startedAt): void
+    private function markInFlight(RedisConnection $redis, string $uuid, string $connection, string $queue, int $startedAt, int $attempts): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
@@ -156,6 +161,7 @@ final class RecordJobProcessing
             $uuid,
             (string) $startedAt,
             (string) Config::int('pending.ttl_seconds', 86400),
+            (string) max(1, $attempts),
         );
     }
 

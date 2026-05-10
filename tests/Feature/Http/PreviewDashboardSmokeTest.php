@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Livewire\Livewire;
+use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\BatchReader;
@@ -43,10 +44,11 @@ it('PreviewSeeder hydrates the dashboard surface against real Redis state', func
         ->toBe('preview-uuid-process-import');
 
     // failed_jobs table — production read path is DB, not Redis. Three
-    // un-silenced rows + two silenced (`PingThirdPartyVendor`) demonstrate
-    // the silenced-jobs filter — the Failed list hides the latter pair
-    // by default but they still occupy DB rows.
-    expect(DB::table('failed_jobs')->count())->toBe(5);
+    // un-silenced rows + one silenced (`PingThirdPartyVendor`) demonstrate
+    // the silenced-jobs filter — the Failed list hides the latter by
+    // default but it still occupies a DB row. Silenced-class success
+    // traffic lives on the completed stream (see seedCompletedStream).
+    expect(DB::table('failed_jobs')->count())->toBe(4);
 
     // Pending + delayed counts calibrated via the live readers so the
     // headline `pendingPreview` strip (cap 5) shows in-flight + pending
@@ -59,9 +61,51 @@ it('PreviewSeeder hydrates the dashboard surface against real Redis state', func
         ['connection' => 'sqs', 'queue' => 'reports'],
     ]);
     $svc = resolve(QueueInsights::class);
-    expect($svc->allInFlightJobs())->toHaveCount(2)
-        ->and($svc->allPendingJobs())->toHaveCount(2)
+    // Pending + in-flight each include one retry-flagged row (`attempts > 1`)
+    // so the preview demonstrates the orange "retry N" badge in the Pending
+    // tab; Delayed retains the original 2 because a delayed retry is the
+    // same visual state as a regular delayed.
+    expect($svc->allInFlightJobs())->toHaveCount(3)
+        ->and($svc->allPendingJobs())->toHaveCount(3)
         ->and($svc->allDelayedJobs())->toHaveCount(2);
+
+    // Connection-scoped throughput must be non-zero on every seeded
+    // connection. Regression: without per-connection counters the
+    // /queue-insights/redis and /queue-insights/sqs charts both
+    // rendered 0 while the unscoped All view showed thousands.
+    $allProcessed = array_sum(array_column($svc->hourlyThroughput(24), 'processed'));
+    $redisProcessed = array_sum(array_column($svc->hourlyThroughput(24, 'redis'), 'processed'));
+    $sqsProcessed = array_sum(array_column($svc->hourlyThroughput(24, 'sqs'), 'processed'));
+
+    expect($allProcessed)->toBeGreaterThan(0)
+        ->and($redisProcessed)->toBeGreaterThan(0)
+        ->and($sqsProcessed)->toBeGreaterThan(0)
+        ->and($redisProcessed + $sqsProcessed)->toBe($allProcessed);
+
+    // Silenced class `PingThirdPartyVendor` has 1 failure + many completed
+    // entries — without the success traffic the Silenced tab's Completed
+    // roster shows 0 even though the failure list has activity, which
+    // misrepresents the "noisy-but-mostly-OK" shape silencing is for.
+    $silencedFailedCount = DB::table('failed_jobs')
+        ->where('payload', 'like', '%PingThirdPartyVendor%')
+        ->count();
+    $silencedCompletedEntries = $redis->command('xrange', [
+        'qmpreview:completed:App\\Jobs\\PingThirdPartyVendor', '-', '+',
+    ]);
+
+    expect($silencedFailedCount)->toBe(1)
+        ->and($silencedCompletedEntries)->toBeArray()->toHaveCount(50);
+
+    // The Silenced tab's Failed list reads from `silencedFailedRows` which
+    // filters `RowEnricher::failed()` output by `$row['class']`. Earlier
+    // RowEnricher::failed only emitted `display_name` (not `class`), so
+    // the filter never matched any silenced FQCN and the tab showed 0
+    // failed rows even when the DB held seeded silenced failures.
+    config()->set('queue-insights.silenced', ['App\\Jobs\\PingThirdPartyVendor']);
+    $rows = Livewire::test(QueueInsightsDashboard::class)->viewData('silencedFailedRows');
+    expect($rows)->toBeArray()->not->toBeEmpty()
+        ->and($rows[0]['class'] ?? null)
+        ->toBe('App\Jobs\PingThirdPartyVendor');
 });
 
 it('seeds scheduler tasks + runs + counters so the Schedule tab is fully demo-able', function (): void {
@@ -118,6 +162,25 @@ it('seeded batches survive into Bus::findBatch / BatchReader::recentBatches', fu
 
     $batches = BatchReader::recentBatches(50);
     expect($batches)->toHaveCount(2);
+});
+
+it('PreviewSeeder reseeds job_batches without UNIQUE-constraint crash across requests', function (): void {
+    // Regression: each HTTP request resolves a fresh PreviewSeeder
+    // singleton, so the in-process `seeded` guard does not protect the
+    // job_batches table from a re-run on the next request. wire:navigate
+    // prefetch made this routine. `updateOrInsert` raced — both requests
+    // SELECTed empty, both INSERTed, the second crashed on the unique
+    // primary key. Atomic upsert is the fix.
+    resolve(PreviewSeeder::class)->seed();
+    expect(DB::table('job_batches')->count())->toBe(2);
+
+    // Fresh instance simulates the next HTTP request.
+    $secondSeeder = new PreviewSeeder();
+    $secondSeeder->seed();
+
+    expect(DB::table('job_batches')->count())->toBe(2)
+        ->and(DB::table('job_batches')->where('id', 'preview-batch-001')->value('name'))
+        ->toBe('Nightly report run');
 });
 
 it('PreviewSeeder is idempotent within a single request', function (): void {

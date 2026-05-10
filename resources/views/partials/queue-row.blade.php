@@ -1,6 +1,7 @@
 @php
     /** @var array<string, mixed> $q */
     /** @var int $pendingGapWarnThreshold */
+    /** @var ?string $selectedQueue */
     $depthNum = is_numeric($q['depth']) ? (int) $q['depth'] : 0;
     $depthCls = $depthNum === 0 ? 'text-gray-900 dark:text-gray-100' : ($depthNum > 1000 ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300');
 
@@ -9,8 +10,28 @@
         && ((($q['tracked_count'] ?? 0) > 0) || ($q['inspector_open'] ?? false));
     $gap = $q['pending_gap'] ?? 0;
     $gapBadge = $gap > $pendingGapWarnThreshold;
+
+    // Row selection mirrors `selectedClass === $c['class']` from job-classes-section.
+    // `inspector_key` is the canonical `'{connection}:{queue}'` shape — same shape
+    // as `$selectedQueue`, so an exact-match check avoids re-canonicalising here.
+    $isSelected = ($selectedQueue ?? '') !== '' && ($selectedQueue ?? '') === ($q['inspector_key'] ?? '');
+
+    // Selected highlight is suppressed under error / stale so those critical
+    // states keep their tonal cue. Mirrors job-classes-section (no error/stale
+    // surface in that table — single state).
+    $rowBg = $q['error']
+        ? 'bg-red-50/30 dark:bg-red-900/20'
+        : ($q['stale']
+            ? 'bg-amber-50/30 dark:bg-amber-900/20'
+            : ($isSelected ? 'bg-emerald-50/30 dark:bg-emerald-900/20' : ''));
 @endphp
-<li class="{{ $q['error'] ? 'bg-red-50/30 dark:bg-red-900/20' : ($q['stale'] ? 'bg-amber-50/30 dark:bg-amber-900/20' : '') }}">
+<li class="{{ $rowBg }} cursor-pointer transition hover:bg-gray-950/[0.03] focus-visible:bg-emerald-50/40 focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-emerald-500 dark:hover:bg-white/5 dark:focus-visible:bg-emerald-900/30"
+    role="button"
+    tabindex="0"
+    aria-label="Filter all tabs by queue {{ $q['queue'] }}"
+    wire:click="selectQueue(@js($q['connection']), @js($q['queue']))"
+    x-on:keydown.enter.prevent.self="$wire.selectQueue(@js($q['connection']), @js($q['queue']))"
+    x-on:keydown.space.prevent.self="$wire.selectQueue(@js($q['connection']), @js($q['queue']))">
     <div class="grid grid-cols-12 items-center gap-4 px-4 py-3">
         <div class="col-span-4 min-w-0">
             <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $q['connection'] }}</p>
@@ -61,7 +82,7 @@
 
             @if($hasInspector)
                 <button type="button"
-                        wire:click="toggleQueueInspector(@js($q['inspector_key']))"
+                        wire:click.stop="toggleQueueInspector(@js($q['inspector_key']))"
                         class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-700 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
                         aria-label="{{ $q['inspector_open'] ? 'Collapse pending inspector' : 'Expand pending inspector' }}">
                     <svg class="size-3 transition-transform {{ $q['inspector_open'] ? 'rotate-90' : '' }}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
@@ -90,7 +111,7 @@
     </div>
 
     @if(! empty($q['inspector_open']))
-        <div class="border-t border-gray-950/5 dark:border-white/10 bg-gray-50/70 px-4 py-3">
+        <div class="border-t border-gray-950/5 dark:border-white/10 bg-gray-50/70 dark:bg-white/[0.03] px-4 py-3">
             @if($gapBadge)
                 <p class="mb-2 text-xs text-red-700 dark:text-red-300">
                     <strong>Tracking gap.</strong> {{ number_format($gap) }} job{{ $gap === 1 ? '' : 's' }} on the queue {{ $gap === 1 ? 'is' : 'are' }} not in our pending tracking — the lists below are a sample, not a complete enumeration. Trust the queue counters (above) for totals.

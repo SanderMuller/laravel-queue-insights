@@ -51,7 +51,10 @@ it('renders the inspector toggle button with the tracked count when pending trac
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSee('2 queued')
-        ->assertSeeHtml('wire:click="toggleQueueInspector(\'myredis:work\')"');
+        // `.stop` modifier prevents the inspector toggle click from also
+        // bubbling to the row's `selectQueue` handler — clicking the chevron
+        // affects the inline drawer only, not the global queue scope.
+        ->assertSeeHtml('wire:click.stop="toggleQueueInspector(\'myredis:work\')"');
 });
 
 it('does not render the toggle button when pending.enabled is false', function (): void {

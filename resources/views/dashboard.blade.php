@@ -74,6 +74,40 @@
 
         @include('queue-insights::partials.alerts-strip')
 
+        {{-- Inline scope strip — visible across every tab whenever the global
+             class scope (`?ck=`) or queue scope (`?qk=`) is set. Reads as a
+             sentence rather than a discrete UI surface so it stays subtle when
+             present and disappears entirely when neither scope is active. --}}
+        @if($selectedClass !== null || $selectedQueue !== '')
+            @php($scopedClassShort = $selectedClass !== null && str_contains($selectedClass, '\\')
+                ? substr($selectedClass, strrpos($selectedClass, '\\') + 1)
+                : $selectedClass)
+            <p class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                <span>Filtering by</span>
+                @if($selectedQueue !== '')
+                    <span class="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:ring-white/10">
+                        <span class="text-gray-500 dark:text-gray-400">queue</span>
+                        <code class="font-mono font-medium text-gray-900 dark:text-gray-100" title="{{ $selectedQueueConnection }} / {{ $selectedQueueName }}">{{ $selectedQueueName }}</code>
+                        <button type="button" wire:click="clearSelectedQueue" class="-mr-0.5 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100" aria-label="Clear queue scope">
+                            <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/></svg>
+                        </button>
+                    </span>
+                @endif
+                @if($selectedClass !== null && $selectedQueue !== '')
+                    <span aria-hidden="true">·</span>
+                @endif
+                @if($selectedClass !== null)
+                    <span class="inline-flex items-center gap-1 rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-400/30">
+                        <span class="text-emerald-600/80 dark:text-emerald-400/80">class</span>
+                        <code class="font-mono font-medium" title="{{ $selectedClass }}">{{ $scopedClassShort }}</code>
+                        <button type="button" wire:click="clearSelectedClass" class="-mr-0.5 hover:text-emerald-900 dark:hover:text-emerald-200" aria-label="Clear class scope">
+                            <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/></svg>
+                        </button>
+                    </span>
+                @endif
+            </p>
+        @endif
+
         @include('queue-insights::partials.persistent-hero')
 
         @include('queue-insights::partials.tabs-workspace')

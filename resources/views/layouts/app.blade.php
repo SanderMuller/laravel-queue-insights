@@ -65,6 +65,15 @@
                     try { localStorage.setItem(KEY, pref); } catch (err) {}
                     apply(pref);
                 });
+
+                // wire:navigate morphs <body> AND replaces <html> attributes
+                // with the freshly-fetched response's, wiping the runtime-set
+                // `dark` class + `data-theme` dataset. Re-apply from
+                // localStorage after each navigation so the theme survives
+                // the connection-scope picker and any other in-app link.
+                window.addEventListener('livewire:navigated', function () {
+                    apply(readPref());
+                });
             })();
         </script>
     @endif

@@ -13,20 +13,13 @@
 
     /** @var array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string}|null $chain */
     $chain = is_array($row['chain'] ?? null) ? $row['chain'] : null;
-    $chainNextLast = null;
-    $chainExtra = 0;
-    if ($chain !== null) {
-        $nextLastSlash = strrpos($chain['next_class'], '\\');
-        $chainNextLast = $nextLastSlash !== false ? substr($chain['next_class'], $nextLastSlash + 1) : $chain['next_class'];
-        $chainExtra = max(0, $chain['remaining'] - 1);
-    }
 @endphp
 <x-queue-insights::list-row
     wire-action="openPayload"
     :wire-arg="$row['_id']"
     aria-label="Open job details"
     :sr-name="$fqcn">
-    <div class="col-span-4 min-w-0">
+    <div class="col-span-5 min-w-0">
         {{-- Tight inline: zero whitespace between namespace and leaf so the
             mono-font space gap doesn't appear between them. --}}
         <p class="truncate font-mono text-sm">@if($namespace !== '')<span class="text-gray-400 dark:text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span></p>
@@ -37,27 +30,20 @@
             @if(! empty($row['batch_id']))
                 @include('queue-insights::partials.batch-chip', ['batchId' => $row['batch_id']])
             @endif
+            @if($attempts !== null && $attempts > 1)
+                @include('queue-insights::partials.retry-chip', ['attempts' => $attempts, 'context' => 'completed'])
+            @endif
             @if($chain !== null)
-                <span class="inline-flex items-center gap-1 rounded-md bg-gray-950/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10"
-                      title="Next: {{ $chain['next_class'] }} ({{ $chain['remaining'] }} chained)">
-                    <span aria-hidden="true">↳</span>
-                    <span>{{ $chainNextLast }}</span>
-                    @if($chainExtra > 0)
-                        <span class="text-gray-400 dark:text-gray-400">(+{{ $chainExtra }})</span>
-                    @endif
-                </span>
+                @include('queue-insights::partials.chain-chip-forward', ['chain' => $chain])
             @endif
         </p>
     </div>
-    <div class="col-span-3 min-w-0">
+    <div class="col-span-2 min-w-0">
         <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
         <p class="mt-0.5 truncate font-mono text-xs text-gray-800 dark:text-gray-200">{{ $row['queue'] ?? '—' }}</p>
     </div>
     <div class="col-span-2 text-right">
         <p class="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $runtimeShort }}</p>
-        @if($attempts !== null && $attempts > 1)
-            <p class="mt-0.5 text-xs font-medium tabular-nums text-amber-700 dark:text-amber-300">{{ $attempts }} tries</p>
-        @endif
     </div>
     <div class="col-span-2 text-right">
         <x-queue-insights::qi-time :at="$processedAt" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>

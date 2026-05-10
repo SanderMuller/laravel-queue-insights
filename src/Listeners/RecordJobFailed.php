@@ -26,6 +26,14 @@ final readonly class RecordJobFailed
      */
     private const int MONOTONIC_TTL_SECONDS = 2592000;
 
+    /**
+     * Per-failed-uuid runtime side-key TTL. 30 d matches the package's
+     * other monotonic-side-key retention; failed_jobs rows are pruned
+     * by the host's own schedule, so the side-key just needs to outlive
+     * normal triage windows.
+     */
+    private const int FAILED_RUNTIME_TTL_SECONDS = 2592000;
+
     public function __construct(
         private ResolveJobClass $resolveJobClass,
     ) {}
@@ -52,7 +60,23 @@ final readonly class RecordJobFailed
 
             $uuid = $event->job->uuid();
             if ($uuid !== null && $uuid !== '') {
-                $redis->command('del', [KeyPrefix::make("start:{$uuid}")]);
+                // Read `start:{uuid}` (microtime float written by RecordJobProcessing)
+                // before DELing so we can compute runtime for the failure modal +
+                // failed-row Runtime column. Mirrors RecordJobProcessed's path
+                // for successful runs but writes to a uuid-keyed side-key — the
+                // failed_jobs DB row has no duration field.
+                $startKey = KeyPrefix::make("start:{$uuid}");
+                $start = $redis->command('get', [$startKey]);
+                $redis->command('del', [$startKey]);
+
+                if (is_numeric($start)) {
+                    $durationMs = max(0, (int) round((microtime(true) - (float) $start) * 1000));
+                    $redis->command('setex', [
+                        KeyPrefix::make("failed-runtime:{$uuid}"),
+                        self::FAILED_RUNTIME_TTL_SECONDS,
+                        (string) $durationMs,
+                    ]);
+                }
 
                 // Belt-and-suspenders pending-tracking cleanup. RecordJobProcessing
                 // already cleared on the pending → in-flight transition; this is

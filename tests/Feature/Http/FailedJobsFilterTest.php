@@ -182,25 +182,143 @@ it('combines multiple filters with AND semantics', function (): void {
 });
 
 it('Livewire #[Url] props bind via the configured query-string keys', function (): void {
-    Livewire::withQueryParams(['fc' => 'redis', 'fq' => 'video', 'fk' => 'App\\Foo']);
+    Livewire::withQueryParams(['fc' => 'redis', 'fq' => 'video', 'ck' => 'App\\Foo']);
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSet('filterConnection', 'redis')
         ->assertSet('filterQueue', 'video')
-        ->assertSet('filterClass', 'App\\Foo');
+        ->assertSet('selectedClass', 'App\\Foo');
+});
+
+it('selectQueue stores the canonical key and routes failed filter to that queue', function (): void {
+    seedFailedFilterRow(['connection' => 'redis', 'queue' => 'default']);
+    seedFailedFilterRow(['connection' => 'redis', 'queue' => 'high']);
+
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'redis', 'high')
+        ->assertSet('selectedQueue', 'redis:high');
+
+    $filters = $component->instance()->buildFailedFilters();
+
+    expect($filters->connection)->toBe('redis')
+        ->and($filters->queue)->toBe('high');
+});
+
+it('selectedQueue overrides per-pane filterConnection/filterQueue when set', function (): void {
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->set('filterConnection', 'sqs')
+        ->set('filterQueue', 'default')
+        ->call('selectQueue', 'redis', 'video');
+
+    $filters = $component->instance()->buildFailedFilters();
+
+    expect($filters->connection)->toBe('redis')
+        ->and($filters->queue)->toBe('video');
+});
+
+it('clearSelectedQueue resets selectedQueue and pages', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'redis', 'high')
+        ->set('failedPage', 5)
+        ->call('clearSelectedQueue')
+        ->assertSet('selectedQueue', '')
+        ->assertSet('failedPage', 1);
+});
+
+it('selectQueue toggles — clicking the already-selected queue clears the scope', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'redis', 'high')
+        ->assertSet('selectedQueue', 'redis:high')
+        ->call('selectQueue', 'redis', 'high')
+        ->assertSet('selectedQueue', '');
+});
+
+it('selectClass toggles — clicking the already-selected class clears the scope', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectClass', 'App\\Foo')
+        ->assertSet('selectedClass', 'App\\Foo')
+        ->call('selectClass', 'App\\Foo')
+        ->assertSet('selectedClass', null);
+});
+
+it('selectQueue ignores empty connection or queue', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', '', 'high')
+        ->assertSet('selectedQueue', '')
+        ->call('selectQueue', 'redis', '')
+        ->assertSet('selectedQueue', '');
+});
+
+it('Livewire #[Url] binds selectedQueue via the qk query-string key', function (): void {
+    Livewire::withQueryParams(['qk' => 'redis:video']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->assertSet('selectedQueue', 'redis:video');
+});
+
+it('selectedFailed DB fallback rejects rows outside the path-level scope', function (): void {
+    // Seed a silenced row on `sqs` connection — won't appear in the visible
+    // failed list (FailedJobFilters strips silenced classes by default).
+    config()->set('queue-insights.silenced', ['App\\Jobs\\NoisyVendor']);
+    $id = seedFailedFilterRow([
+        'connection' => 'sqs',
+        'queue' => 'reports',
+        'payload' => ['displayName' => 'App\\Jobs\\NoisyVendor', 'maxTries' => 3, 'attempts' => 1],
+    ]);
+
+    // Operator is path-scoped to `redis`. A deep-linked / forged
+    // selectedFailedId pointing at the `sqs` row must NOT cross the scope.
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->set('scopeConnection', 'redis')
+        ->call('openFailed', $id);
+
+    expect($component->viewData('selectedFailed'))->toBeNull();
+});
+
+it('selectedFailed DB fallback rejects rows outside the selectedQueue scope', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\NoisyVendor']);
+    $id = seedFailedFilterRow([
+        'connection' => 'redis',
+        'queue' => 'default',
+        'payload' => ['displayName' => 'App\\Jobs\\NoisyVendor', 'maxTries' => 3, 'attempts' => 1],
+    ]);
+
+    // selectedQueue scoped to `redis:video`; a `redis:default` failed row
+    // must not leak through the silenced-row fallback.
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'redis', 'video')
+        ->call('openFailed', $id);
+
+    expect($component->viewData('selectedFailed'))->toBeNull();
+});
+
+it('selectedFailed DB fallback opens silenced rows that match the active scope', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\NoisyVendor']);
+    $id = seedFailedFilterRow([
+        'connection' => 'redis',
+        'queue' => 'default',
+        'payload' => ['displayName' => 'App\\Jobs\\NoisyVendor', 'maxTries' => 3, 'attempts' => 1],
+    ]);
+
+    // No scope — silenced row should still resolve via DB fallback so the
+    // Silenced tab's click-through opens the modal.
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id);
+
+    expect($component->viewData('selectedFailed'))->not->toBeNull();
 });
 
 it('clearFailedFilters resets every filter prop to empty', function (): void {
     Livewire::test(QueueInsightsDashboard::class)
         ->set('filterConnection', 'redis')
         ->set('filterQueue', 'video')
-        ->set('filterClass', 'App\\Foo')
+        ->set('selectedClass', 'App\\Foo')
         ->set('filterFrom', '2026-04-01')
         ->set('filterTo', '2026-04-30')
         ->call('clearFailedFilters')
         ->assertSet('filterConnection', '')
         ->assertSet('filterQueue', '')
-        ->assertSet('filterClass', '')
+        ->assertSet('selectedClass', null)
         ->assertSet('filterFrom', '')
         ->assertSet('filterTo', '');
 });

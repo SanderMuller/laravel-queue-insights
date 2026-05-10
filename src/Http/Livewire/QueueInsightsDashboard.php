@@ -22,6 +22,8 @@ use SanderMuller\QueueInsights\Support\AuditFieldSanitizer;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
+use SanderMuller\QueueInsights\Support\QueueScopeKey;
+use SanderMuller\QueueInsights\Support\SilencedJobs;
 use SanderMuller\QueueInsights\Support\UuidResolver;
 use Throwable;
 
@@ -30,6 +32,17 @@ final class QueueInsightsDashboard extends Component
 {
     #[Url(as: 'ck')]
     public ?string $selectedClass = null;
+
+    /**
+     * Active queue scope, canonical shape `'{connection}:{queue}'`. Empty string
+     * = unscoped. URL-shareable so an operator can paste the dashboard URL and
+     * land on a peer's queue-scoped view. Set by clicking a queue row on the
+     * Queues tab; cleared by the inline scope-strip's X button or
+     * `clearSelectedQueue()`. Mirrors `$selectedClass` in spirit but applies
+     * to the queue axis (connection + canonical queue name).
+     */
+    #[Url(as: 'qk', except: '')]
+    public string $selectedQueue = '';
 
     public ?string $selectedPayloadId = null;
 
@@ -50,9 +63,6 @@ final class QueueInsightsDashboard extends Component
 
     #[Url(as: 'fq', except: '')]
     public string $filterQueue = '';
-
-    #[Url(as: 'fk', except: '')]
-    public string $filterClass = '';
 
     #[Url(as: 'ffrom', except: '')]
     public string $filterFrom = '';
@@ -128,6 +138,27 @@ final class QueueInsightsDashboard extends Component
     public int $failedPerPage = 10;
 
     /*
+     * Silenced-tab pagination — silenced classes are typically the
+     * spammiest job traffic (vendor pings, retry storms), so a fixed
+     * one-page-per-axis cap was making the tab read like an empty
+     * roster on busy systems. Same shape as completed/failed: page
+     * + per-page URL-bound, default 10/page, snapped to the shared
+     * `PER_PAGE_OPTIONS` whitelist on every request.
+     */
+
+    #[Url(as: 'sfp', except: 1)]
+    public int $silencedFailedPage = 1;
+
+    #[Url(as: 'scp', except: 1)]
+    public int $silencedCompletedPage = 1;
+
+    #[Url(as: 'sfpp', except: 10)]
+    public int $silencedFailedPerPage = 10;
+
+    #[Url(as: 'scpp', except: 10)]
+    public int $silencedCompletedPerPage = 10;
+
+    /*
      * Pending-jobs inspector — single-queue expand state. Format:
      * "{connection}:{canonical-queue}". Empty string = nothing expanded.
      * URL-shareable so an operator can paste the dashboard URL and land
@@ -180,6 +211,14 @@ final class QueueInsightsDashboard extends Component
         if (! in_array($this->failedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
             $this->failedPerPage = DashboardData::PER_PAGE;
         }
+
+        if (! in_array($this->silencedFailedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+            $this->silencedFailedPerPage = DashboardData::PER_PAGE;
+        }
+
+        if (! in_array($this->silencedCompletedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+            $this->silencedCompletedPerPage = DashboardData::PER_PAGE;
+        }
     }
 
     /**
@@ -224,14 +263,44 @@ final class QueueInsightsDashboard extends Component
         $this->scopeConnection = $connection;
     }
 
+    /**
+     * Toggle the global class scope. Clicking the already-selected class on
+     * the Classes tab clears the scope so a single click is the inverse of
+     * itself — mirrors the queue-row toggle behaviour. `null` always clears.
+     */
     public function selectClass(?string $class = null): void
     {
-        $this->selectedClass = $class;
+        $this->selectedClass = ($class !== null && $this->selectedClass === $class) ? null : $class;
     }
 
     public function clearSelectedClass(): void
     {
         $this->selectedClass = null;
+    }
+
+    /**
+     * Toggle the global queue scope. Stored as canonical `'{conn}:{queue}'`
+     * so downstream filters can decompose without re-resolving the key.
+     * Clicking the already-selected queue clears the scope (toggle). Resets
+     * paginators on every transition.
+     */
+    public function selectQueue(string $connection, string $queue): void
+    {
+        if ($connection === '' || $queue === '') {
+            return;
+        }
+
+        $key = $connection . ':' . $queue;
+        $this->selectedQueue = $this->selectedQueue === $key ? '' : $key;
+        $this->failedPage = 1;
+        $this->completedPage = 1;
+    }
+
+    public function clearSelectedQueue(): void
+    {
+        $this->selectedQueue = '';
+        $this->failedPage = 1;
+        $this->completedPage = 1;
     }
 
     public function openPayload(string $id): void
@@ -435,10 +504,11 @@ final class QueueInsightsDashboard extends Component
     {
         $this->filterConnection = '';
         $this->filterQueue = '';
-        $this->filterClass = '';
         $this->filterFrom = '';
         $this->filterTo = '';
         $this->includeSilenced = false;
+        $this->selectedQueue = '';
+        $this->selectedClass = null;
         $this->failedPage = 1;
     }
 
@@ -450,6 +520,16 @@ final class QueueInsightsDashboard extends Component
     public function gotoFailedPage(int $page): void
     {
         $this->failedPage = max(1, $page);
+    }
+
+    public function gotoSilencedFailedPage(int $page): void
+    {
+        $this->silencedFailedPage = max(1, $page);
+    }
+
+    public function gotoSilencedCompletedPage(int $page): void
+    {
+        $this->silencedCompletedPage = max(1, $page);
     }
 
     /**
@@ -480,6 +560,26 @@ final class QueueInsightsDashboard extends Component
             }
 
             $this->failedPage = 1;
+
+            return;
+        }
+
+        if ($name === 'silencedFailedPerPage') {
+            if (! in_array($this->silencedFailedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+                $this->silencedFailedPerPage = DashboardData::PER_PAGE;
+            }
+
+            $this->silencedFailedPage = 1;
+
+            return;
+        }
+
+        if ($name === 'silencedCompletedPerPage') {
+            if (! in_array($this->silencedCompletedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
+                $this->silencedCompletedPerPage = DashboardData::PER_PAGE;
+            }
+
+            $this->silencedCompletedPage = 1;
 
             return;
         }
@@ -519,6 +619,7 @@ final class QueueInsightsDashboard extends Component
     public function clearCompletedFilters(): void
     {
         $this->selectedClass = null;
+        $this->selectedQueue = '';
         $this->completedFilterConnection = '';
         $this->completedFilterQueue = '';
         $this->completedFilterFrom = '';
@@ -542,14 +643,34 @@ final class QueueInsightsDashboard extends Component
         // any user-supplied `?fc=` that disagrees is ignored so the failed
         // panel cannot reach rows outside the scoped connection.
         $connection = $this->scopeConnection ?? $this->filterConnection;
+        $queue = $this->filterQueue;
+
+        // Global queue-scope (`?qk={conn}:{queue}`) overrides per-pane filters
+        // so a queue selected from the Queues tab persists across Failed +
+        // Completed lists. `scopeConnection` (path-level) still takes
+        // precedence over the queue-scope's connection if they disagree.
+        $queueScope = QueueScopeKey::decompose($this->selectedQueue);
+        if ($queueScope !== null) {
+            $connection = $this->scopeConnection ?? $queueScope['connection'];
+            $queue = $queueScope['queue'];
+        }
+
+        // Auto-reveal silenced rows when the active class scope IS a silenced
+        // class. Without this the failed list reads as empty after clicking a
+        // silenced row on the Classes tab — the per-class filter pulls only
+        // that class, then the silenced-exclusion query drops it. Mirrors the
+        // same auto-reveal in `Dashboard\DashboardData::buildCompletedFilter`.
+        $includeSilenced = $this->includeSilenced
+            || ($this->selectedClass !== null
+                && resolve(SilencedJobs::class)->isSilenced($this->selectedClass));
 
         return new FailedJobFilters(
             connection: $connection,
-            queue: $this->filterQueue,
-            class: $this->filterClass,
+            queue: $queue,
+            class: $this->selectedClass ?? '',
             from: $this->filterFrom,
             to: $this->filterTo,
-            includeSilenced: $this->includeSilenced,
+            includeSilenced: $includeSilenced,
         );
     }
 
@@ -662,7 +783,7 @@ final class QueueInsightsDashboard extends Component
             scopeConnection: AuditFieldSanitizer::clean($this->scopeConnection ?? ''),
             filterConnection: AuditFieldSanitizer::clean($this->filterConnection),
             filterQueue: AuditFieldSanitizer::clean($this->filterQueue),
-            filterClass: AuditFieldSanitizer::clean($this->filterClass),
+            filterClass: AuditFieldSanitizer::clean($this->selectedClass ?? ''),
             filterFrom: AuditFieldSanitizer::clean($this->filterFrom),
             filterTo: AuditFieldSanitizer::clean($this->filterTo),
         );

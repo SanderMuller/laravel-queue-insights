@@ -21,7 +21,7 @@
 @endphp
 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
     {{-- Queues card --}}
-    <div class="flex flex-col gap-2 rounded-xl bg-white p-4 ring-1 dark:bg-gray-900 {{ count($atRisk) > 0 ? 'ring-red-600/15 dark:ring-red-400/30' : 'ring-gray-950/5 dark:ring-white/10' }}">
+    <div class="flex flex-col gap-2 rounded-xl bg-white p-5 ring-1 dark:bg-gray-900 {{ count($atRisk) > 0 ? 'ring-red-600/15 dark:ring-red-400/30' : 'ring-gray-950/5 dark:ring-white/10' }}">
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-baseline gap-2">
                 <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Queues</h3>
@@ -48,7 +48,7 @@
         <div class="mt-auto flex items-center justify-between gap-2 border-t border-gray-950/5 pt-2 dark:border-white/10">
             <span class="text-[11px] tabular-nums text-gray-500 dark:text-gray-300">{{ number_format($totalDepth) }} backlog · {{ number_format($totalInFlight) }} in-flight</span>
             <button type="button"
-                    x-on:click="window.location.hash = '#qi-queues'"
+                    x-on:click="setTab('queues')"
                     class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                 See all {{ count($queues) }} →
             </button>
@@ -57,7 +57,7 @@
 
     {{-- Pending card --}}
     @if($pendingEnabled)
-        <div class="flex flex-col gap-2 rounded-xl bg-white p-4 ring-1 dark:bg-gray-900 {{ count($inFlightRows) > 0 ? 'ring-amber-600/15 dark:ring-amber-400/30' : 'ring-gray-950/5 dark:ring-white/10' }}">
+        <div class="flex flex-col gap-2 rounded-xl bg-white p-5 ring-1 dark:bg-gray-900 {{ count($inFlightRows) > 0 ? 'ring-amber-600/15 dark:ring-amber-400/30' : 'ring-gray-950/5 dark:ring-white/10' }}">
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-baseline gap-2">
                     <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Pending</h3>
@@ -84,7 +84,7 @@
                     {{ count($inFlightRows) }} in-flight · {{ count($pendingRows) }} pending · {{ count($delayedRows) }} delayed
                 </span>
                 <button type="button"
-                        x-on:click="window.location.hash = '#qi-pending'"
+                        x-on:click="setTab('pending')"
                         class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                     See all →
                 </button>
@@ -93,7 +93,7 @@
     @endif
 
     {{-- Completed card --}}
-    <div class="flex flex-col gap-2 rounded-xl bg-white p-4 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+    <div class="flex flex-col gap-2 rounded-xl bg-white p-5 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-baseline gap-2">
                 <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Recent completed</h3>
@@ -112,7 +112,7 @@
         @endif
         <div class="mt-auto flex items-center justify-end gap-2 border-t border-gray-950/5 pt-2 dark:border-white/10">
             <button type="button"
-                    x-on:click="window.location.hash = '#qi-completed'"
+                    x-on:click="setTab('completed')"
                     class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                 See all {{ $completedTotal ?? count($completedRows) }} →
             </button>
@@ -120,7 +120,7 @@
     </div>
 
     {{-- Failed card --}}
-    <div class="flex flex-col gap-2 rounded-xl bg-white p-4 ring-1 dark:bg-gray-900 {{ count($failedRows) > 0 ? 'ring-red-600/15 dark:ring-red-400/30' : 'ring-gray-950/5 dark:ring-white/10' }}">
+    <div class="flex flex-col gap-2 rounded-xl bg-white p-5 ring-1 dark:bg-gray-900 {{ count($failedRows) > 0 ? 'ring-red-600/15 dark:ring-red-400/30' : 'ring-gray-950/5 dark:ring-white/10' }}">
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-baseline gap-2">
                 <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Recent failed</h3>
@@ -146,7 +146,7 @@
         @endif
         <div class="mt-auto flex items-center justify-end gap-2 border-t border-gray-950/5 pt-2 dark:border-white/10">
             <button type="button"
-                    x-on:click="window.location.hash = '#qi-failed'"
+                    x-on:click="setTab('failed')"
                     class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                 See all {{ $failedTotal ?? count($failedRows) }} →
             </button>

@@ -54,8 +54,13 @@ it('completed-row renders the chain chip when chain field is present', function 
         ->assertSee('Step2')
         // (+remaining-1) suffix — 3 chained → +2 more after the one shown.
         ->assertSee('(+2)')
-        // Title attribute carries full FQCN + remaining count.
-        ->assertSeeHtml('Next: App\\Jobs\\Step2 (3 chained)');
+        // Hint tooltip carries the full FQCN + remaining count. The
+        // partial used to render `title="Next: …"`; the refactor moved
+        // it into the `<x-queue-insights::hint>` slot, so we assert the
+        // tooltip text instead.
+        ->assertSeeHtml('Next in chain')
+        ->assertSeeHtml('App\\Jobs\\Step2')
+        ->assertSeeHtml('3 links remaining');
 });
 
 it('completed-row omits the chain chip when chain field is absent', function (): void {
@@ -69,7 +74,7 @@ it('completed-row omits the chain chip when chain field is absent', function ():
     ]);
 
     Livewire::test(QueueInsightsDashboard::class)
-        ->assertDontSeeHtml('Next: ');
+        ->assertDontSeeHtml('Next in chain');
 });
 
 it('failed-list-row renders the chain chip when payload.data.command carries a chained array', function (): void {
@@ -96,7 +101,9 @@ it('failed-list-row renders the chain chip when payload.data.command carries a c
 
     Livewire::test(QueueInsightsDashboard::class)
         ->assertSee('Next')
-        ->assertSeeHtml('Next: App\\Jobs\\Next (1 chained)');
+        ->assertSeeHtml('Next in chain')
+        ->assertSeeHtml('App\\Jobs\\Next')
+        ->assertSeeHtml('1 link remaining');
 });
 
 it('failed-list-row omits the chain chip when no chain present', function (): void {
@@ -110,5 +117,5 @@ it('failed-list-row omits the chain chip when no chain present', function (): vo
     ]);
 
     Livewire::test(QueueInsightsDashboard::class)
-        ->assertDontSeeHtml('Next: ');
+        ->assertDontSeeHtml('Next in chain');
 });

@@ -119,7 +119,7 @@
             </div>
             <div class="overflow-x-auto">
                 <table class="min-w-full text-sm">
-                    <thead class="bg-gray-50/60 text-left text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-300">
+                    <thead class="bg-gray-50/60 dark:bg-gray-800/60 text-left text-[10px] uppercase tracking-wide text-gray-500 dark:text-gray-300">
                         <tr>
                             <th scope="col" class="w-8 py-2 pl-5"></th>
                             <th scope="col" class="py-2 pr-4 font-medium">Sev</th>

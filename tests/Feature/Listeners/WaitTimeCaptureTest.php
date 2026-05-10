@@ -42,12 +42,15 @@ function makeJobQueuedEvent(string $uuid, string $connection = 'redis', string $
 /**
  * Build a JobProcessing event whose underlying Job::uuid() returns the given uuid.
  */
-function makeJobProcessingEvent(string $uuid, string $connection = 'redis', string $queue = 'default'): JobProcessing
+function makeJobProcessingEvent(string $uuid, string $connection = 'redis', string $queue = 'default', int $attempts = 1): JobProcessing
 {
     /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('uuid')->andReturn($uuid);
     $job->shouldReceive('getQueue')->andReturn($queue);
+    // RecordJobProcessing reads `$job->attempts()` to stamp the pending hash
+    // — required since the retry-badge feature landed.
+    $job->shouldReceive('attempts')->andReturn($attempts);
 
     return new JobProcessing(connectionName: $connection, job: $job);
 }

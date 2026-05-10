@@ -11,8 +11,10 @@
      *   list       $needsAttention  task rows with at least one failure/hang/miss
      *   list       $healthy         task rows with no failures
      *   list       $tasksAll        union for the filter dropdown
-     *   list       $recentRuns      recent runs page
+     *   list       $recentRuns      recent runs page (also wrapped in $runsPaginator)
      *   int        $totalRuns
+     *   \Illuminate\Pagination\LengthAwarePaginator $runsPaginator
+     *   list<int>  $perPageOptions
      *   list       $distinctHosts
      *   string     $taskFilter / $statusFilter / $hostFilter / $from / $to
      *   int        $perPage / $page
@@ -50,9 +52,6 @@
 
     $sparklineSuccess = array_sum(array_column($sparkline, 'success'));
     $sparklineFailed = array_sum(array_column($sparkline, 'failed'));
-    $totalPages = (int) max(1, (int) ceil($totalRuns / max(1, $perPage)));
-    $rangeStart = $totalRuns === 0 ? 0 : (($page - 1) * $perPage) + 1;
-    $rangeEnd = min($totalRuns, $page * $perPage);
 @endphp
 
 <section class="flex flex-col gap-4">
@@ -273,32 +272,12 @@
                     </div>
                 </div>
 
-                <div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-950/5 dark:border-white/10 px-5 py-2 text-xs">
-                    <p class="tabular-nums text-gray-500 dark:text-gray-300">
-                        Showing
-                        <span class="font-medium text-gray-700 dark:text-gray-300">{{ number_format($rangeStart) }}</span>–<span class="font-medium text-gray-700 dark:text-gray-300">{{ number_format($rangeEnd) }}</span>
-                        of <span class="font-medium text-gray-700 dark:text-gray-300">{{ number_format($totalRuns) }}</span>
-                    </p>
-                    @if($totalPages > 1)
-                        <div class="flex items-center gap-1">
-                            <button type="button"
-                                    wire:click="$set('page', {{ max(1, $page - 1) }})"
-                                    @disabled($page <= 1)
-                                    class="inline-flex items-center gap-1 rounded-md bg-white dark:bg-gray-900 px-2 py-1 font-medium text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50">
-                                Prev
-                            </button>
-                            <span class="px-2 tabular-nums text-gray-500 dark:text-gray-300">
-                                Page <span class="font-medium text-gray-700 dark:text-gray-300">{{ $page }}</span> of <span class="font-medium text-gray-700 dark:text-gray-300">{{ $totalPages }}</span>
-                            </span>
-                            <button type="button"
-                                    wire:click="$set('page', {{ min($totalPages, $page + 1) }})"
-                                    @disabled($page >= $totalPages)
-                                    class="inline-flex items-center gap-1 rounded-md bg-white dark:bg-gray-900 px-2 py-1 font-medium text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50">
-                                Next
-                            </button>
-                        </div>
-                    @endif
-                </div>
+                @include('queue-insights::partials.pagination-controls', [
+                    'paginator' => $runsPaginator,
+                    'gotoMethod' => 'gotoRunsPage',
+                    'perPageModel' => 'perPage',
+                    'perPageOptions' => $perPageOptions,
+                ])
             @endif
         </div>
     @endif

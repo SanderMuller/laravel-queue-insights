@@ -9,12 +9,6 @@
      */
     $amountCompletedRows = count($completedRows);
 @endphp
-@if($completedFiltersActive)
-    <div class="mb-3">
-        <span class="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-400/30">filtered</span>
-    </div>
-@endif
-
 @include('queue-insights::partials.filter-form', [
     'active' => $completedFiltersActive,
     'models' => [
@@ -45,8 +39,8 @@
 @else
     <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
         <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
-            <div class="col-span-4">Job</div>
-            <div class="col-span-3">Queue</div>
+            <div class="col-span-5">Job</div>
+            <div class="col-span-2">Queue</div>
             <div class="col-span-2 text-right">Runtime</div>
             <div class="col-span-2 text-right">Completed</div>
             <div class="col-span-1"></div>

@@ -234,7 +234,7 @@ it('audit log sanitizes user-controlled filter strings (control bytes neutralise
     $logSpy->shouldReceive('channel')->andReturnSelf();
 
     Livewire::test(QueueInsightsDashboard::class)
-        ->set('filterClass', "App\\Foo\nBar\rBaz" . str_repeat('x', 200))
+        ->set('selectedClass', "App\\Foo\nBar\rBaz" . str_repeat('x', 200))
         ->call('retryFailed', $row['uuid']);
 
     $logSpy->shouldHaveReceived('info')

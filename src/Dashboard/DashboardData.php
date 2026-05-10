@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Dashboard;
 
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
 use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
@@ -18,6 +19,7 @@ use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
+use SanderMuller\QueueInsights\Support\QueueScopeKey;
 use SanderMuller\QueueInsights\Support\RowEnricher;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
 use SanderMuller\QueueInsights\Support\UuidResolver;
@@ -112,6 +114,9 @@ final readonly class DashboardData
         'failedPaginator',
         'perPageOptions',
         'selectedClass',
+        'selectedQueue',
+        'selectedQueueConnection',
+        'selectedQueueName',
         'selectedPayload',
         'selectedFailed',
         'payloadTab',
@@ -133,6 +138,8 @@ final readonly class DashboardData
         'silencedPatterns',
         'silencedFailedRows',
         'silencedCompletedRows',
+        'silencedFailedPaginator',
+        'silencedCompletedPaginator',
     ];
 
     public function __construct(
@@ -164,40 +171,19 @@ final readonly class DashboardData
 
         $failedFilters = $component->buildFailedFilters();
 
-        $recentCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, $component->selectedClass, $scope);
+        $completedReadConnection = $this->resolveCompletedReadConnection($component, $scope);
+        $recentCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, $component->selectedClass, $completedReadConnection);
         $recentFailed = $this->svc->recentFailed(self::RECENT_FETCH_LIMIT, $failedFilters);
         $throughput = $this->svc->hourlyThroughput(24, $scope);
 
         $selectedPayload = $this->modals->selectedPayload($component->selectedPayloadId, $recentCompleted);
-        $selectedFailed = $this->modals->selectedFailed($component->selectedFailedId, $recentFailed);
+        $selectedFailed = $this->resolveSelectedFailed($component, $recentFailed);
 
         // Decorate the selected rows with the per-job wait sample. Modals
         // render `Wait: —` when this is null (legacy job pre-dating the
         // JobQueued listener, or a driver that omits payload.uuid).
         if ($selectedPayload !== null) {
-            $payloadUuid = $selectedPayload['uuid'] ?? null;
-            $selectedPayload['wait_ms'] = is_string($payloadUuid)
-                ? (string) ($this->svc->jobWaitMs($payloadUuid) ?? '')
-                : '';
-
-            // Reverse-lookup the batch id for THIS uuid only (one MGET) so
-            // the details-modal's batch chip can render. The full
-            // recentCompleted enrichment runs later for the table; doing
-            // it again here for one row is the cheapest way to keep the
-            // modal shape stable without depending on table-render order.
-            if (is_string($payloadUuid) && $payloadUuid !== '') {
-                $payloadBatchIds = BatchReader::batchIdsForUuids([$payloadUuid]);
-                $selectedPayload['batch_id'] = $payloadBatchIds[$payloadUuid] ?? null;
-            }
-
-            // Backward-chain lineage: the stream entry already carries
-            // `parent_uuid` (stamped by RecordJobProcessed). Resolve the
-            // parent's class label here so the modal's `↰ From` row can
-            // render `(Class)` alongside the uuid. Selection happens
-            // before RowEnricher::completed runs on the table list, so we
-            // hydrate the modal's single row directly.
-            $selectedPayload['parent_class'] = $this->resolveParentClassFor($selectedPayload['parent_uuid'] ?? null);
-            $selectedPayload['parent_target'] = $this->resolveParentTargetFor($selectedPayload['parent_uuid'] ?? null);
+            $selectedPayload = $this->decorateSelectedPayload($selectedPayload);
         }
 
         if ($selectedFailed !== null) {
@@ -236,10 +222,18 @@ final readonly class DashboardData
         $batches = BatchReader::sectionRows($this->svc, $component->expandedBatchId, $scope);
 
         $pendingEnabled = Config::bool('pending.enabled', true);
-        $scopedQueues = $this->svc->configuredQueues($scope);
-        $pendingRows = $pendingEnabled ? PendingJobsReader::allPending($scopedQueues, 50) : [];
-        $delayedRows = $pendingEnabled ? PendingJobsReader::allDelayed($scopedQueues, 50) : [];
-        $inFlightRows = $pendingEnabled ? PendingJobsReader::allInFlight($scopedQueues, 50) : [];
+        $pendingFetchQueues = $this->resolvePendingFetchQueues($component, $scope);
+
+        $pendingRows = $pendingEnabled ? PendingJobsReader::allPending($pendingFetchQueues, 50) : [];
+        $delayedRows = $pendingEnabled ? PendingJobsReader::allDelayed($pendingFetchQueues, 50) : [];
+        $inFlightRows = $pendingEnabled ? PendingJobsReader::allInFlight($pendingFetchQueues, 50) : [];
+
+        [$inFlightRows, $pendingRows, $delayedRows] = $this->scopeAndHydratePendingRows(
+            $component,
+            $inFlightRows,
+            $pendingRows,
+            $delayedRows,
+        );
 
         $selectedPending = $this->modals->selectedPending(
             $component->selectedPendingUuid,
@@ -299,16 +293,13 @@ final readonly class DashboardData
         $completedPreview = array_slice($completedAll, 0, 5);
         $failedPreview = array_slice($failedAll, 0, 5);
 
-        // Silenced tab — pre-filtered failed + completed rows for classes
-        // listed in `queue-insights.silenced`. Skips work entirely when
-        // the silenced list is empty so the tab + its data stay zero-cost
-        // for hosts that don't use the feature.
-        $silenced = resolve(SilencedJobs::class);
-        $silencedClasses = $silenced->all();
-        $silencedPatterns = $silenced->patterns();
-        [$silencedFailedRows, $silencedCompletedRows] = $silenced->hasAny()
-            ? $this->buildSilencedListings($silenced, $scope)
-            : [[], []];
+        $silencedView = $this->buildSilencedView($scope, $component);
+        $silencedClasses = $silencedView['classes'];
+        $silencedPatterns = $silencedView['patterns'];
+        $silencedFailedRows = $silencedView['failed_rows'];
+        $silencedCompletedRows = $silencedView['completed_rows'];
+        $silencedFailedPaginator = $silencedView['failed_paginator'];
+        $silencedCompletedPaginator = $silencedView['completed_paginator'];
 
         $aggregates = QueueAggregates::aggregate($queues);
 
@@ -351,6 +342,11 @@ final readonly class DashboardData
             'failedPaginator' => $failedPaginator,
             'perPageOptions' => self::PER_PAGE_OPTIONS,
             'selectedClass' => $component->selectedClass,
+            'selectedQueue' => $component->selectedQueue,
+            // Decomposed parts surfaced for the inline scope strip in
+            // dashboard.blade.php; both empty when no queue scope is active.
+            'selectedQueueConnection' => QueueScopeKey::decompose($component->selectedQueue)['connection'] ?? '',
+            'selectedQueueName' => QueueScopeKey::decompose($component->selectedQueue)['queue'] ?? '',
             'selectedPayload' => $selectedPayload,
             'selectedFailed' => $selectedFailed,
             'payloadTab' => $component->payloadTab,
@@ -379,6 +375,8 @@ final readonly class DashboardData
             'silencedPatterns' => $silencedPatterns,
             'silencedFailedRows' => $silencedFailedRows,
             'silencedCompletedRows' => $silencedCompletedRows,
+            'silencedFailedPaginator' => $silencedFailedPaginator,
+            'silencedCompletedPaginator' => $silencedCompletedPaginator,
         ];
     }
 
@@ -441,19 +439,37 @@ final readonly class DashboardData
         $connection = $component->scopeConnection !== null
             ? ''
             : $component->completedFilterConnection;
+        $queue = $component->completedFilterQueue;
+
+        // Global queue-scope (`?qk={conn}:{queue}`) overrides per-pane filters.
+        // Mirrors the same routing in `QueueInsightsDashboard::buildFailedFilters`.
+        $queueScope = QueueScopeKey::decompose($component->selectedQueue);
+        if ($queueScope !== null) {
+            $connection = $component->scopeConnection !== null ? '' : $queueScope['connection'];
+            $queue = $queueScope['queue'];
+        }
+
+        // Auto-reveal when the active class scope is silenced — same rationale
+        // as `QueueInsightsDashboard::buildFailedFilters`. Without this the
+        // completed list reads as empty after clicking a silenced row on the
+        // Classes tab.
+        $includeSilenced = $component->completedIncludeSilenced
+            || ($component->selectedClass !== null
+                && resolve(SilencedJobs::class)->isSilenced($component->selectedClass));
 
         return new CompletedRowFilter(
             connection: $connection,
-            queue: $component->completedFilterQueue,
+            queue: $queue,
             from: $component->completedFilterFrom,
             to: $component->completedFilterTo,
-            includeSilenced: $component->completedIncludeSilenced,
+            includeSilenced: $includeSilenced,
         );
     }
 
     private function completedFiltersActive(QueueInsightsDashboard $component): bool
     {
         return $component->selectedClass !== null
+            || $component->selectedQueue !== ''
             || $component->completedFilterConnection !== ''
             || $component->completedFilterQueue !== ''
             || $component->completedFilterFrom !== ''
@@ -540,42 +556,301 @@ final readonly class DashboardData
      * with 10+ silenced classes don't pay N×2 read amplification on every
      * 10s dashboard poll.
      *
-     * Capped at PER_PAGE per axis — the Silenced tab is a roster, not a
-     * paginated archive. Operators who need deep history land on the main
-     * Failed / Completed pane and toggle "Show silenced".
+     * Paginated per axis — silenced classes are typically the spammiest
+     * traffic (vendor pings, retry storms). Earlier design capped each
+     * axis at one page and pushed operators to the main lists with
+     * "Show silenced" toggled; that read like an empty roster on busy
+     * systems.
      *
-     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>}
+     * @return array{
+     *     classes: list<string>,
+     *     patterns: list<string>,
+     *     failed_rows: list<array<string, mixed>>,
+     *     completed_rows: list<array<string, mixed>>,
+     *     failed_paginator: LengthAwarePaginator<int, array<string, mixed>>,
+     *     completed_paginator: LengthAwarePaginator<int, array<string, mixed>>,
+     * }
      */
-    private function buildSilencedListings(SilencedJobs $silenced, ?string $scope): array
+    private function buildSilencedView(?string $scope, QueueInsightsDashboard $component): array
     {
-        $allFailed = RowEnricher::failed($this->svc->recentFailed(
-            self::RECENT_FETCH_LIMIT,
-            new FailedJobFilters(connection: $scope ?? '', includeSilenced: true),
-        ));
-        $allCompleted = RowEnricher::completed(
-            $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, null, $scope),
+        $silenced = resolve(SilencedJobs::class);
+        $classes = $silenced->all();
+        $patterns = $silenced->patterns();
+
+        if (! $silenced->hasAny()) {
+            return [
+                'classes' => $classes,
+                'patterns' => $patterns,
+                'failed_rows' => [],
+                'completed_rows' => [],
+                'failed_paginator' => new LengthAwarePaginator([], 0, self::PER_PAGE, 1, ['pageName' => 'sfp']),
+                'completed_paginator' => new LengthAwarePaginator([], 0, self::PER_PAGE, 1, ['pageName' => 'scp']),
+            ];
+        }
+
+        $silencedFailed = $this->filterSilenced(
+            $silenced,
+            RowEnricher::failed($this->svc->recentFailed(
+                self::RECENT_FETCH_LIMIT,
+                new FailedJobFilters(connection: $scope ?? '', includeSilenced: true),
+            )),
+        );
+        $silencedCompleted = $this->filterSilenced(
+            $silenced,
+            RowEnricher::completed($this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, null, $scope)),
         );
 
-        $silencedFailed = array_values(array_filter(
-            $allFailed,
-            static function (array $row) use ($silenced): bool {
-                $class = $row['class'] ?? null;
-
-                return is_string($class) && $silenced->isSilenced($class);
-            },
-        ));
-        $silencedCompleted = array_values(array_filter(
-            $allCompleted,
-            static function (array $row) use ($silenced): bool {
-                $class = $row['class'] ?? null;
-
-                return is_string($class) && $silenced->isSilenced($class);
-            },
-        ));
+        [$failedPaginator, $failedRowsPaged] = $this->paginate(
+            $silencedFailed,
+            $component->silencedFailedPerPage,
+            $component->silencedFailedPage,
+            'sfp',
+        );
+        [$completedPaginator, $completedRowsPaged] = $this->paginate(
+            $silencedCompleted,
+            $component->silencedCompletedPerPage,
+            $component->silencedCompletedPage,
+            'scp',
+        );
 
         return [
-            array_slice($silencedFailed, 0, self::PER_PAGE),
-            array_slice($silencedCompleted, 0, self::PER_PAGE),
+            'classes' => $classes,
+            'patterns' => $patterns,
+            'failed_rows' => $failedRowsPaged,
+            'completed_rows' => $completedRowsPaged,
+            'failed_paginator' => $failedPaginator,
+            'completed_paginator' => $completedPaginator,
         ];
+    }
+
+    /**
+     * Hydrate the selected completed-modal row with wait_ms, batch_id, and
+     * backward-chain lineage. Extracted from `build()` to keep its
+     * cognitive complexity under PHPStan's 20-point ceiling.
+     *
+     * @param  array<string, mixed>  $selectedPayload
+     * @return array<string, mixed>
+     */
+    /**
+     * Resolve the failed-job modal's selected row. First search the visible
+     * `$recentFailed` list (cheap, in-memory). When that misses — typical for
+     * silenced rows clicked from the Silenced tab, since FailedJobFilters'
+     * default exclusion strips them at the SQL layer — fall back to a single
+     * direct lookup by id and re-enrich. Custom failed-job providers or a
+     * missing `failed_jobs` table fall through to null.
+     *
+     * @param  list<array<array-key, mixed>>  $recentFailed
+     * @return array<array-key, mixed>|null
+     */
+    private function resolveSelectedFailed(QueueInsightsDashboard $component, array $recentFailed): ?array
+    {
+        $selectedFailed = $this->modals->selectedFailed($component->selectedFailedId, $recentFailed);
+
+        if ($selectedFailed !== null || $component->selectedFailedId === null) {
+            return $selectedFailed;
+        }
+
+        try {
+            $row = DB::table('failed_jobs')
+                ->where('id', $component->selectedFailedId)
+                ->first();
+        } catch (Throwable) {
+            return null;
+        }
+
+        if ($row === null) {
+            return null;
+        }
+
+        // Re-enforce active scope on the fallback path. Without this, a deep-
+        // linked or forged `selectedFailedId` could load a row from a
+        // different connection/queue than the operator's scoped dashboard
+        // is supposed to expose — silently bypassing the path-level scope.
+        // The fallback is meant to surface silenced rows that the SQL filter
+        // strips, NOT to widen the connection/queue surface.
+        $rowArray = (array) $row;
+        if ($component->scopeConnection !== null && ($rowArray['connection'] ?? null) !== $component->scopeConnection) {
+            return null;
+        }
+
+        $queueScope = QueueScopeKey::decompose($component->selectedQueue);
+        if ($queueScope !== null
+            && (($rowArray['connection'] ?? null) !== $queueScope['connection']
+                || ($rowArray['queue'] ?? null) !== $queueScope['queue'])
+        ) {
+            return null;
+        }
+
+        $enriched = RowEnricher::failed([$rowArray]);
+
+        return $enriched[0] ?? null;
+    }
+
+    /**
+     * Pick the connection passed to `recentCompleted` so the read window is
+     * narrowed BEFORE truncation. Path-level scope takes precedence; falls
+     * back to the connection embedded in `selectedQueue` so a queue-only
+     * scope still routes through `completed:connection:{conn}` (~10 k cap)
+     * instead of the global aggregate (~250 cap). Returns null when neither
+     * scope is active — the global stream is the right read in that case.
+     */
+    private function resolveCompletedReadConnection(QueueInsightsDashboard $component, ?string $scope): ?string
+    {
+        if ($scope !== null) {
+            return $scope;
+        }
+
+        return QueueScopeKey::decompose($component->selectedQueue)['connection'] ?? null;
+    }
+
+    /**
+     * Pick the queue tuples passed to `PendingJobsReader::all*`. Pending /
+     * in-flight aggregation caps at 50 candidates GLOBALLY across configured
+     * queues — if only post-filter narrowed by `selectedQueue`, a busy
+     * unrelated queue could consume the candidate window and leave the
+     * scoped queue empty. Pushing the scope INTO the read targets the
+     * ZRANGEBYSCORE at the selected queue's zset directly.
+     *
+     * @return list<array{connection: string, queue: string}>
+     */
+    private function resolvePendingFetchQueues(QueueInsightsDashboard $component, ?string $scope): array
+    {
+        $queueScope = QueueScopeKey::decompose($component->selectedQueue);
+        if ($queueScope !== null) {
+            return [$queueScope];
+        }
+
+        return $this->svc->configuredQueues($scope);
+    }
+
+    /**
+     * Apply the global class + queue scope to the pending lists post-fetch and
+     * bulk-hydrate `parent_class` for any row that carries a `parent_uuid`
+     * (chain-lineage). One MGET round-trip across all three lists keeps the
+     * chain chip in `pending-row.blade.php` visually consistent with completed
+     * + failed (renders the parent class label, not just "chain").
+     *
+     * Returns the three filtered + hydrated lists in the input order
+     * (`[inFlight, pending, delayed]`). Filtering at this stage also narrows
+     * the overview pane's `pendingPreview`, which is built from the same
+     * arrays.
+     *
+     * @param  list<array<string, mixed>>  $inFlightRows
+     * @param  list<array<string, mixed>>  $pendingRows
+     * @param  list<array<string, mixed>>  $delayedRows
+     * @return array{0: list<array<string, mixed>>, 1: list<array<string, mixed>>, 2: list<array<string, mixed>>}
+     */
+    private function scopeAndHydratePendingRows(
+        QueueInsightsDashboard $component,
+        array $inFlightRows,
+        array $pendingRows,
+        array $delayedRows,
+    ): array {
+        if ($component->selectedClass !== null) {
+            $selectedClass = $component->selectedClass;
+            $byClass = static fn (array $r): bool => ($r['class'] ?? null) === $selectedClass;
+            $pendingRows = array_values(array_filter($pendingRows, $byClass));
+            $delayedRows = array_values(array_filter($delayedRows, $byClass));
+            $inFlightRows = array_values(array_filter($inFlightRows, $byClass));
+        }
+
+        $queueScope = QueueScopeKey::decompose($component->selectedQueue);
+        if ($queueScope !== null) {
+            $selConn = $queueScope['connection'];
+            $selQueue = $queueScope['queue'];
+            $byQueue = static fn (array $r): bool => ($r['connection'] ?? null) === $selConn
+                && ($r['queue'] ?? null) === $selQueue;
+            $pendingRows = array_values(array_filter($pendingRows, $byQueue));
+            $delayedRows = array_values(array_filter($delayedRows, $byQueue));
+            $inFlightRows = array_values(array_filter($inFlightRows, $byQueue));
+        }
+
+        $allParentUuids = [];
+        foreach ([$inFlightRows, $pendingRows, $delayedRows] as $rows) {
+            foreach ($rows as $r) {
+                $p = $r['parent_uuid'] ?? null;
+                if (is_string($p) && $p !== '') {
+                    $allParentUuids[$p] = true;
+                }
+            }
+        }
+
+        $parentClassMap = $allParentUuids === []
+            ? []
+            : ParentClassResolver::resolveMany(array_keys($allParentUuids));
+
+        return [
+            $this->stampParentClass($inFlightRows, $parentClassMap),
+            $this->stampParentClass($pendingRows, $parentClassMap),
+            $this->stampParentClass($delayedRows, $parentClassMap),
+        ];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @param  array<string, string>  $parentClassMap
+     * @return list<array<string, mixed>>
+     */
+    private function stampParentClass(array $rows, array $parentClassMap): array
+    {
+        $out = [];
+        foreach ($rows as $row) {
+            $p = $row['parent_uuid'] ?? null;
+            $row['parent_class'] = is_string($p) && $p !== '' && isset($parentClassMap[$p])
+                ? $parentClassMap[$p]
+                : null;
+            $out[] = $row;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $selectedPayload
+     * @return array<string, mixed>
+     */
+    private function decorateSelectedPayload(array $selectedPayload): array
+    {
+        $payloadUuid = $selectedPayload['uuid'] ?? null;
+        $selectedPayload['wait_ms'] = is_string($payloadUuid)
+            ? (string) ($this->svc->jobWaitMs($payloadUuid) ?? '')
+            : '';
+
+        // Reverse-lookup the batch id for THIS uuid only (one MGET) so
+        // the details-modal's batch chip can render. The full
+        // recentCompleted enrichment runs later for the table; doing
+        // it again here for one row is the cheapest way to keep the
+        // modal shape stable without depending on table-render order.
+        if (is_string($payloadUuid) && $payloadUuid !== '') {
+            $payloadBatchIds = BatchReader::batchIdsForUuids([$payloadUuid]);
+            $selectedPayload['batch_id'] = $payloadBatchIds[$payloadUuid] ?? null;
+        }
+
+        // Backward-chain lineage: the stream entry already carries
+        // `parent_uuid` (stamped by RecordJobProcessed). Resolve the
+        // parent's class label here so the modal's `↰ From` row can
+        // render `(Class)` alongside the uuid. Selection happens
+        // before RowEnricher::completed runs on the table list, so we
+        // hydrate the modal's single row directly.
+        $selectedPayload['parent_class'] = $this->resolveParentClassFor($selectedPayload['parent_uuid'] ?? null);
+        $selectedPayload['parent_target'] = $this->resolveParentTargetFor($selectedPayload['parent_uuid'] ?? null);
+
+        return $selectedPayload;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    private function filterSilenced(SilencedJobs $silenced, array $rows): array
+    {
+        return array_values(array_filter(
+            $rows,
+            static function (array $row) use ($silenced): bool {
+                $class = $row['class'] ?? null;
+
+                return is_string($class) && $silenced->isSilenced($class);
+            },
+        ));
     }
 }

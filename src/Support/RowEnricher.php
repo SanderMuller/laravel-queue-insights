@@ -137,22 +137,14 @@ final class RowEnricher
      */
     public static function failed(array $recentFailed): array
     {
-        $parentUuids = [];
-        if (Config::bool('chain_lineage.enabled', true)) {
-            $childUuids = [];
-            foreach ($recentFailed as $row) {
-                $u = $row['uuid'] ?? null;
-                if (is_string($u) && $u !== '') {
-                    $childUuids[] = $u;
-                }
-            }
-
-            $parentUuids = self::lineageMany($childUuids);
-        }
-
+        $childUuids = self::collectUuids($recentFailed);
+        $parentUuids = Config::bool('chain_lineage.enabled', true)
+            ? self::lineageMany($childUuids)
+            : [];
         $parentClasses = $parentUuids === []
             ? []
             : ParentClassResolver::resolveMany(array_values($parentUuids));
+        $runtimes = self::failedRuntimesMany($childUuids);
 
         $rows = [];
         foreach ($recentFailed as $row) {
@@ -164,6 +156,7 @@ final class RowEnricher
             $uuid = is_string($row['uuid'] ?? null) ? $row['uuid'] : '';
             $parentUuid = $uuid !== '' ? ($parentUuids[$uuid] ?? null) : null;
 
+            $displayName = self::stringField($payload, 'displayName');
             $rows[] = [
                 'id' => is_numeric($row['id'] ?? null) ? (int) $row['id'] : null,
                 'uuid' => $uuid,
@@ -171,9 +164,15 @@ final class RowEnricher
                 'connection' => $row['connection'] ?? null,
                 'queue' => $row['queue'] ?? null,
                 'failed_at' => $row['failed_at'] ?? null,
-                'display_name' => self::stringField($payload, 'displayName'),
+                // `class` mirrors the completed-row contract so downstream
+                // filters (DashboardData::buildSilencedListings) can read
+                // the same key on both row shapes. `display_name` is kept
+                // for templates that already bind to it.
+                'class' => $displayName,
+                'display_name' => $displayName,
                 'attempts' => self::intField($payload, 'attempts'),
                 'max_tries' => self::intField($payload, 'maxTries'),
+                'duration_ms' => $uuid !== '' ? ($runtimes[$uuid] ?? null) : null,
                 'exception_class' => $excClass,
                 'exception_message' => $excMessage,
                 'batch_id' => Config::bool('batches.enabled', true) ? self::batchId($payload) : null,
@@ -184,6 +183,59 @@ final class RowEnricher
         }
 
         return $rows;
+    }
+
+    /**
+     * Extract the non-empty uuid strings from a list of failed-job rows.
+     * Shared by the lineage + runtime fan-outs so the foreach + type-guard
+     * pattern lives in one place.
+     *
+     * @param  list<array<array-key, mixed>>  $recentFailed
+     * @return list<string>
+     */
+    private static function collectUuids(array $recentFailed): array
+    {
+        $uuids = [];
+        foreach ($recentFailed as $row) {
+            $u = $row['uuid'] ?? null;
+            if (is_string($u) && $u !== '') {
+                $uuids[] = $u;
+            }
+        }
+
+        return $uuids;
+    }
+
+    /**
+     * Bulk-load `failed-runtime:{uuid}` → runtime_ms for the failed page.
+     * RecordJobFailed writes the side-key with a 30 d TTL when `start:{uuid}`
+     * (the JobProcessing-stamped microtime float) was readable; aged-out
+     * runs return null and the row renders `—`.
+     *
+     * @param  list<string>  $uuids
+     * @return array<string, int>
+     */
+    private static function failedRuntimesMany(array $uuids): array
+    {
+        if ($uuids === []) {
+            return [];
+        }
+
+        $keys = array_map(static fn (string $u): string => KeyPrefix::make("failed-runtime:{$u}"), $uuids);
+        $values = Redis::connection(Config::string('redis_connection', 'default'))->command('mget', [$keys]);
+        if (! is_array($values)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($uuids as $i => $u) {
+            $v = $values[$i] ?? null;
+            if (is_numeric($v)) {
+                $out[$u] = (int) $v;
+            }
+        }
+
+        return $out;
     }
 
     /**

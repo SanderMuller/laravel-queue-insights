@@ -21,6 +21,15 @@ function paneSource(string $name): string
     return $contents === false ? '' : $contents;
 }
 
+function partialSource(string $name): string
+{
+    $contents = file_get_contents(
+        __DIR__ . "/../../../resources/views/partials/{$name}.blade.php"
+    );
+
+    return $contents === false ? '' : $contents;
+}
+
 it('emits dark variants on pane-overview cards (queues / pending / completed / failed)', function (): void {
     $src = paneSource('pane-overview');
 
@@ -70,14 +79,10 @@ it('emits dark variants on pane-batches table chrome and empty state', function 
         ->toContain('dark:text-gray-300');
 });
 
-it('emits dark variants on pane-completed filter chip + table chrome', function (): void {
+it('emits dark variants on pane-completed table chrome', function (): void {
     $src = paneSource('pane-completed');
 
     expect($src)
-        // "filtered" pill.
-        ->toContain('dark:bg-emerald-900/40')
-        ->toContain('dark:text-emerald-300')
-        ->toContain('dark:ring-emerald-400/30')
         // Table chrome.
         ->toContain('dark:bg-gray-900')
         ->toContain('dark:ring-white/10')
@@ -88,8 +93,6 @@ it('emits dark variants on pane-failed bulk-retry button branches', function ():
     $src = paneSource('pane-failed');
 
     expect($src)
-        // Filtered pill.
-        ->toContain('dark:bg-emerald-900/40')
         // "narrow to retry" pill.
         ->toContain('dark:bg-gray-800')
         ->toContain('dark:ring-white/10')
@@ -101,6 +104,23 @@ it('emits dark variants on pane-failed bulk-retry button branches', function ():
         ->toContain('dark:hover:bg-emerald-900/40')
         // Empty state + table chrome.
         ->toContain('dark:border-white/10');
+});
+
+it('emits dark variants on the shared filter-form toolbar (filtered pill + clear button + fields)', function (): void {
+    $src = partialSource('filter-form');
+
+    expect($src)
+        // "filtered" pill.
+        ->toContain('dark:bg-emerald-900/40')
+        ->toContain('dark:text-emerald-300')
+        ->toContain('dark:ring-emerald-400/30')
+        // Field chrome.
+        ->toContain('dark:bg-gray-900')
+        ->toContain('dark:text-gray-100')
+        ->toContain('dark:ring-white/10')
+        // Clear button hover.
+        ->toContain('dark:hover:bg-white/5')
+        ->toContain('dark:hover:text-gray-100');
 });
 
 it('emits dark variants on pane-pending in-flight (amber) / pending (gray) / delayed (indigo) sub-tables', function (): void {

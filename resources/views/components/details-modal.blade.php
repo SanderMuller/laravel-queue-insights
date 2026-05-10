@@ -435,7 +435,7 @@
                                         <x-queue-insights::meta-pill label="Connection" :value="$job['connection'] ?? null" size="sm"/>
                                         <x-queue-insights::meta-pill label="Queue" :value="$job['queue'] ?? null" size="sm"/>
                                         @if($i === 0)
-                                            <span class="rounded-md bg-emerald-50 dark:bg-emerald-900/40 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">next</span>
+                                            <span class="rounded-md bg-gray-950/[0.04] dark:bg-white/10 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10" title="First link queued after the parent completed">queued next</span>
                                         @endif
                                     </div>
                                 </div>
@@ -452,7 +452,7 @@
                     </p>
                 @endif
                 <p class="mt-3 text-[11px] text-gray-500 dark:text-gray-300">
-                    Chain context comes from the serialized job body — the next link's own connection/queue overrides the parent chain defaults when set. These jobs haven't run yet, so individual run history isn't available here.
+                    Chain context is a snapshot of what was serialized when the parent ran — it does not reflect whether the downstream links have since executed, failed, or are still pending. To see live state, search the Completed or Failed tab for the chained class. The next link's own connection/queue overrides the parent chain defaults when set.
                 </p>
             </div>
 
@@ -465,7 +465,7 @@
                     <div x-show="chainIndex === {{ $i }}" x-cloak>
                         <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">
                             Chained job {{ $i + 1 }} of {{ $chainTotal }}
-                            @if($i === 0)<span class="ml-1 rounded-md bg-emerald-50 dark:bg-emerald-900/40 px-1.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">next</span>@endif
+                            @if($i === 0)<span class="ml-1 rounded-md bg-gray-950/[0.04] dark:bg-white/10 px-1.5 py-0.5 font-medium text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">queued next</span>@endif
                         </p>
                         <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
                             <dl>
@@ -486,10 +486,10 @@
                                 </dd>
                             </div>
                             <div class="bg-white dark:bg-gray-900 p-4">
-                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Status</dt>
-                                <dd class="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
+                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Live status</dt>
+                                <dd class="mt-1 inline-flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300" title="The completed-stream entry stores chain routing only, not downstream run state — search the Completed or Failed tab by class to see actual runs.">
                                     <span aria-hidden="true" class="inline-block size-1.5 rounded-full bg-gray-400"></span>
-                                    not yet dispatched
+                                    not tracked
                                 </dd>
                             </div>
                         </dl>
@@ -515,9 +515,9 @@
 
                         <p class="mt-4 text-[11px] text-gray-500 dark:text-gray-300">
                             @if($i === 0)
-                                This job is the next link in the chain — Laravel re-dispatches it once the parent finishes (or after a manual retry of a failed parent).
+                                This was the first link Laravel queued after the parent completed. Whether it has since succeeded, failed, or is still pending isn't tracked on the parent's stream entry — open the Completed or Failed tab and filter by class to see the actual run.
                             @else
-                                This job runs after job {{ $i }} ({{ $chain['jobs'][$i - 1]['class'] }}) finishes successfully. It's still serialized inside the parent's chain context — no individual instance has been pushed onto a queue yet.
+                                This was queued after job {{ $i }} ({{ $chain['jobs'][$i - 1]['class'] }}) finished. The parent's stream entry only records routing context — current run state lives on the Completed / Failed tabs.
                             @endif
                         </p>
                     </div>

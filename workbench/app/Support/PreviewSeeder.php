@@ -291,6 +291,21 @@ LUA,
                 ]);
             }
 
+            // Historical depth zset — what `lastSnapshotAt()` reads to decide
+            // freshness. Without an entry the dashboard treats the queue as
+            // stale and the entire fleet lights up red. Skip for the queues
+            // we're intentionally modelling as broken (error path) or stale
+            // (no recent snapshot).
+            if ($depth !== null && ! $stale) {
+                $ts = $now->getTimestamp();
+                $redis->command('zadd', [
+                    KeyPrefix::make("depth:{$connection}:{$key}"),
+                    $ts,
+                    (string) $ts,
+                ]);
+                $redis->command('expire', [KeyPrefix::make("depth:{$connection}:{$key}"), 86400]);
+            }
+
             // backlog growth samples (used by the optional backlog_growing
             // alert; only the depth=450 mail queue gets points so the
             // alert can be opt-in toggled by the operator).
@@ -319,24 +334,32 @@ LUA,
 
     private function seedClassesAndCounters(RedisConnection $redis, Carbon $now): void
     {
-        $classes = [
-            'App\\Jobs\\SendWelcomeEmail',
-            'App\\Jobs\\GenerateReport',
-            'App\\Jobs\\ProcessImport',
-            'App\\Jobs\\SyncStripeCustomer',
-            'App\\Jobs\\NotifyImportFinished',
-            'App\\Jobs\\IndexImportArtifacts',
-            'App\\Jobs\\WeeklyDigest',
-            'App\\Jobs\\AuditCustomerSync',
-            'App\\Jobs\\GenerateInvoicePdf',
+        // class → primary connection. Mirrors the connection used in the
+        // completed-stream / failed_jobs / pending seeds so the dashboard
+        // sums consistently across surfaces. Without per-connection
+        // counters (`processed:{class}:{conn}:{bucket}`) and the matching
+        // `classes:{conn}` roster, the connection-scoped throughput chart
+        // reads zero everywhere — `RecordJobProcessed` writes both keys
+        // in production, the seeder must mirror that contract.
+        $classConnections = [
+            'App\\Jobs\\SendWelcomeEmail' => 'redis',
+            'App\\Jobs\\GenerateReport' => 'sqs',
+            'App\\Jobs\\ProcessImport' => 'redis',
+            'App\\Jobs\\SyncStripeCustomer' => 'redis',
+            'App\\Jobs\\NotifyImportFinished' => 'redis',
+            'App\\Jobs\\IndexImportArtifacts' => 'redis',
+            'App\\Jobs\\WeeklyDigest' => 'redis',
+            'App\\Jobs\\AuditCustomerSync' => 'redis',
+            'App\\Jobs\\GenerateInvoicePdf' => 'redis',
             // Listed in `queue-insights.silenced` — high failure weight
             // below makes the silenced-vs-not-silenced delta visible on
             // the throughput sparkline and headline failed-tile.
-            'App\\Jobs\\PingThirdPartyVendor',
+            'App\\Jobs\\PingThirdPartyVendor' => 'redis',
         ];
 
-        foreach ($classes as $class) {
+        foreach ($classConnections as $class => $connection) {
             $redis->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), $class]);
+            $redis->command('zadd', [KeyPrefix::make("classes:{$connection}"), $now->getTimestamp(), $class]);
             $redis->command('setex', [KeyPrefix::make("last_run:{$class}"), 2592000, $now->toIso8601String()]);
 
             // Per-hour throughput across the full 24h window the
@@ -344,10 +367,15 @@ LUA,
             // sine-shaped business-hours peak so the chart shows a real
             // diurnal pattern instead of a single tall bar at "now".
             $base = 30 + (abs(crc32($class)) % 80);
+            // PingThirdPartyVendor stays loud — it's silenced, so the
+            // failure_rate detector short-circuits and the noise drives the
+            // silenced-vs-not-silenced delta on the throughput sparkline.
+            // The other classes stay below the 10% threshold so the demo
+            // shows realistic-but-not-paging failure traffic.
             $failureWeight = match ($class) {
                 'App\\Jobs\\PingThirdPartyVendor' => 0.45,
-                'App\\Jobs\\NotifyImportFinished' => 0.18,
-                'App\\Jobs\\GenerateInvoicePdf' => 0.14,
+                'App\\Jobs\\NotifyImportFinished' => 0.06,
+                'App\\Jobs\\GenerateInvoicePdf' => 0.05,
                 default => 0.02,
             };
             for ($i = 23; $i >= 0; --$i) {
@@ -360,17 +388,27 @@ LUA,
                 $phase = (abs(crc32($class)) % 6) / 6.0; // 0..1
                 $hourOfDay = ((int) $hour->format('G') + ($phase * 24)) % 24;
                 $diurnal = 0.3 + 0.7 * (sin(($hourOfDay - 6) / 24 * 2 * M_PI) + 1) / 2;
-                $processed = (int) round($base * $diurnal) + ($i % 5);
+                $processed = max(0, (int) round($base * $diurnal) + ($i % 5));
                 $failed = (int) round($processed * $failureWeight) + ($i % 7 === 0 ? 1 : 0);
 
                 $redis->command('setex', [
                     KeyPrefix::make("processed:{$class}:{$bucket}"),
                     7 * 86400,
-                    (string) max(0, $processed),
+                    (string) $processed,
+                ]);
+                $redis->command('setex', [
+                    KeyPrefix::make("processed:{$class}:{$connection}:{$bucket}"),
+                    7 * 86400,
+                    (string) $processed,
                 ]);
                 if ($failed > 0) {
                     $redis->command('setex', [
                         KeyPrefix::make("failed:{$class}:{$bucket}"),
+                        30 * 86400,
+                        (string) $failed,
+                    ]);
+                    $redis->command('setex', [
+                        KeyPrefix::make("failed:{$class}:{$connection}:{$bucket}"),
                         30 * 86400,
                         (string) $failed,
                     ]);
@@ -492,6 +530,69 @@ LUA,
             ],
         ];
 
+        // Filler rows so the completed list has multi-page content. No
+        // chain / lineage on these so they don't pollute the demo flow.
+        // XADDed FIRST so they get OLDER stream-ids than the interesting
+        // rows below — XADD `*` ids monotonically increase with wall clock,
+        // and the dashboard sorts by stream-id (XREVRANGE), not by the
+        // `processed_at` field on the entry. Without this ordering the
+        // 30 fillers occupy pages 1-3 and every interesting row (chain
+        // root, mid, tail; batch members; varied classes) lands on page 4.
+        // Iterate oldest-first so the newest filler still sorts below the
+        // interesting rows that follow.
+        for ($i = 30; $i >= 1; --$i) {
+            $cls = ['App\\Jobs\\SendWelcomeEmail', 'App\\Jobs\\GenerateReport', 'App\\Jobs\\AuditCustomerSync'][$i % 3];
+            $row = [
+                'class' => $cls,
+                'connection' => 'redis',
+                'queue' => 'default',
+                'duration_ms' => (string) (200 + (($i * 37) % 4500)),
+                'attempts' => $i % 13 === 0 ? '2' : '1',
+                'uuid' => "preview-filler-{$i}",
+                'processed_at' => $now->copy()->subMinutes(6 + $i)->toIso8601String(),
+            ];
+            $this->xadd($redis, $globalKey, $row);
+            $perClass = KeyPrefix::make("completed:{$cls}");
+            unset($row['class']);
+            $this->xadd($redis, $perClass, $row);
+        }
+
+        // Silenced-class success traffic — `PingThirdPartyVendor` is on the
+        // silenced list. Most of its runs succeed; only a small percentage
+        // fail (a single seeded failure lives in `seedFailedJobs`). Without
+        // the success entries the Silenced tab's Completed roster reads
+        // empty even though the failure list shows activity, which
+        // misrepresents the "noisy-but-mostly-OK" shape silencing is
+        // designed for. 50 rows so the silenced-pane pagination (default
+        // 10 per page) renders 5 pages and operators can demonstrate the
+        // pager controls. XADDed after the fillers but before the
+        // interesting-rows block so they don't dominate the unfiltered
+        // Completed pane's page 1.
+        for ($i = 50; $i >= 1; --$i) {
+            $row = [
+                'class' => 'App\\Jobs\\PingThirdPartyVendor',
+                'connection' => 'redis',
+                'queue' => 'webhooks',
+                'duration_ms' => (string) (450 + (($i * 53) % 1800)),
+                'attempts' => $i % 8 === 0 ? '2' : '1',
+                'uuid' => "preview-silenced-completed-{$i}",
+                'processed_at' => $now->copy()->subMinutes(7 + ($i * 2))->toIso8601String(),
+            ];
+            $streamId = $this->xadd($redis, $globalKey, $row);
+            $perClass = KeyPrefix::make('completed:App\\Jobs\\PingThirdPartyVendor');
+            $perRow = $row;
+            unset($perRow['class']);
+            $this->xadd($redis, $perClass, $perRow);
+
+            if ($streamId !== null) {
+                $redis->command('setex', [
+                    KeyPrefix::make("uuid-completed:{$row['uuid']}"),
+                    604800,
+                    $streamId,
+                ]);
+            }
+        }
+
         foreach (array_reverse($rows) as $row) {
             // Enrich the row with `payload_*` fields the details-modal's
             // Section B (job config: displayName / maxTries / timeout /
@@ -520,25 +621,6 @@ LUA,
                     $streamId,
                 ]);
             }
-        }
-
-        // Filler rows so the completed list has multi-page content. No
-        // chain / lineage on these so they don't pollute the demo flow.
-        for ($i = 1; $i <= 30; ++$i) {
-            $cls = ['App\\Jobs\\SendWelcomeEmail', 'App\\Jobs\\GenerateReport', 'App\\Jobs\\AuditCustomerSync'][$i % 3];
-            $row = [
-                'class' => $cls,
-                'connection' => 'redis',
-                'queue' => 'default',
-                'duration_ms' => (string) (200 + (($i * 37) % 4500)),
-                'attempts' => $i % 13 === 0 ? '2' : '1',
-                'uuid' => "preview-filler-{$i}",
-                'processed_at' => $now->copy()->subMinutes(6 + $i)->toIso8601String(),
-            ];
-            $this->xadd($redis, $globalKey, $row);
-            $perClass = KeyPrefix::make("completed:{$cls}");
-            unset($row['class']);
-            $this->xadd($redis, $perClass, $row);
         }
 
         // qi:class:{uuid} — the chain-lineage class index. Hydrates
@@ -576,12 +658,13 @@ LUA,
      */
     private function seedFailedJobs(Carbon $now): void
     {
-        // Idempotent: skip when rows already exist. With shared MySQL on the
-        // hosted demo, multiple workers handling concurrent `/` requests
-        // would otherwise duplicate the seed rows on every refresh.
-        if (DB::table('failed_jobs')->count() > 0) {
-            return;
-        }
+        // Per-request idempotency: clear the seed rows then re-insert. This
+        // way edits to the fixture set (adding/removing rows, tweaking
+        // exception text) take effect on the next refresh without operators
+        // having to manually delete database.sqlite. Scoped via a `LIKE`
+        // on the deterministic `preview-uuid-` prefix so any host-app rows
+        // dropped into the same table are preserved.
+        DB::table('failed_jobs')->where('uuid', 'like', 'preview-uuid-%')->delete();
 
         $rows = [
             [
@@ -625,10 +708,13 @@ LUA,
                 'exception' => "InvalidArgumentException: Malformed CSV row 482\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subHour()->format('Y-m-d H:i:s'),
             ],
-            // Silenced-class rows — listed in `queue-insights.silenced` so
-            // the Failed list hides them by default and the "Show silenced"
+            // Silenced-class row — listed in `queue-insights.silenced` so
+            // the Failed list hides it by default and the "Show silenced"
             // checkbox on the failed-pane filter form (URL `?fs=1`)
-            // reveals them.
+            // reveals it. Single failure paired with many seeded
+            // completed-stream entries (see `seedCompletedStream`) so the
+            // silenced roster shows the realistic "noisy-but-mostly-OK"
+            // shape that motivates silencing in the first place.
             [
                 'uuid' => 'preview-uuid-silenced-vendor-1',
                 'connection' => 'redis',
@@ -641,19 +727,6 @@ LUA,
                 ]),
                 'exception' => "GuzzleHttp\\Exception\\ConnectException: cURL error 28: Operation timed out after 5000 ms\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subMinutes(4)->format('Y-m-d H:i:s'),
-            ],
-            [
-                'uuid' => 'preview-uuid-silenced-vendor-2',
-                'connection' => 'redis',
-                'queue' => 'webhooks',
-                'payload' => json_encode([
-                    'uuid' => 'preview-uuid-silenced-vendor-2',
-                    'displayName' => 'App\\Jobs\\PingThirdPartyVendor',
-                    'attempts' => 2,
-                    'maxTries' => 3,
-                ]),
-                'exception' => "GuzzleHttp\\Exception\\ServerException: 503 Service Unavailable\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
-                'failed_at' => $now->copy()->subMinutes(11)->format('Y-m-d H:i:s'),
             ],
         ];
 
@@ -684,12 +757,14 @@ LUA,
      */
     private function seedPending(RedisConnection $redis, Carbon $now): void
     {
+        // Tuple shape: [uuid, class, conn, queue, queuedAt, batchId, attempts].
         $rows = [
-            ['preview-pending-1', 'App\\Jobs\\SendWelcomeEmail', 'redis', 'default', $now->copy()->subSeconds(45), null],
-            ['preview-pending-2', 'App\\Jobs\\GenerateReport', 'sqs', 'reports', $now->copy()->subMinutes(8), 'preview-batch-001'],
+            ['preview-pending-1', 'App\\Jobs\\SendWelcomeEmail', 'redis', 'default', $now->copy()->subSeconds(45), null, null],
+            ['preview-pending-2', 'App\\Jobs\\GenerateReport', 'sqs', 'reports', $now->copy()->subMinutes(8), 'preview-batch-001', null],
+            ['preview-pending-retry', 'App\\Jobs\\PingThirdPartyVendor', 'redis', 'default', $now->copy()->subSeconds(15), null, 2],
         ];
 
-        foreach ($rows as [$uuid, $class, $connection, $queue, $queuedAt, $batchId]) {
+        foreach ($rows as [$uuid, $class, $connection, $queue, $queuedAt, $batchId, $attempts]) {
             $this->writePendingHash(
                 $redis,
                 $uuid,
@@ -699,6 +774,7 @@ LUA,
                 queuedAt: $queuedAt,
                 availableAt: $queuedAt,
                 batchId: $batchId,
+                attempts: $attempts,
             );
         }
     }
@@ -710,21 +786,26 @@ LUA,
      */
     private function seedInFlight(RedisConnection $redis, Carbon $now): void
     {
+        // Tuple shape: [uuid, class, conn, queue, queuedAt, startedAt, batchId, parentUuid, attempts].
         $rows = [
             [
                 'preview-inflight-1', 'App\\Jobs\\ProcessImport', 'redis', 'default',
-                $now->copy()->subSeconds(45), $now->copy()->subSeconds(20), null, null,
+                $now->copy()->subSeconds(45), $now->copy()->subSeconds(20), null, null, null,
             ],
             [
                 // Chained child running right now — `parent_uuid` set so
                 // the in-flight modal demonstrates the backward link.
                 'preview-inflight-2', 'App\\Jobs\\NotifyImportFinished', 'redis', 'mail',
                 $now->copy()->subMinutes(3), $now->copy()->subMinutes(2), null,
-                'preview-uuid-process-import',
+                'preview-uuid-process-import', null,
+            ],
+            [
+                'preview-inflight-retry', 'App\\Jobs\\ChargeStripeCustomer', 'redis', 'default',
+                $now->copy()->subMinutes(2), $now->copy()->subSeconds(35), null, null, 3,
             ],
         ];
 
-        foreach ($rows as [$uuid, $class, $connection, $queue, $queuedAt, $startedAt, $batchId, $parentUuid]) {
+        foreach ($rows as [$uuid, $class, $connection, $queue, $queuedAt, $startedAt, $batchId, $parentUuid, $attempts]) {
             $this->writePendingHash(
                 $redis,
                 $uuid,
@@ -738,6 +819,7 @@ LUA,
                 startedAt: $startedAt,
                 parentUuid: $parentUuid,
                 indexInPendingZset: false,
+                attempts: $attempts,
             );
 
             $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
@@ -772,13 +854,12 @@ LUA,
      */
     private function seedBatches(RedisConnection $redis, Carbon $now): void
     {
-        // Idempotent: skip when batches already exist. The Redis-side index
-        // is rebuilt every seed (resetState flushes the prefix), but the
-        // DB-side row would otherwise collide with the primary-key on
-        // re-insertion across concurrent workers on shared MySQL.
-        if (DB::table('job_batches')->count() > 0) {
-            return;
-        }
+        // Note: NOT short-circuiting on `job_batches` row count. `resetState`
+        // flushes the Redis prefix every seed, so the Redis-side index
+        // (`batches:index` zset + `batch:{id}:uuids` lists) needs to be
+        // rewritten every tick — otherwise the dashboard's Batches tab
+        // empties out after the first reseed even though the DB rows
+        // survive. Per-batch idempotency lives in `writeBatch`.
 
         // Batch 1 — preview-batch-001, in-progress: 1 finished, 1 failed,
         // 1 pending, 1 in-flight-completed. Drives the "Active" badge.
@@ -856,18 +937,28 @@ LUA,
         // DB-side row — Laravel's BatchRepository::find() reads this.
         // Without it `Bus::findBatch()` returns null and BatchReader
         // silently skips the row, leaving the Batches tab badge at 0.
-        DB::table('job_batches')->insert([
-            'id' => $batchId,
-            'name' => $name,
-            'total_jobs' => count($uuids),
-            'pending_jobs' => $pendingJobs,
-            'failed_jobs' => $failedJobs,
-            'failed_job_ids' => json_encode($failedJobIds),
-            'options' => serialize([]),
-            'cancelled_at' => null,
-            'created_at' => $createdAt->getTimestamp(),
-            'finished_at' => $finishedAt?->getTimestamp(),
-        ]);
+        // Atomic upsert keyed on the deterministic preview id. Earlier
+        // `updateOrInsert` races under wire:navigate prefetch — two
+        // concurrent requests both SELECT empty, both INSERT, second
+        // crashes on the unique primary key. `upsert()` compiles to a
+        // single `INSERT ... ON CONFLICT DO UPDATE` statement that the
+        // DB resolves atomically.
+        DB::table('job_batches')->upsert(
+            [[
+                'id' => $batchId,
+                'name' => $name,
+                'total_jobs' => count($uuids),
+                'pending_jobs' => $pendingJobs,
+                'failed_jobs' => $failedJobs,
+                'failed_job_ids' => json_encode($failedJobIds),
+                'options' => serialize([]),
+                'cancelled_at' => null,
+                'created_at' => $createdAt->getTimestamp(),
+                'finished_at' => $finishedAt?->getTimestamp(),
+            ]],
+            ['id'],
+            ['name', 'total_jobs', 'pending_jobs', 'failed_jobs', 'failed_job_ids', 'options', 'cancelled_at', 'created_at', 'finished_at'],
+        );
     }
 
     /**
@@ -882,6 +973,11 @@ LUA,
             ['redis', 'high', range(8, 80, 3)],
             ['redis', 'mail', array_merge(range(400, 2000, 50), [3400])],
             ['sqs', 'reports', array_merge(range(2000, 8000, 200), [22000])],
+            // webhooks needs samples too — without them the `stalled`
+            // detector fires (depth ≥ 1 + zero recent wait pickups) before
+            // the snapshot expires at 5s and burns a slot in the demo's
+            // alerts panel.
+            ['redis', 'webhooks', range(40, 400, 12)],
         ];
 
         foreach ($queues as [$connection, $queue, $samples]) {
@@ -984,6 +1080,7 @@ LUA,
         ?Carbon $startedAt = null,
         ?string $parentUuid = null,
         bool $indexInPendingZset = true,
+        ?int $attempts = null,
     ): void {
         $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
         $hashKey = KeyPrefix::make("pending:{$uuid}");
@@ -1007,6 +1104,10 @@ LUA,
 
         if ($parentUuid !== null) {
             $fields['parent_uuid'] = $parentUuid;
+        }
+
+        if ($attempts !== null) {
+            $fields['attempts'] = (string) $attempts;
         }
 
         foreach ($fields as $field => $value) {

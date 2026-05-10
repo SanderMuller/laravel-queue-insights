@@ -3,6 +3,7 @@
 use Illuminate\Contracts\Console\Kernel as ConsoleKernelContract;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
@@ -646,4 +647,88 @@ it('Silenced tab merges + slices to PER_PAGE, dropping non-silenced rows (codex 
             expect($row['class'] ?? null)->toBe('App\\Jobs\\Noisy');
         }
     }
+});
+
+it('Silenced tab paginates beyond the first page via gotoSilencedCompletedPage', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+
+    app()->forgetScopedInstances();
+
+    $r = Redis::connection('default');
+    for ($i = 0; $i < 30; ++$i) {
+        seedStream($r, KeyPrefix::make('completed'), [
+            'class' => 'App\\Jobs\\Noisy',
+            'connection' => 'redis',
+            'queue' => 'webhooks',
+            'uuid' => 'noisy-' . str_pad((string) $i, 3, '0', STR_PAD_LEFT),
+        ]);
+    }
+
+    $component = Livewire::test(QueueInsightsDashboard::class);
+
+    $paginator = $component->viewData('silencedCompletedPaginator');
+    expect($paginator)->toBeInstanceOf(LengthAwarePaginator::class)
+        ->and($paginator->total())->toBe(30)
+        ->and($paginator->perPage())->toBe(DashboardData::PER_PAGE)
+        ->and($paginator->currentPage())->toBe(1)
+        ->and($paginator->getPageName())->toBe('scp');
+
+    $component->call('gotoSilencedCompletedPage', 3)
+        ->assertSet('silencedCompletedPage', 3);
+
+    expect($component->viewData('silencedCompletedPaginator')->currentPage())->toBe(3)
+        ->and($component->viewData('silencedCompletedRows'))->toHaveCount(10);
+});
+
+it('Silenced tab clamps URL-hydrated per-page values via boot()', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+
+    app()->forgetScopedInstances();
+
+    Livewire::withQueryParams(['sfpp' => 999999, 'scpp' => -1]);
+    $component = Livewire::test(QueueInsightsDashboard::class);
+
+    expect($component->get('silencedFailedPerPage'))->toBe(DashboardData::PER_PAGE)
+        ->and($component->get('silencedCompletedPerPage'))->toBe(DashboardData::PER_PAGE);
+});
+
+it('Silenced tab resets to page 1 when per-page changes', function (): void {
+    if (! RedisAvailability::check()) {
+        $this->markTestSkipped('redis not available on this host');
+    }
+
+    RedisAvailability::flush();
+    config()->set('queue-insights.key_prefix', 'qmtest:');
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Noisy']);
+
+    app()->forgetScopedInstances();
+
+    $r = Redis::connection('default');
+    for ($i = 0; $i < 60; ++$i) {
+        seedStream($r, KeyPrefix::make('completed'), [
+            'class' => 'App\\Jobs\\Noisy',
+            'connection' => 'redis',
+            'queue' => 'webhooks',
+            'uuid' => 'noisy-' . str_pad((string) $i, 3, '0', STR_PAD_LEFT),
+        ]);
+    }
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('gotoSilencedCompletedPage', 4)
+        ->assertSet('silencedCompletedPage', 4)
+        ->set('silencedCompletedPerPage', 50)
+        ->assertSet('silencedCompletedPerPage', 50)
+        ->assertSet('silencedCompletedPage', 1);
 });

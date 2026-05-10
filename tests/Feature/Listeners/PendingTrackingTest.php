@@ -6,6 +6,7 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
@@ -163,12 +164,13 @@ it('sets the configured TTL on both keys', function (): void {
 /**
  * Build a JobProcessing event whose underlying Job::uuid() returns the given uuid.
  */
-function makePendingProcessingEvent(string $uuid, string $connection = 'redis', string $queue = 'default'): JobProcessing
+function makePendingProcessingEvent(string $uuid, string $connection = 'redis', string $queue = 'default', int $attempts = 1): JobProcessing
 {
     /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('uuid')->andReturn($uuid);
     $job->shouldReceive('getQueue')->andReturn($queue);
+    $job->shouldReceive('attempts')->andReturn($attempts);
 
     return new JobProcessing(connectionName: $connection, job: $job);
 }
@@ -183,13 +185,23 @@ it('RecordJobProcessing transitions a uuid from pending → in-flight', function
 
     (new RecordJobProcessing())->handle(makePendingProcessingEvent($uuid, 'redis', 'work'));
 
-    // Hash kept (now stamped with state + started_at), uuid moved from
-    // pending-zset to inflight-zset.
+    // Hash kept (now stamped with state + started_at + attempts), uuid moved
+    // from pending-zset to inflight-zset.
     expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(1)
         ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'state'))->toBe('in_flight')
         ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'started_at'))->not->toBeNull()
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'attempts'))->toBe('1')
         ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))->toBe(0)
         ->and(R::int('zcard', 'qmtest:inflight-zset:redis:work'))->toBe(1);
+});
+
+it('RecordJobProcessing stamps attempts > 1 on retry pickups', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69RETRY';
+
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'redis', 'work'));
+    (new RecordJobProcessing())->handle(makePendingProcessingEvent($uuid, 'redis', 'work', attempts: 3));
+
+    expect(R::str('hget', 'qmtest:pending:' . $uuid, 'attempts'))->toBe('3');
 });
 
 it('RecordJobProcessing transition is idempotent when no prior pending entry exists', function (): void {
@@ -262,4 +274,31 @@ it('RecordJobFailed cleans pending tracking as belt-and-suspenders', function ()
     expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
         ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))
         ->toBe(0);
+});
+
+it('RecordJobFailed stamps failed-runtime:{uuid} when start:{uuid} was set', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69TIME';
+
+    // Simulate RecordJobProcessing's start-microtime stamp, 250 ms ago.
+    $start = microtime(true) - 0.25;
+    Redis::connection('default')
+        ->command('set', ['qmtest:start:' . $uuid, (string) $start]);
+
+    $event = new JobFailed(connectionName: 'redis', job: makePendingJobMock($uuid), exception: new RuntimeException('boom'));
+    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+
+    $runtimeMs = (int) (R::str('get', 'qmtest:failed-runtime:' . $uuid) ?? '');
+    expect($runtimeMs)->toBeGreaterThanOrEqual(200)
+        ->and($runtimeMs)->toBeLessThan(5000)
+        // start:{uuid} is consumed.
+        ->and(R::int('exists', 'qmtest:start:' . $uuid))->toBe(0);
+});
+
+it('RecordJobFailed skips failed-runtime:{uuid} when start:{uuid} is absent', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69NOSTRT';
+
+    $event = new JobFailed(connectionName: 'redis', job: makePendingJobMock($uuid), exception: new RuntimeException('boom'));
+    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+
+    expect(R::int('exists', 'qmtest:failed-runtime:' . $uuid))->toBe(0);
 });

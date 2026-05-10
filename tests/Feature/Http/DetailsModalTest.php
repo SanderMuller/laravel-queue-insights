@@ -640,7 +640,10 @@ it('chain list entries are clickable buttons that drill into the chain-detail vi
         // visibility when chainIndex flips.
         ->assertSee('Chained job 1 of 2')
         ->assertSee('Chained job 2 of 2')
-        ->assertSee('not yet dispatched');
+        // Live-status placeholder for downstream chain links — the chain
+        // partial doesn't track them, so each renders the "not tracked"
+        // dt/dd row in the chain-detail view.
+        ->assertSee('not tracked');
 });
 
 it('Chain section is omitted when chain field is absent', function (): void {
