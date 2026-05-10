@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
+use InvalidArgumentException;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
@@ -299,7 +300,7 @@ final class QueueInsightsDashboard extends Component
 
         try {
             $canonicalQueue = CanonicalQueueKey::from($queue);
-        } catch (\InvalidArgumentException) {
+        } catch (InvalidArgumentException) {
             return;
         }
 

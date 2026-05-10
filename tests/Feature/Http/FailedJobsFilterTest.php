@@ -272,7 +272,8 @@ it('buildFailedFilters drops a forged qk that crosses the path-level scope bound
     $filters = $component->instance()->buildFailedFilters();
 
     expect($filters->connection)->toBe('redis')
-        ->and($filters->queue)->toBe('');
+        ->and($filters->queue)
+        ->toBeEmpty();
 });
 
 it('selectedFailed DB fallback rejects rows outside the path-level scope', function (): void {
