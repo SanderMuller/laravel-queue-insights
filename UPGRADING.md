@@ -2,6 +2,16 @@
 
 This file lists the migration steps between major / minor versions of `laravel-queue-insights`. Patch releases never require manual steps. The Changelog (`CHANGELOG.md`) is the canonical record of what changed; this file covers only the steps a host must perform to land cleanly on the new version.
 
+## Failed-pane class filter URL key removed (`?fk=` → `?ck=`)
+
+The Failed list's class filter is now bound to the same Livewire prop the Completed list uses (`selectedClass`), so a class picked in either dropdown — or via a click on the Classes tab — scopes both panes simultaneously. As part of that unification, the Failed-pane's old `?fk=` URL key was removed; the surviving key is `?ck=` (which both panes now share).
+
+### Action required
+
+Bookmarks or saved dashboard URLs that pin a Failed-list class via `?fk=App\Jobs\SendEmail` need to migrate to `?ck=App\Jobs\SendEmail`. There's no auto-redirect; the old key is silently dropped on hydration.
+
+If you've shared dashboard URLs in runbooks, Slack pins, or PagerDuty annotations, search for `?fk=` and `&fk=` and rewrite. The match semantics are unchanged (anchored prefix substring on `payload.displayName`, case-insensitive).
+
 ## Scheduler alerts route through `QueueAlertNotification`
 
 Scheduler `Failed` / `Missed` / `Hung` detections now route through the same notification pipeline as queue-side alerts. Hosts that wired listeners against `Events\ScheduledTaskFailed` / `Missed` / `Hung` keep working — the typed events still fire alongside the new notification path.
