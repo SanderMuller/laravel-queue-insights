@@ -25,6 +25,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - [Prometheus](#prometheus)
 - [Scheduler observability](#scheduler-observability)
 - [Testing](#testing)
+- [Upgrading](#upgrading)
 - [Changelog](#changelog)
 - [Contributing](#contributing)
 - [Security Vulnerabilities](#security-vulnerabilities)
@@ -839,6 +840,10 @@ composer test
 ```
 
 Runs the Pest suite via Orchestra Testbench. `composer qa` additionally runs Rector, Pint, and PHPStan.
+
+## Upgrading
+
+See [UPGRADING.md](UPGRADING.md) for migration steps between minor versions. Patch releases never require manual steps.
 
 ## Changelog
 
