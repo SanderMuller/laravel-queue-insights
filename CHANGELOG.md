@@ -4,6 +4,25 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.15.0 - 2026-05-10
+
+### Highlights
+
+- **Global queue scope.** Click a queue row on the Queues tab to scope every list pane (Failed / Completed / Pending / Silenced) to that queue. Click again to toggle off. URL-shareable as `?qk={connection}:{queue}`. Mirrors the existing class scope on the Classes tab; both axes coexist. Pending/in-flight reads narrow to the scoped queue's zset directly so cross-queue traffic can't evict scoped rows from the candidate window. Completed reads route through the per-connection stream (~10 k cap) instead of the global aggregate (~250 cap) when only queue scope is active.
+- **Inline scope strip.** A `Filtering by queue=… · class=…` row above the tab bar surfaces the active scope across every tab with a per-chip clear button. Clicking the already-selected class or queue clears the scope (toggle).
+- **Retry badge.** Pending, in-flight, and completed rows render an orange `retry N` chip with a hover tooltip when the worker has picked a job up more than once. Backed by `attempts` stamped on the pending hash via the extended `MarkInFlight.lua` script.
+- **Runtime column on Failed.** Failed rows now show runtime alongside Completed (was missing). Backed by a new `failed-runtime:{uuid}` side-key (30 d TTL) written by `RecordJobFailed` before the worker's `start:` stamp is consumed; `RowEnricher::failed()` row shape gains `duration_ms: ?int`.
+- **Filter unification.** Both Failed and Completed dropdowns bind to the global `?ck=` class scope — picking on either pane scopes the other automatically. The collapsible `<details>` filter row was replaced with an always-visible inline toolbar.
+- **Auto-reveal silenced rows.** Picking a silenced class on the Classes tab no longer reads as empty; Failed and Completed automatically include silenced rows when the active class scope IS a silenced class.
+- **Silenced-tab failed click fix.** Clicking a row on the Silenced tab's Failed list now opens the modal. Previously the SQL silenced-exclusion stripped the row from the in-memory lookup; a DB fallback now fetches by id and re-applies path-level scope so deep links can't widen the surface.
+- **Polish.** Tab-strip refresh + "See all N →" overview links now switch tabs reliably (Alpine scope-leak fix). Schedule per-page default 50 → 10. Job-list column shape unified across Completed / Failed / Silenced (5/2/2/2/1) so Job gets ~42% width. Tracking-gap drawer (Queues tab) gains a dark-mode contrast fix. Pending-row chips moved to the identifier line so long FQCNs get the full first row; UUIDs render full-width with CSS truncate. Delayed badge gains a tooltip with total delay + queued/runs absolute timestamps.
+
+### Breaking changes
+
+- Failed-pane class filter URL key removed: `?fk=` → `?ck=`. Bookmarks pinning a Failed-list class via `?fk=` need rewriting to `?ck=` (both panes now share the key). See [UPGRADING.md#failed-pane-class-filter-url-key-removed-fk--ck](UPGRADING.md#failed-pane-class-filter-url-key-removed-fk--ck) for migration steps.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.14.0...0.15.0
+
 ## 0.14.0 - 2026-05-10
 
 Scheduler alerts now route through the same `QueueAlertNotification` pipeline as queue alerts — one mental model, one set of channels (log / slack / mail), with an optional per-domain channel block for hosts that want scheduler alerts in a different Slack channel.
@@ -74,6 +93,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -284,6 +304,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -395,6 +416,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -430,6 +452,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -555,6 +578,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
