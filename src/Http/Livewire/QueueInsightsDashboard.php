@@ -3,18 +3,22 @@
 namespace SanderMuller\QueueInsights\Http\Livewire;
 
 use Illuminate\Contracts\View\View;
-use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Session;
 use Illuminate\Support\Facades\View as ViewFactory;
 use Livewire\Attributes\Layout;
 use Livewire\Attributes\On;
 use Livewire\Attributes\Url;
 use Livewire\Component;
+use SanderMuller\QueueInsights\Dashboard\AuditContext;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
+use SanderMuller\QueueInsights\Dashboard\RetryAction;
+use SanderMuller\QueueInsights\Dashboard\RetryActor;
+use SanderMuller\QueueInsights\Dashboard\RetryOutcome;
+use SanderMuller\QueueInsights\Dashboard\RetryStatus;
+use SanderMuller\QueueInsights\Support\AuditFieldSanitizer;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
@@ -163,8 +167,12 @@ final class QueueInsightsDashboard extends Component
      * until the user clicked something). `boot()` runs after hydration
      * but before render, so the clamp lands before the view sees it.
      */
-    public function boot(): void
+    private RetryAction $retryAction;
+
+    public function boot(RetryAction $retryAction): void
     {
+        $this->retryAction = $retryAction;
+
         if (! in_array($this->completedPerPage, DashboardData::PER_PAGE_OPTIONS, true)) {
             $this->completedPerPage = DashboardData::PER_PAGE;
         }
@@ -550,13 +558,8 @@ final class QueueInsightsDashboard extends Component
      * `retryFailedJobs` Gate — this dashboard's `viewQueueInsights` Gate
      * is read-only and intentionally distinct from the write surface.
      *
-     * Defence-in-depth ordering:
-     *   1. Gate::authorize → 403 if denied (no Artisan call)
-     *   2. RateLimiter (30 / minute / user) → flash banner if exhausted
-     *   3. Artisan::call('queue:retry') wrapped in try/catch
-     *
-     * `queue:retry` is idempotent against an already-retried row, so a
-     * concurrent operator retrying the same uuid is a safe no-op.
+     * Authorization stays at the Livewire boundary; rate-limit, dispatch,
+     * exit-code branching and audit logging live on `RetryAction`.
      */
     public function retryFailed(string $uuid): void
     {
@@ -566,42 +569,16 @@ final class QueueInsightsDashboard extends Component
             return;
         }
 
-        if (! $this->hitRetryRateLimit()) {
-            Session::flash('qi.retry.error', 'Retry rate limit reached (30/min). Try again shortly.');
+        $outcome = $this->retryAction->single($uuid, $this->retryActor(), $this->auditContext());
 
-            return;
-        }
-
-        try {
-            $exit = Artisan::call('queue:retry', ['id' => [$uuid]]);
-
-            // Codex review: a non-zero exit code means queue:retry rejected
-            // (row already retried, missing, driver-level failure). The
-            // command does not throw — it returns the exit code. Treating
-            // every non-throwing call as success would tell operators a
-            // dead-letter row was requeued when it wasn't.
-            if ($exit !== 0) {
-                Log::warning('queue-insights.retry.exit_nonzero', [
-                    'kind' => 'single',
-                    'uuid' => $uuid,
-                    'exit' => $exit,
-                ]);
-                Session::flash('qi.retry.error', 'Retry could not be dispatched (queue:retry returned non-zero — already retried, missing, or driver rejected).');
-
-                return;
-            }
-
-            $this->logRetry('single', [$uuid]);
+        if ($outcome->status === RetryStatus::Ok) {
             $this->selectedFailedId = null;
-            Session::flash('qi.retry.ok', 'Retry dispatched.');
-        } catch (Throwable $throwable) {
-            Log::warning('queue-insights: retryFailed threw', [
-                'uuid' => $uuid,
-                'exception' => $throwable::class,
-                'message' => $throwable->getMessage(),
-            ]);
-            Session::flash('qi.retry.error', 'Retry failed — check logs.');
         }
+
+        Session::flash(
+            $outcome->status === RetryStatus::Ok ? 'qi.retry.ok' : 'qi.retry.error',
+            $outcome->message,
+        );
     }
 
     /**
@@ -609,8 +586,9 @@ final class QueueInsightsDashboard extends Component
      *
      * Server-side safety contract (spec §3.2 / Resolved Q #5 + #7):
      *   - reject when *all* filters are empty (footgun guard)
+     *   - rate-limit BEFORE the collector hits failed_jobs (anti-DoS)
      *   - reject when match count > 100 (no silent truncation)
-     *   - dispatch the whole snapshot inside one Artisan call
+     *   - dispatch the whole snapshot inside one Artisan call (action)
      */
     public function retryFailedBulk(): void
     {
@@ -624,8 +602,10 @@ final class QueueInsightsDashboard extends Component
             return;
         }
 
-        if (! $this->hitRetryRateLimit()) {
-            Session::flash('qi.retry.error', 'Retry rate limit reached (30/min). Try again shortly.');
+        $actor = $this->retryActor();
+
+        if (($limited = $this->retryAction->consumeRateLimit($actor)) instanceof RetryOutcome) {
+            Session::flash('qi.retry.error', $limited->message);
 
             return;
         }
@@ -659,89 +639,33 @@ final class QueueInsightsDashboard extends Component
             return;
         }
 
-        try {
-            $exit = Artisan::call('queue:retry', ['id' => $uuids]);
+        $outcome = $this->retryAction->bulk($uuids, $actor, $this->auditContext());
 
-            if ($exit !== 0) {
-                Log::warning('queue-insights.retry.exit_nonzero', [
-                    'kind' => 'bulk',
-                    'count' => $count,
-                    'exit' => $exit,
-                ]);
-                Session::flash('qi.retry.error', sprintf(
-                    'Bulk retry returned non-zero exit %d — some rows may have been already retried, missing, or rejected by the driver. Check logs.',
-                    $exit,
-                ));
-
-                return;
-            }
-
-            $this->logRetry('bulk', $uuids);
-            Session::flash('qi.retry.ok', sprintf('Retried %d job%s.', $count, $count === 1 ? '' : 's'));
-        } catch (Throwable $throwable) {
-            Log::warning('queue-insights: retryFailedBulk threw', [
-                'count' => $count,
-                'exception' => $throwable::class,
-                'message' => $throwable->getMessage(),
-            ]);
-            Session::flash('qi.retry.error', 'Bulk retry failed — check logs.');
-        }
+        Session::flash(
+            $outcome->status === RetryStatus::Ok ? 'qi.retry.ok' : 'qi.retry.error',
+            $outcome->message,
+        );
     }
 
-    private function hitRetryRateLimit(): bool
+    private function retryActor(): RetryActor
     {
         $userId = Auth::id();
         $key = 'qi.retry:' . ($userId !== null ? (string) $userId : 'guest:' . request()->ip());
 
-        if (RateLimiter::tooManyAttempts($key, 30)) {
-            return false;
-        }
-
-        RateLimiter::hit($key, 60);
-
-        return true;
+        return new RetryActor($userId, $key);
     }
 
-    /**
-     * @param  list<string>  $uuids
-     */
-    private function logRetry(string $kind, array $uuids): void
+    private function auditContext(): AuditContext
     {
-        Log::info('queue-insights.retry', [
-            'kind' => $kind,
-            'uuids' => $uuids,
-            'count' => count($uuids),
-            'user_id' => Auth::id(),
-            // Multi-tenant accountability — when scope is active, every retry
-            // log entry carries which connection the operator was scoped to.
-            // Sanitised the same way the URL-controlled filter fields are.
-            'scope_connection' => $this->sanitizeAuditField($this->scopeConnection ?? ''),
-            // Audit logs persist for a long time; the filter set is fully
-            // user-controlled URL state, so unbounded logging is an info
-            // leak (codex review). Sanitize each field: ASCII printable,
-            // no control chars, max 80 chars.
-            'filters' => [
-                'connection' => $this->sanitizeAuditField($this->filterConnection),
-                'queue' => $this->sanitizeAuditField($this->filterQueue),
-                'class' => $this->sanitizeAuditField($this->filterClass),
-                'from' => $this->sanitizeAuditField($this->filterFrom),
-                'to' => $this->sanitizeAuditField($this->filterTo),
-            ],
-        ]);
-    }
-
-    private function sanitizeAuditField(string $value): string
-    {
-        if ($value === '') {
-            return '';
-        }
-
-        // Replace anything outside the printable ASCII range with `?` so
-        // attempts to smuggle log-injection control bytes (CR/LF/etc) get
-        // neutralised before reaching the log driver.
-        $clean = (string) preg_replace('/[^\x20-\x7E]/', '?', $value);
-
-        return mb_substr($clean, 0, 80);
+        return new AuditContext(
+            userId: Auth::id(),
+            scopeConnection: AuditFieldSanitizer::clean($this->scopeConnection ?? ''),
+            filterConnection: AuditFieldSanitizer::clean($this->filterConnection),
+            filterQueue: AuditFieldSanitizer::clean($this->filterQueue),
+            filterClass: AuditFieldSanitizer::clean($this->filterClass),
+            filterFrom: AuditFieldSanitizer::clean($this->filterFrom),
+            filterTo: AuditFieldSanitizer::clean($this->filterTo),
+        );
     }
 
     public function render(DashboardData $data): View

@@ -37,6 +37,7 @@ use SanderMuller\QueueInsights\Console\QueueInsightsWorkCommand;
 use SanderMuller\QueueInsights\Console\WorkerOutputStreams;
 use SanderMuller\QueueInsights\Console\WorkerProcessFactory;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
+use SanderMuller\QueueInsights\Dashboard\RetryAction;
 use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
 use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
@@ -102,6 +103,11 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $this->app->singleton(QueueSnapshotDriverFactory::class);
         $this->app->bind(WorkerProcessFactory::class, DefaultWorkerProcessFactory::class);
         $this->app->bind(WorkerOutputStreams::class, DefaultWorkerOutputStreams::class);
+        // Stateless retry orchestrator for the failed-jobs dashboard. Bound
+        // (not singleton) — cheap to construct fresh per Livewire request,
+        // matches the Octane-correct default the codebase favours for
+        // stateless collaborators.
+        $this->app->bind(RetryAction::class);
         $this->app->singleton(DepthDetector::class);
         $this->app->singleton(Cooldown::class);
         $this->app->singleton(IssueDetector::class);

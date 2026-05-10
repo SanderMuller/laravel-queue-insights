@@ -227,7 +227,7 @@ it('retryFailedBulk surfaces an error when queue:retry returns a non-zero exit c
 it('audit log sanitizes user-controlled filter strings (control bytes neutralised, length capped)', function (): void {
     // Codex review: filter set is URL-bound + user-controlled. Log driver
     // accepting raw control bytes is a log-injection vector; unbounded length
-    // bloats audit logs. Both defended by sanitizeAuditField().
+    // bloats audit logs. Both defended by Support\AuditFieldSanitizer.
     $row = seedRetryRow();
 
     $logSpy = Log::spy();
@@ -267,6 +267,29 @@ it('flash banner renders the error message when bulk retry rejects', function ()
     Livewire::test(QueueInsightsDashboard::class)
         ->call('retryFailedBulk')
         ->assertSee('Bulk retry requires at least one filter.');
+});
+
+it('rate-limit short-circuits BEFORE the collector runs on bulk retry (anti-DoS ordering)', function (): void {
+    // Seed > 100 rows so the count > 100 branch would otherwise fire and
+    // emit the "exceed the 100 cap" flash. With the rate-limit running
+    // before the collector, the flooded caller hits "Rate limit reached"
+    // first — the differential message proves the ordering.
+    for ($i = 0; $i < 101; ++$i) {
+        seedRetryRow(['queue' => 'huge']);
+    }
+
+    $key = 'qi.retry:guest:127.0.0.1';
+    for ($i = 0; $i < 30; ++$i) {
+        RateLimiter::hit($key, 60);
+    }
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->set('filterQueue', 'huge')
+        ->call('retryFailedBulk')
+        ->assertSee('Retry rate limit reached (30/min). Try again shortly.')
+        ->assertDontSee('exceed the 100 cap');
+
+    expect(RecordingConsoleKernel::$calls)->toBeEmpty();
 });
 
 it('shows the "narrow to retry" hint when filters match more than 100 rows', function (): void {

@@ -114,8 +114,14 @@ parameters:
                 - tests/Feature/AlertingSchedulerTest.php
                 - tests/Feature/AlertingTest.php
                 - tests/Feature/Http/AlertsDashboardTest.php
+                - tests/Unit/Dashboard/
                 - tests/Unit/Prometheus/
                 - tests/Feature/Prometheus/
+            reportUnmatched: false
+        -
+            identifier: classConstant.internalEnum
+            paths:
+                - tests/Unit/Dashboard/
             reportUnmatched: false
         -
             identifier: parameter.internalClass

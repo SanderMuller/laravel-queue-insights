@@ -1,11 +1,15 @@
 <?php declare(strict_types=1);
 
+use Illuminate\Contracts\Console\Kernel as ConsoleKernelContract;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Auth\User;
 use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
 use SanderMuller\QueueInsights\Alerts\Issue;
@@ -16,6 +20,7 @@ use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Tests\Support\R;
+use SanderMuller\QueueInsights\Tests\Support\RecordingConsoleKernel;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
 it('registers the connection-scoped route by default', function (): void {
@@ -479,6 +484,28 @@ it('audit log on bulk retry carries scope_connection', function (): void {
     Gate::define('viewQueueInsights', fn (?User $user = null): bool => true);
     Gate::define('retryFailedJobs', fn (?User $user = null): bool => true);
 
+    Schema::create('failed_jobs', function (Blueprint $table): void {
+        $table->id();
+        $table->string('uuid')->nullable();
+        $table->string('connection');
+        $table->string('queue');
+        $table->longText('payload');
+        $table->longText('exception');
+        $table->timestamp('failed_at')->useCurrent();
+    });
+
+    DB::table('failed_jobs')->insert([
+        'uuid' => 'uuid-a',
+        'connection' => 'redis',
+        'queue' => 'default',
+        'payload' => json_encode(['displayName' => 'App\\Jobs\\X']),
+        'exception' => 'X',
+        'failed_at' => '2026-04-26 10:00:00',
+    ]);
+
+    RecordingConsoleKernel::reset();
+    app()->instance(ConsoleKernelContract::class, new RecordingConsoleKernel());
+
     $captured = [];
     Log::shouldReceive('info')
         ->once()
@@ -499,16 +526,19 @@ it('audit log on bulk retry carries scope_connection', function (): void {
     // audit-shape assertion below.
     Log::shouldReceive('channel')->andReturnSelf();
 
-    $instance = Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis'])->instance();
-    // Drive the private logRetry through reflection — the bulk-retry path
-    // requires actual failed_jobs rows + Artisan call and isn't the unit
-    // under test here. We just want to assert the audit shape.
-    $reflection = new ReflectionMethod($instance, 'logRetry');
-    $reflection->invoke($instance, 'bulk', ['uuid-a', 'uuid-b']);
+    // Drive retryFailedBulk end-to-end (filterQueue triggers a non-empty
+    // filter, the seeded failed_jobs row keeps the count in [1, 100], and
+    // the recorded kernel returns exit 0 so the audit-log info() fires).
+    Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis'])
+        ->set('filterQueue', 'default')
+        ->call('retryFailedBulk');
 
     expect($captured)->toHaveKey('scope_connection', 'redis')
         ->and($captured)->toHaveKey('filters')
-        ->and($captured['filters'])->toHaveKey('connection');
+        ->and($captured['filters'])->toHaveKey('connection')
+        ->and($captured)->toHaveKey('kind', 'bulk');
+
+    Schema::dropIfExists('failed_jobs');
 });
 
 it('Silenced tab renders the silenced-class roster + per-axis empty-state messaging that is scope-aware', function (): void {
