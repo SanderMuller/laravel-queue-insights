@@ -442,10 +442,14 @@ final readonly class DashboardData
         $queue = $component->completedFilterQueue;
 
         // Global queue-scope (`?qk={conn}:{queue}`) overrides per-pane filters.
-        // Mirrors the same routing in `QueueInsightsDashboard::buildFailedFilters`.
+        // Rejected outright when path-level scope is set AND points to a
+        // different connection — same isolation guard as
+        // `resolvePendingFetchQueues`. Mirrors the routing in
+        // `QueueInsightsDashboard::buildFailedFilters`.
         $queueScope = QueueScopeKey::decompose($component->selectedQueue);
-        if ($queueScope !== null) {
-            $connection = $component->scopeConnection !== null ? '' : $queueScope['connection'];
+        $pathScope = $component->scopeConnection;
+        if ($queueScope !== null && ($pathScope === null || $queueScope['connection'] === $pathScope)) {
+            $connection = $pathScope !== null ? '' : $queueScope['connection'];
             $queue = $queueScope['queue'];
         }
 
@@ -716,7 +720,12 @@ final readonly class DashboardData
     private function resolvePendingFetchQueues(QueueInsightsDashboard $component, ?string $scope): array
     {
         $queueScope = QueueScopeKey::decompose($component->selectedQueue);
-        if ($queueScope !== null) {
+
+        // Reject queue-scope when path-level scope is set AND points to a
+        // different connection — a forged `?qk=sqs:reports` on a route scoped
+        // to `redis` would otherwise read the foreign connection's pending
+        // zsets and leak rows into the scoped dashboard. Path scope wins.
+        if ($queueScope !== null && ($scope === null || $queueScope['connection'] === $scope)) {
             return [$queueScope];
         }
 
@@ -755,7 +764,12 @@ final readonly class DashboardData
         }
 
         $queueScope = QueueScopeKey::decompose($component->selectedQueue);
-        if ($queueScope !== null) {
+        $scope = $component->scopeConnection;
+        // Mirror the fetch-side rejection in `resolvePendingFetchQueues`: a
+        // forged `?qk=` whose connection differs from the path-scope is
+        // ignored so the post-filter doesn't zero-out rows the operator is
+        // entitled to see (and doesn't paper over a fetch-side leak).
+        if ($queueScope !== null && ($scope === null || $queueScope['connection'] === $scope)) {
             $selConn = $queueScope['connection'];
             $selQueue = $queueScope['queue'];
             $byQueue = static fn (array $r): bool => ($r['connection'] ?? null) === $selConn

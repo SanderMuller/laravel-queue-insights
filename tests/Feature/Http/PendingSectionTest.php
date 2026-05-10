@@ -157,6 +157,26 @@ it('hides the Pending section entirely when pending.enabled is false', function 
         ->assertDontSeeHtml('aria-label="Pending jobs"');
 });
 
+it('forged qk that crosses path-level scope cannot leak foreign-connection pending rows', function (): void {
+    // Path scope: myredis. Forged qk: other:mail. Seed rows on `other:mail`
+    // and assert the scoped dashboard does NOT surface them — the queue
+    // scope must be rejected, not silently swap connections.
+    $now = Date::now()->getTimestamp();
+    seedPendingForSection('uuid-foreign-1', 'other', 'mail', 'App\\Jobs\\Foreign1', $now - 5);
+    seedPendingForSection('uuid-foreign-2', 'other', 'mail', 'App\\Jobs\\Foreign2', $now - 4);
+
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->set('scopeConnection', 'myredis')
+        ->set('selectedQueue', 'other:mail');
+
+    $pendingRows = $component->viewData('pendingRows');
+    expect($pendingRows)->toBeArray();
+    /** @var array<int, array<string, mixed>> $pendingRows */
+    foreach ($pendingRows as $row) {
+        expect($row['connection'] ?? null)->not->toBe('other');
+    }
+});
+
 it('selectedQueue narrows the pending fetch to the scoped queue so cross-queue traffic cannot evict it', function (): void {
     // Saturate the unrelated queue with > 50 jobs (the global candidate cap).
     // Without scoped fetch narrowing, these would consume the candidate

@@ -256,6 +256,25 @@ it('Livewire #[Url] binds selectedQueue via the qk query-string key', function (
         ->assertSet('selectedQueue', 'redis:video');
 });
 
+it('selectQueue canonicalises the queue so SQS URL queues match the pending-zset key shape', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'sqs', 'https://sqs.us-east-1.amazonaws.com/123/work')
+        ->assertSet('selectedQueue', 'sqs:work');
+});
+
+it('buildFailedFilters drops a forged qk that crosses the path-level scope boundary', function (): void {
+    // Operator path-scoped to `redis`; forged `?qk=sqs:reports` must NOT
+    // narrow the failed list to the foreign connection's queue.
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->set('scopeConnection', 'redis')
+        ->set('selectedQueue', 'sqs:reports');
+
+    $filters = $component->instance()->buildFailedFilters();
+
+    expect($filters->connection)->toBe('redis')
+        ->and($filters->queue)->toBe('');
+});
+
 it('selectedFailed DB fallback rejects rows outside the path-level scope', function (): void {
     // Seed a silenced row on `sqs` connection — won't appear in the visible
     // failed list (FailedJobFilters strips silenced classes by default).

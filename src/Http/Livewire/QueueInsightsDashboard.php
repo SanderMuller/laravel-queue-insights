@@ -19,6 +19,7 @@ use SanderMuller\QueueInsights\Dashboard\RetryActor;
 use SanderMuller\QueueInsights\Dashboard\RetryOutcome;
 use SanderMuller\QueueInsights\Dashboard\RetryStatus;
 use SanderMuller\QueueInsights\Support\AuditFieldSanitizer;
+use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
@@ -283,6 +284,12 @@ final class QueueInsightsDashboard extends Component
      * so downstream filters can decompose without re-resolving the key.
      * Clicking the already-selected queue clears the scope (toggle). Resets
      * paginators on every transition.
+     *
+     * The queue is canonicalised via `CanonicalQueueKey::from()` so an SQS
+     * URL ("https://sqs.../work") collapses to its slug ("work") — matching
+     * the canonical key shape every downstream reader (pending zsets,
+     * inspector_key, completed-stream rows) compares against. Without this,
+     * picking an SQS-URL queue would store a raw URL that nothing matches.
      */
     public function selectQueue(string $connection, string $queue): void
     {
@@ -290,7 +297,13 @@ final class QueueInsightsDashboard extends Component
             return;
         }
 
-        $key = $connection . ':' . $queue;
+        try {
+            $canonicalQueue = CanonicalQueueKey::from($queue);
+        } catch (\InvalidArgumentException) {
+            return;
+        }
+
+        $key = $connection . ':' . $canonicalQueue;
         $this->selectedQueue = $this->selectedQueue === $key ? '' : $key;
         $this->failedPage = 1;
         $this->completedPage = 1;
@@ -647,10 +660,13 @@ final class QueueInsightsDashboard extends Component
 
         // Global queue-scope (`?qk={conn}:{queue}`) overrides per-pane filters
         // so a queue selected from the Queues tab persists across Failed +
-        // Completed lists. `scopeConnection` (path-level) still takes
-        // precedence over the queue-scope's connection if they disagree.
+        // Completed lists. Rejected outright when the path-level scope's
+        // connection differs from the queue scope's — a forged `?qk=` can't
+        // pull rows from a foreign connection into a path-scoped dashboard.
         $queueScope = QueueScopeKey::decompose($this->selectedQueue);
-        if ($queueScope !== null) {
+        if ($queueScope !== null
+            && ($this->scopeConnection === null || $queueScope['connection'] === $this->scopeConnection)
+        ) {
             $connection = $this->scopeConnection ?? $queueScope['connection'];
             $queue = $queueScope['queue'];
         }
