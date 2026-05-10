@@ -5,9 +5,8 @@ namespace SanderMuller\QueueInsights\Scheduler;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Date;
-use Illuminate\Support\Facades\Event as EventDispatcher;
 use Illuminate\Support\Facades\Log;
-use SanderMuller\QueueInsights\Events\ScheduledTaskHung;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use Throwable;
 
 /**
@@ -24,7 +23,7 @@ final readonly class HungTaskReconciler
     public function __construct(
         private RunStore $store,
         private ScheduleReader $reader,
-        private SchedulerCooldown $cooldown,
+        private IssueDispatcher $dispatcher,
     ) {}
 
     /**
@@ -54,18 +53,16 @@ final readonly class HungTaskReconciler
 
                 $this->store->recordHung($taskKey, $state['run_id']);
 
-                if ($this->cooldown->acquire('hung', $taskKey)) {
-                    $event = $eventByKey[$taskKey] ?? null;
-                    assert($event === null || $event instanceof Event);
-                    $elapsedSeconds = (int) max(0, ($nowMs - $state['started_at_ms']) / 1000);
-                    EventDispatcher::dispatch(new ScheduledTaskHung(
-                        $taskKey,
-                        $state['run_id'],
-                        $event,
-                        $state['started_at_ms'],
-                        $elapsedSeconds,
-                    ));
-                }
+                $event = $eventByKey[$taskKey] ?? null;
+                assert($event === null || $event instanceof Event);
+                $elapsedSeconds = (int) max(0, ($nowMs - $state['started_at_ms']) / 1000);
+                $this->dispatcher->dispatchScheduledTaskHung(
+                    $taskKey,
+                    $state['run_id'],
+                    $event,
+                    $state['started_at_ms'],
+                    $elapsedSeconds,
+                );
 
                 ++$count;
             } catch (Throwable $throwable) {

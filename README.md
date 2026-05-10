@@ -50,7 +50,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
-- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), and ships a missed/hung sweeper plus typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events.
+- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
@@ -760,13 +760,39 @@ A run is **missed** when the cron expression's next-fire timestamp passes withou
 
 When `scheduler.alerts.enabled = true`, missed/hung/failed detections dispatch typed events with per-`(taskKey, rule)` cooldown (`scheduler.alerts.cooldown_seconds`, default 900). Cooldown gates the **event dispatch itself** — when an alert is suppressed by cooldown, no event fires. Host listeners on `ScheduledTaskFailed` / `Missed` / `Hung` therefore only see the leading edge of an alerting condition; subsequent ticks within the cooldown window are silent until cooldown expires.
 
+Notifications additionally require the package-wide `alerts.enabled` master switch to be on — typed events fire under `scheduler.alerts.enabled` alone, but log / slack / mail emission is gated on **both** flags so a host running with `alerts.enabled=false` for queue alerts doesn't suddenly start paging on scheduler events after upgrade.
+
 ```text
 SanderMuller\QueueInsights\Events\ScheduledTaskMissed   { taskKey, task, expectedAtMs }
 SanderMuller\QueueInsights\Events\ScheduledTaskHung     { taskKey, runId, task?, … }
 SanderMuller\QueueInsights\Events\ScheduledTaskFailed   { taskKey, runId, task, … }
 ```
 
-The package does not ship a built-in notification pipeline for these events — host apps subscribe and forward to Slack / Mail / PagerDuty / Sentry from their own listeners. Routing scheduler alerts through `QueueAlertNotification` is planned (see `internal/specs/cron-monitoring/07-platform-extensions.md` §2) but not yet shipped.
+Scheduler alerts route through the same `QueueAlertNotification` pipeline as queue alerts — `log` / `slack` / `mail` channels, Spatie-style notifiable, host-extensible. Operators get one mental model and one set of channels to wire.
+
+#### Per-domain channel routing
+
+Populate `scheduler.alerts.channels` to send scheduler alerts to a different Slack channel / mail recipient list / log channel. When the scheduler block has at least one channel explicitly enabled, scheduler-scoped issues read it; otherwise they fall back to `alerts.channels`. Single-list installs (only `alerts.channels` populated) Just Work without any extra config:
+
+```php
+'scheduler' => [
+    'alerts' => [
+        'enabled' => env('QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED', false),
+        'cooldown_seconds' => 900,
+        'channels' => [
+            'slack' => [
+                'enabled' => true,
+                'webhook_url' => env('QUEUE_INSIGHTS_SCHEDULER_SLACK_WEBHOOK'),
+                'channel' => '#cron-watch',
+            ],
+        ],
+    ],
+],
+```
+
+Scheduler-scoped Slack payloads carry a `Run URL` field that deep-links into the dashboard's per-run modal (`?s_rid={taskKey}:{runId}`). Missed runs link to the per-task modal (`?s_tk={taskKey}`) instead.
+
+The typed `ScheduledTaskFailed` / `ScheduledTaskMissed` / `ScheduledTaskHung` events keep firing alongside the notification path, so existing host listeners stay wired. The cooldown key namespace moved from `sched:alert:cooldown:*` to `alert:cooldown:scheduled_task_*:task:{taskKey}` for parity with queue-side alerts — see UPGRADING for the one-shot Redis cleanup.
 
 ### External heartbeat
 

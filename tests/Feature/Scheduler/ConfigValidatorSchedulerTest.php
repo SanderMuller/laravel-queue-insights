@@ -47,3 +47,59 @@ it('accepts a null heartbeat url', function (): void {
         ConfigValidator::validateScheduler(['heartbeat' => ['enabled' => false, 'url' => null]]);
     })->not->toThrow(Throwable::class);
 });
+
+it('accepts the alerts.channels block matching the queue-side shape', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler([
+            'alerts' => [
+                'enabled' => true,
+                'cooldown_seconds' => 900,
+                'channels' => [
+                    'log' => ['enabled' => true, 'level' => 'warning'],
+                    'slack' => [
+                        'enabled' => true,
+                        'webhook_url' => 'https://hooks.example.com/SCHED',
+                        'channel' => '#cron',
+                    ],
+                    'mail' => ['enabled' => true, 'to' => ['ops@example.com']],
+                ],
+            ],
+        ]);
+    })->not->toThrow(Throwable::class);
+});
+
+it('rejects scheduler.alerts.channels.slack.enabled without webhook_url', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler([
+            'alerts' => [
+                'channels' => [
+                    'slack' => ['enabled' => true],
+                ],
+            ],
+        ]);
+    })->toThrow(QueueInsightsConfigException::class, 'scheduler.alerts.channels.slack.webhook_url');
+});
+
+it('rejects scheduler.alerts.channels.mail.enabled with empty to[]', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler([
+            'alerts' => [
+                'channels' => [
+                    'mail' => ['enabled' => true, 'to' => []],
+                ],
+            ],
+        ]);
+    })->toThrow(QueueInsightsConfigException::class, 'scheduler.alerts.channels.mail.to');
+});
+
+it('rejects a non-string log level inside scheduler.alerts.channels.log', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler([
+            'alerts' => [
+                'channels' => [
+                    'log' => ['enabled' => true, 'level' => 5],
+                ],
+            ],
+        ]);
+    })->toThrow(QueueInsightsConfigException::class, 'scheduler.alerts.channels.log.level');
+});

@@ -21,16 +21,17 @@ use SanderMuller\QueueInsights\Support\Config;
  *
  * Pattern mirrors spatie/laravel-backup's `Notifiable` and
  * laravel/horizon's `Horizon::routeXNotificationsTo()` helpers.
+ *
+ * Public method signatures stay parameter-less to preserve host-override
+ * BC. Laravel's Notifiable trait passes the active notification via
+ * `$this->{$method}($notification)` regardless of the declared signature;
+ * we read it through `func_get_args()` so the scheduler-domain detection
+ * works without forcing every host override to grow a parameter.
  */
 class QueueInsightsNotifiable
 {
     use Notifiable;
 
-    /**
-     * Stable identity for `Notification::fake()` assertions and Laravel's
-     * channel deduplication. The class is effectively a singleton route map,
-     * so a constant key is correct.
-     */
     public function getKey(): string
     {
         return 'queue-insights';
@@ -41,10 +42,10 @@ class QueueInsightsNotifiable
      */
     public function routeNotificationForMail(): array|string
     {
-        $to = Config::array('alerts.channels.mail.to');
+        $root = $this->resolveRoot(func_get_args());
 
         $addresses = [];
-        foreach ($to as $address) {
+        foreach (Config::array("{$root}.mail.to") as $address) {
             if (is_string($address) && $address !== '') {
                 $addresses[] = $address;
             }
@@ -55,6 +56,30 @@ class QueueInsightsNotifiable
 
     public function routeNotificationForSlack(): string
     {
-        return Config::string('alerts.channels.slack.webhook_url', '');
+        $root = $this->resolveRoot(func_get_args());
+
+        return Config::string("{$root}.slack.webhook_url", '');
+    }
+
+    /**
+     * Delegate to `Issue::channelConfigRoot()` so the route lookup shares
+     * one decision with `QueueAlertNotification::via()` — operator who
+     * populates a webhook_url without flipping any `enabled` flag does NOT
+     * silently send alerts to that webhook.
+     *
+     * Falls back to `alerts.channels` when the call wasn't initiated through
+     * Laravel's Notifiable trait (e.g. tests calling the route method with
+     * no args).
+     *
+     * @param  array<int, mixed>  $args
+     */
+    private function resolveRoot(array $args): string
+    {
+        $first = $args[0] ?? null;
+        if (! $first instanceof QueueAlertNotification) {
+            return 'alerts.channels';
+        }
+
+        return $first->issue->channelConfigRoot();
     }
 }

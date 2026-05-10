@@ -10,6 +10,7 @@ use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event as EventDispatcher;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Events\ScheduledTaskFailed as DomainScheduledTaskFailed;
 use SanderMuller\QueueInsights\Events\ScheduledTaskHung;
 use SanderMuller\QueueInsights\Events\ScheduledTaskMissed;
@@ -21,7 +22,6 @@ use SanderMuller\QueueInsights\Scheduler\HungTaskReconciler;
 use SanderMuller\QueueInsights\Scheduler\MissedRunReconciler;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
-use SanderMuller\QueueInsights\Scheduler\SchedulerCooldown;
 use SanderMuller\QueueInsights\Scheduler\ScheduleReader;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
 use SanderMuller\QueueInsights\Tests\Support\R;
@@ -65,7 +65,7 @@ it('flags an expected fire as missed when no Starting was recorded', function ()
     $schedule = resolveSchedule();
     $schedule->command('demo:run')->everyMinute();
 
-    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), new SchedulerCooldown());
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
     $missed = $reconciler->reconcile($schedule);
 
     expect($missed)->toBeGreaterThanOrEqual(1);
@@ -96,7 +96,7 @@ it('does not flag missed when a Starting was within the drift window', function 
     $now = Date::now()->getTimestampMs();
     R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($now - 30_000));
 
-    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), new SchedulerCooldown());
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
     $reconciler->reconcile($schedule, $now);
 
     EventDispatcher::assertNotDispatched(ScheduledTaskMissed::class);
@@ -115,7 +115,7 @@ it('flags a hung run + dispatches ScheduledTaskHung', function (): void {
     $schedule = resolveSchedule();
     $schedule->command('demo:run')->everyMinute();
 
-    $reconciler = new HungTaskReconciler(new RunStore(), new ScheduleReader(), new SchedulerCooldown());
+    $reconciler = new HungTaskReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
     $count = $reconciler->reconcile($schedule);
 
     expect($count)->toBe(1);
@@ -133,7 +133,7 @@ it('respects cooldown — repeat sweeps do not double-fire ScheduledTaskHung', f
 
     $schedule = resolveSchedule();
     $schedule->command('demo:run')->everyMinute();
-    $reconciler = new HungTaskReconciler(new RunStore(), new ScheduleReader(), new SchedulerCooldown());
+    $reconciler = new HungTaskReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
 
     $reconciler->reconcile($schedule);
 
@@ -176,7 +176,7 @@ it('dispatches ScheduledTaskFailed when alerts.enabled and cooldown allows', fun
     (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
     $task->exitCode = 1;
 
-    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), new SchedulerCooldown()))
+    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), resolve(IssueDispatcher::class)))
         ->handle(new ScheduledTaskFailed($task, new RuntimeException('boom')));
 
     EventDispatcher::assertDispatched(DomainScheduledTaskFailed::class);
@@ -227,7 +227,7 @@ it('Finished + Failed dual-fire does not double-count or duplicate the run', fun
     $task->exitCode = 1;
     (new RecordScheduledTaskFinished(new RunStore(), new OutputCapturer()))
         ->handle(new ScheduledTaskFinished($task, runtime: 0.1));
-    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), new SchedulerCooldown()))
+    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), resolve(IssueDispatcher::class)))
         ->handle(new ScheduledTaskFailed($task, new RuntimeException('boom')));
 
     expect(R::int('zcard', "qmtest:sched:runs:{$taskKey}"))->toBe(1)
@@ -245,7 +245,7 @@ it('skips ScheduledTaskFailed dispatch when alerts disabled', function (): void 
     (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
     $task->exitCode = 1;
 
-    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), new SchedulerCooldown()))
+    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), resolve(IssueDispatcher::class)))
         ->handle(new ScheduledTaskFailed($task, new RuntimeException('boom')));
 
     EventDispatcher::assertNotDispatched(DomainScheduledTaskFailed::class);

@@ -4,16 +4,13 @@ namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Support\Facades\Date;
-use Illuminate\Support\Facades\Event as EventDispatcher;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use SanderMuller\QueueInsights\Events\ScheduledTaskFailed as ScheduledTaskFailedDomainEvent;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
-use SanderMuller\QueueInsights\Scheduler\SchedulerCooldown;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
-use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
 
 final readonly class RecordScheduledTaskFailed
@@ -21,7 +18,7 @@ final readonly class RecordScheduledTaskFailed
     public function __construct(
         private RunStore $store,
         private OutputCapturer $capturer,
-        private SchedulerCooldown $cooldown,
+        private IssueDispatcher $dispatcher,
     ) {}
 
     public function handle(ScheduledTaskFailed $event): void
@@ -98,20 +95,12 @@ final readonly class RecordScheduledTaskFailed
 
     private function maybeFireDomainEvent(string $taskKey, string $runId, ScheduledTaskFailed $event): void
     {
-        if (! Config::bool('scheduler.alerts.enabled', false)) {
-            return;
-        }
-
-        if (! $this->cooldown->acquire('failed', $taskKey)) {
-            return;
-        }
-
-        EventDispatcher::dispatch(new ScheduledTaskFailedDomainEvent(
+        $this->dispatcher->dispatchScheduledTaskFailed(
             $taskKey,
             $runId,
             $event->task,
             $event->exception,
-        ));
+        );
     }
 
     private function truncate(string $value, int $cap): string

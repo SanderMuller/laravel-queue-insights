@@ -8,6 +8,7 @@ use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
 use Illuminate\Console\Scheduling\EventMutex;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledBackgroundTaskFinished;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
@@ -15,7 +16,6 @@ use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskSkipped;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
-use SanderMuller\QueueInsights\Scheduler\SchedulerCooldown;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -91,7 +91,7 @@ it('records failed → captures exception + flips counter', function (): void {
     $task->exitCode = 1;
     $exception = new RuntimeException('boom');
 
-    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), new SchedulerCooldown()))
+    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), resolve(IssueDispatcher::class)))
         ->handle(new ScheduledTaskFailed($task, $exception));
 
     $rangeRaw = R::raw('zrange', "qmtest:sched:runs:{$taskKey}", 0, -1);

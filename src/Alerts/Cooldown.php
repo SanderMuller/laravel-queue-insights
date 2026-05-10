@@ -19,7 +19,9 @@ final class Cooldown
     public function acquire(Issue $issue): bool
     {
         $key = KeyPrefix::make($issue->cooldownKeySuffix());
-        $ttl = Config::int('alerts.cooldown_seconds', 900);
+        $ttl = $issue->isSchedulerScoped()
+            ? Config::int('scheduler.alerts.cooldown_seconds', 900)
+            : Config::int('alerts.cooldown_seconds', 900);
 
         $result = RedisEval::exec(
             $this->redis(),

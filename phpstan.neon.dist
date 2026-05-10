@@ -90,6 +90,7 @@ parameters:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Feature/AlertingNotificationsTest.php
+                - tests/Feature/AlertingSchedulerTest.php
                 - tests/Unit/Prometheus/
                 - tests/Feature/Prometheus/
             reportUnmatched: false
@@ -99,6 +100,7 @@ parameters:
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Feature/AlertingNotificationsTest.php
+                - tests/Feature/AlertingSchedulerTest.php
                 - tests/Unit/Prometheus/
                 - tests/Feature/Prometheus/
             reportUnmatched: false
@@ -109,6 +111,7 @@ parameters:
                 - tests/Feature/AlertingDetectorsTest.php
                 - tests/Feature/AlertingClassDetectorsTest.php
                 - tests/Feature/AlertingBacklogGrowingTest.php
+                - tests/Feature/AlertingSchedulerTest.php
                 - tests/Feature/AlertingTest.php
                 - tests/Feature/Http/AlertsDashboardTest.php
                 - tests/Unit/Prometheus/

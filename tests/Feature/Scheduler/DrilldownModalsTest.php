@@ -8,13 +8,13 @@ use Illuminate\Console\Scheduling\Event as ScheduleEvent;
 use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
 use Livewire\Livewire;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
-use SanderMuller\QueueInsights\Scheduler\SchedulerCooldown;
 use SanderMuller\QueueInsights\Scheduler\ScheduleSnapshotter;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
@@ -245,7 +245,7 @@ it('renders the failed-run exception block in the run modal', function (): void 
     $task = buildSchedulerEventForModalTest();
     (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
     $task->exitCode = 1;
-    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), new SchedulerCooldown()))
+    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), resolve(IssueDispatcher::class)))
         ->handle(new ScheduledTaskFailed($task, new RuntimeException('explicit boom')));
 
     $taskKey = TaskKey::for($task);

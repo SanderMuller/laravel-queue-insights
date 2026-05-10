@@ -7,11 +7,10 @@ use DateTimeZone;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Date;
-use Illuminate\Support\Facades\Event as EventDispatcher;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
-use SanderMuller\QueueInsights\Events\ScheduledTaskMissed;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use Throwable;
@@ -34,7 +33,7 @@ final readonly class MissedRunReconciler
     public function __construct(
         private RunStore $store,
         private ScheduleReader $reader,
-        private SchedulerCooldown $cooldown,
+        private IssueDispatcher $dispatcher,
     ) {}
 
     /**
@@ -99,9 +98,7 @@ final readonly class MissedRunReconciler
                     $expectedAt,
                 );
 
-                if ($this->cooldown->acquire('missed', $taskKey)) {
-                    EventDispatcher::dispatch(new ScheduledTaskMissed($taskKey, $event, $expectedAt));
-                }
+                $this->dispatcher->dispatchScheduledTaskMissed($taskKey, $event, $expectedAt);
 
                 ++$missed;
             }

@@ -2,6 +2,43 @@
 
 This file lists the migration steps between major / minor versions of `laravel-queue-insights`. Patch releases never require manual steps. The Changelog (`CHANGELOG.md`) is the canonical record of what changed; this file covers only the steps a host must perform to land cleanly on the new version.
 
+## Scheduler alerts route through `QueueAlertNotification`
+
+Scheduler `Failed` / `Missed` / `Hung` detections now route through the same notification pipeline as queue-side alerts. Hosts that wired listeners against `Events\ScheduledTaskFailed` / `Missed` / `Hung` keep working — the typed events still fire alongside the new notification path.
+
+### Gate semantics
+
+Notifications fire only when **both** `alerts.enabled` AND `scheduler.alerts.enabled` are true. The package-wide `alerts.enabled` is the master kill switch for all log/slack/mail emission across both queue and scheduler domains. Hosts that previously ran with `alerts.enabled=false` and `scheduler.alerts.enabled=true` for the typed events alone keep that exact behaviour — the typed events continue firing, no notifications go out unless the master switch is also flipped on.
+
+To opt into scheduler notifications, set both:
+
+```bash
+QUEUE_INSIGHTS_ALERTS_ENABLED=true
+QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED=true
+```
+
+### Cooldown key namespace migration
+
+The on-disk cooldown key shape changed for parity with queue-side alerts:
+
+| Before | After |
+|---|---|
+| `{prefix}sched:alert:cooldown:failed:{taskKey}` | `{prefix}alert:cooldown:scheduled_task_failed:task:{taskKey}` |
+| `{prefix}sched:alert:cooldown:hung:{taskKey}` | `{prefix}alert:cooldown:scheduled_task_hung:task:{taskKey}` |
+| `{prefix}sched:alert:cooldown:missed:{taskKey}` | `{prefix}alert:cooldown:scheduled_task_missed:task:{taskKey}` |
+
+A SETNX on the new namespace doesn't see the old keys, so the **first sweep tick after upgrade may fire one duplicate alert per (task, rule) that was actively cooling down at the upgrade boundary**. Acceptable one-off cost; subsequent ticks honour the new namespace.
+
+Drop the obsolete keys once the migration is verified (replace `qi:` with the configured `key_prefix` if different):
+
+```bash
+redis-cli --scan --pattern 'qi:sched:alert:cooldown:*' | xargs -r redis-cli DEL
+```
+
+### Optional per-domain channel override
+
+A new `scheduler.alerts.channels` config block lets operators route scheduler alerts to a different Slack channel / mail recipient list / log channel. Omit the block (or keep all channels disabled) and scheduler issues fall back to `alerts.channels` — single-list installs Just Work without any config change. See README's "Per-domain channel routing" subsection.
+
 ## 0.12.x — `aws/aws-sdk-php` moved to `suggest`
 
 `aws/aws-sdk-php` was a hard `require` of this package, even for hosts running purely on Redis, database, or sync queues. It now lives under `suggest`, mirroring `illuminate/queue`'s own approach — the SDK is only loaded at runtime when `SqsSnapshotDriver` is constructed (the `use Aws\Sqs\SqsClient` alias does not trigger autoload on its own).

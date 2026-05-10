@@ -116,6 +116,7 @@ final class SchedulerConfigValidator
         assert(is_array($alerts));
         self::validateBoolean($alerts, 'enabled', 'queue-insights.scheduler.alerts.enabled');
         self::validatePositiveInts('scheduler.alerts', $alerts, ['cooldown_seconds']);
+        ChannelsConfigValidator::validate($alerts['channels'] ?? null, 'scheduler.alerts.channels');
     }
 
     private static function validateDashboard(mixed $dashboard): void

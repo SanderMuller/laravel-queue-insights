@@ -94,10 +94,7 @@ final class AlertsConfigValidator
      */
     private static function validateChannels(array $alerts): void
     {
-        $channels = isset($alerts['channels']) && is_array($alerts['channels']) ? $alerts['channels'] : [];
-        self::validateLogChannel($channels['log'] ?? null);
-        self::validateSlackChannel($channels['slack'] ?? null);
-        self::validateMailChannel($channels['mail'] ?? null);
+        ChannelsConfigValidator::validate($alerts['channels'] ?? null, 'alerts.channels');
     }
 
     /**
@@ -280,83 +277,6 @@ final class AlertsConfigValidator
                 throw new QueueInsightsConfigException(
                     'queue-insights.alerts.rules.backlog_growing.min_slope_per_minute must be a positive number.'
                 );
-            }
-        }
-    }
-
-    private static function validateLogChannel(mixed $channel): void
-    {
-        if ($channel === null) {
-            return;
-        }
-
-        if (! is_array($channel)) {
-            throw new QueueInsightsConfigException('queue-insights.alerts.channels.log must be an array.');
-        }
-
-        self::assertOptionalBool($channel, 'enabled', 'alerts.channels.log.enabled');
-
-        if (isset($channel['level']) && ! is_string($channel['level'])) {
-            throw new QueueInsightsConfigException('queue-insights.alerts.channels.log.level must be a string.');
-        }
-    }
-
-    private static function validateSlackChannel(mixed $channel): void
-    {
-        if ($channel === null) {
-            return;
-        }
-
-        if (! is_array($channel)) {
-            throw new QueueInsightsConfigException('queue-insights.alerts.channels.slack must be an array.');
-        }
-
-        self::assertOptionalBool($channel, 'enabled', 'alerts.channels.slack.enabled');
-
-        $enabled = $channel['enabled'] ?? false;
-        if ($enabled === true) {
-            $url = $channel['webhook_url'] ?? null;
-            if (! is_string($url) || $url === '') {
-                throw new QueueInsightsConfigException(
-                    'queue-insights.alerts.channels.slack.webhook_url must be a non-empty string when slack is enabled.'
-                );
-            }
-        }
-
-        if (isset($channel['channel']) && ! is_string($channel['channel'])) {
-            throw new QueueInsightsConfigException(
-                'queue-insights.alerts.channels.slack.channel must be a string (e.g. "#queue-alerts") or omitted.'
-            );
-        }
-    }
-
-    private static function validateMailChannel(mixed $channel): void
-    {
-        if ($channel === null) {
-            return;
-        }
-
-        if (! is_array($channel)) {
-            throw new QueueInsightsConfigException('queue-insights.alerts.channels.mail must be an array.');
-        }
-
-        self::assertOptionalBool($channel, 'enabled', 'alerts.channels.mail.enabled');
-
-        $enabled = $channel['enabled'] ?? false;
-        if ($enabled === true) {
-            $to = $channel['to'] ?? null;
-            if (! is_array($to) || $to === []) {
-                throw new QueueInsightsConfigException(
-                    'queue-insights.alerts.channels.mail.to must be a non-empty array when mail is enabled.'
-                );
-            }
-
-            foreach ($to as $i => $address) {
-                if (! is_string($address) || $address === '') {
-                    throw new QueueInsightsConfigException(
-                        "queue-insights.alerts.channels.mail.to[{$i}] must be a non-empty string."
-                    );
-                }
             }
         }
     }

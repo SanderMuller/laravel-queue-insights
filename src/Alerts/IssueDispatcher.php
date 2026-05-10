@@ -2,17 +2,24 @@
 
 namespace SanderMuller\QueueInsights\Alerts;
 
+use Closure;
+use Illuminate\Console\Scheduling\Event;
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use SanderMuller\QueueInsights\Alerts\Detectors\FailureRateDetector;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertNotification;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
+use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Events\BacklogGrowing;
 use SanderMuller\QueueInsights\Events\JobClassFailureRateExceeded;
 use SanderMuller\QueueInsights\Events\JobClassP95Exceeded;
 use SanderMuller\QueueInsights\Events\OldestPendingAging;
 use SanderMuller\QueueInsights\Events\QueueDepthExceeded;
 use SanderMuller\QueueInsights\Events\QueueStalled;
+use SanderMuller\QueueInsights\Events\ScheduledTaskFailed as DomainScheduledTaskFailed;
+use SanderMuller\QueueInsights\Events\ScheduledTaskHung as DomainScheduledTaskHung;
+use SanderMuller\QueueInsights\Events\ScheduledTaskMissed as DomainScheduledTaskMissed;
 use SanderMuller\QueueInsights\Events\SnapshotErrored;
 use SanderMuller\QueueInsights\Events\StuckInFlight;
 use SanderMuller\QueueInsights\Support\Config;
@@ -89,6 +96,120 @@ final readonly class IssueDispatcher
     }
 
     /**
+     * Scheduler entry — task failed. Builds a task-scoped Issue and routes
+     * through the standard cooldown → typed-event → notify pipeline.
+     * Gates internally on `scheduler.alerts.enabled` so callers don't need
+     * to repeat the check.
+     */
+    public function dispatchScheduledTaskFailed(string $taskKey, string $runId, Event $task, ?Throwable $exception): void
+    {
+        if (! Config::bool('scheduler.alerts.enabled', false)) {
+            return;
+        }
+
+        $context = [
+            'task_key' => $taskKey,
+            'run_id' => $runId,
+            'exception_class' => $exception instanceof Throwable ? $exception::class : null,
+            'exception_message' => $exception?->getMessage() ?? '',
+        ];
+
+        $issue = new Issue(
+            rule: 'scheduled_task_failed',
+            severity: AlertSeverity::Critical,
+            connection: '',
+            queue: '',
+            jobClass: null,
+            title: "Scheduled task failed: {$taskKey}",
+            description: $exception instanceof Throwable
+                ? sprintf('%s — %s', $exception::class, $exception->getMessage())
+                : 'Task exited with non-zero status.',
+            context: $context,
+            detectedAt: Date::now()->getTimestamp(),
+            taskKey: $taskKey,
+        );
+
+        $this->handleScheduled($issue, fn (): DomainScheduledTaskFailed => new DomainScheduledTaskFailed(
+            $taskKey,
+            $runId,
+            $task,
+            $exception,
+        ));
+    }
+
+    /**
+     * Scheduler entry — task hung past its expected finish.
+     */
+    public function dispatchScheduledTaskHung(string $taskKey, string $runId, ?Event $task, int $startedAtMs, int $elapsedSeconds): void
+    {
+        if (! Config::bool('scheduler.alerts.enabled', false)) {
+            return;
+        }
+
+        $context = [
+            'task_key' => $taskKey,
+            'run_id' => $runId,
+            'started_at_ms' => $startedAtMs,
+            'elapsed_seconds' => $elapsedSeconds,
+        ];
+
+        $issue = new Issue(
+            rule: 'scheduled_task_hung',
+            severity: AlertSeverity::Warning,
+            connection: '',
+            queue: '',
+            jobClass: null,
+            title: "Scheduled task hung: {$taskKey}",
+            description: sprintf('Task has been running for %ds without finishing.', $elapsedSeconds),
+            context: $context,
+            detectedAt: Date::now()->getTimestamp(),
+            taskKey: $taskKey,
+        );
+
+        $this->handleScheduled($issue, fn (): DomainScheduledTaskHung => new DomainScheduledTaskHung(
+            $taskKey,
+            $runId,
+            $task,
+            $startedAtMs,
+            $elapsedSeconds,
+        ));
+    }
+
+    /**
+     * Scheduler entry — expected fire didn't run.
+     */
+    public function dispatchScheduledTaskMissed(string $taskKey, Event $task, int $expectedAtMs): void
+    {
+        if (! Config::bool('scheduler.alerts.enabled', false)) {
+            return;
+        }
+
+        $context = [
+            'task_key' => $taskKey,
+            'expected_at_ms' => $expectedAtMs,
+        ];
+
+        $issue = new Issue(
+            rule: 'scheduled_task_missed',
+            severity: AlertSeverity::Warning,
+            connection: '',
+            queue: '',
+            jobClass: null,
+            title: "Scheduled task missed: {$taskKey}",
+            description: 'No Starting event observed within the drift window.',
+            context: $context,
+            detectedAt: Date::now()->getTimestamp(),
+            taskKey: $taskKey,
+        );
+
+        $this->handleScheduled($issue, fn (): DomainScheduledTaskMissed => new DomainScheduledTaskMissed(
+            $taskKey,
+            $task,
+            $expectedAtMs,
+        ));
+    }
+
+    /**
      * Catch-branch path from the snapshot command — fires snapshot_errored for
      * a single (connection, queue) right after the error key was written.
      */
@@ -124,6 +245,44 @@ final readonly class IssueDispatcher
 
         $this->safelyFireEvent($issue);
         $this->notify($issue);
+    }
+
+    /**
+     * Scheduler-domain handle: cooldown + prebuilt typed event + notify. The
+     * scheduler events carry framework `Event` instances that don't fit the
+     * `context: array<string, mixed>` shape, so the typed event is built by
+     * the caller and passed in as a closure (lazy so cooldown-suppressed
+     * calls don't pay the construction cost).
+     *
+     * `notify()` is gated on the package-wide `alerts.enabled` master switch
+     * so a host that previously ran with `scheduler.alerts.enabled=true` for
+     * typed events while keeping `alerts.enabled=false` does NOT suddenly
+     * start emitting log/slack/mail notifications post-upgrade. Typed events
+     * keep firing under the scheduler-side flag alone — that preserves the
+     * pre-7b behaviour for hosts that wired their own listeners.
+     *
+     * @param Closure():object $eventBuilder
+     */
+    private function handleScheduled(Issue $issue, Closure $eventBuilder): void
+    {
+        if (! $this->cooldown->acquire($issue)) {
+            return;
+        }
+
+        try {
+            event($eventBuilder());
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: scheduled alert event listener threw', [
+                'rule' => $issue->rule,
+                'task_key' => $issue->taskKey,
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+        }
+
+        if (Config::bool('alerts.enabled', false)) {
+            $this->notify($issue);
+        }
     }
 
     /**

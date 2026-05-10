@@ -5,11 +5,13 @@ namespace SanderMuller\QueueInsights\Alerts\Notifications;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Notifications\Messages\MailMessage;
 use Illuminate\Notifications\Notification;
+use Illuminate\Support\Facades\URL;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\LogChannel;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SlackWebhookChannel;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
+use Throwable;
 
 /**
  * Single notification class fired per Issue. Uses Laravel's notification
@@ -35,17 +37,18 @@ class QueueAlertNotification extends Notification
      */
     public function via(object $notifiable): array
     {
+        $root = $this->issue->channelConfigRoot();
         $channels = [];
 
-        if (Config::bool('alerts.channels.log.enabled', true)) {
+        if (Config::bool("{$root}.log.enabled", $root === 'alerts.channels')) {
             $channels[] = LogChannel::class;
         }
 
-        if (Config::bool('alerts.channels.mail.enabled', false) && $this->mailAvailable()) {
+        if (Config::bool("{$root}.mail.enabled", false) && $this->mailAvailable()) {
             $channels[] = 'mail';
         }
 
-        if (Config::bool('alerts.channels.slack.enabled', false) && $this->httpAvailable()) {
+        if (Config::bool("{$root}.slack.enabled", false) && $this->httpAvailable()) {
             $channels[] = SlackWebhookChannel::class;
         }
 
@@ -54,7 +57,7 @@ class QueueAlertNotification extends Notification
 
     public function toMail(object $notifiable): MailMessage
     {
-        $target = $this->issue->jobClass ?? "{$this->issue->connection}:{$this->issue->queue}";
+        $target = $this->issueTarget();
 
         $subject = "[Queue Insights] {$this->issue->severity->value}: {$this->issue->rule} on {$target}";
 
@@ -67,6 +70,11 @@ class QueueAlertNotification extends Notification
             if (is_scalar($value)) {
                 $message->line(sprintf('%s: %s', $key, $this->formatScalar($value)));
             }
+        }
+
+        $runUrl = $this->runUrl();
+        if ($runUrl !== null) {
+            $message->action('Open run', $runUrl);
         }
 
         return $message;
@@ -82,7 +90,7 @@ class QueueAlertNotification extends Notification
     public function toSlack(object $notifiable): array
     {
         $colour = $this->issue->severity === AlertSeverity::Critical ? '#dc2626' : '#f59e0b';
-        $target = $this->issue->jobClass ?? "{$this->issue->connection}:{$this->issue->queue}";
+        $target = $this->issueTarget();
 
         $fields = [
             ['title' => 'Rule', 'value' => $this->issue->rule, 'short' => true],
@@ -96,8 +104,13 @@ class QueueAlertNotification extends Notification
             }
         }
 
+        $runUrl = $this->runUrl();
+        if ($runUrl !== null) {
+            $fields[] = ['title' => 'Run URL', 'value' => $runUrl, 'short' => false];
+        }
+
         return [
-            'text' => "[{$this->issue->severity->value}] {$this->issue->title}",
+            'text' => "[{$this->issue->severity->value}] {$this->issueIcon()} {$this->issue->title}",
             'attachments' => [[
                 'color' => $colour,
                 'title' => $this->issue->title,
@@ -106,6 +119,67 @@ class QueueAlertNotification extends Notification
                 'ts' => $this->issue->detectedAt,
             ]],
         ];
+    }
+
+    /**
+     * Resolve the target identifier shown in subject lines + Slack title.
+     * Priority matches `cooldownKeySuffix`: taskKey → jobClass → connection:queue.
+     */
+    private function issueTarget(): string
+    {
+        if ($this->issue->taskKey !== null) {
+            return $this->issue->taskKey;
+        }
+
+        return $this->issue->jobClass ?? "{$this->issue->connection}:{$this->issue->queue}";
+    }
+
+    /**
+     * Slack-friendly leading glyph picked off the rule. Operators visually
+     * triage on the icon; the rule string is structured-search territory.
+     */
+    private function issueIcon(): string
+    {
+        return match ($this->issue->rule) {
+            'scheduled_task_failed' => ':rotating_light:',
+            'scheduled_task_hung' => ':warning:',
+            'scheduled_task_missed' => ':alarm_clock:',
+            default => ':bell:',
+        };
+    }
+
+    /**
+     * Build the deep-link to the run modal for scheduler-scoped issues. Uses
+     * the dashboard route's `s_rid` slot (`{taskKey}:{runId}`) so operators
+     * land on the run-modal when the run is still in retention, or the
+     * mount-time fail-soft "Expired" empty state when aged out.
+     */
+    private function runUrl(): ?string
+    {
+        if (! $this->issue->isSchedulerScoped()) {
+            return null;
+        }
+
+        $taskKey = $this->issue->taskKey;
+        if ($taskKey === null) {
+            return null;
+        }
+
+        $runId = $this->issue->context['run_id'] ?? null;
+        $sRid = is_string($runId) && $runId !== '' ? "{$taskKey}:{$runId}" : null;
+
+        try {
+            $base = URL::route('queue-insights.dashboard');
+        } catch (Throwable) {
+            return null;
+        }
+
+        if ($sRid === null) {
+            // missed runs have no runId — link to the task slot instead.
+            return $base . '?s_tk=' . rawurlencode($taskKey);
+        }
+
+        return $base . '?s_rid=' . rawurlencode($sRid);
     }
 
     private function mailAvailable(): bool

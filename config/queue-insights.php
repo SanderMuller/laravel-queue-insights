@@ -392,6 +392,36 @@ return [
         'alerts' => [
             'enabled' => env('QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED', false),
             'cooldown_seconds' => 900,
+
+            /*
+             | Optional per-domain channel block. Mirror the queue-side
+             | `alerts.channels` shape exactly. When this block is omitted
+             | or every channel inside is disabled, the notification path
+             | falls back to `alerts.channels` so single-list installs
+             | route both queue and scheduler alerts through one config.
+             |
+             | Populate this block to route scheduler alerts to a different
+             | Slack channel / mail recipient list / log channel. Example:
+             |
+             |     'channels' => [
+             |         'slack' => ['enabled' => true, 'webhook_url' => env('QI_SCHED_SLACK')],
+             |     ],
+             */
+            'channels' => [
+                'log' => [
+                    'enabled' => false,
+                    'level' => 'warning',
+                ],
+                'slack' => [
+                    'enabled' => false,
+                    'webhook_url' => env('QUEUE_INSIGHTS_SCHEDULER_SLACK_WEBHOOK'),
+                    'channel' => env('QUEUE_INSIGHTS_SCHEDULER_SLACK_CHANNEL'),
+                ],
+                'mail' => [
+                    'enabled' => false,
+                    'to' => [],
+                ],
+            ],
         ],
 
         'dashboard' => [
