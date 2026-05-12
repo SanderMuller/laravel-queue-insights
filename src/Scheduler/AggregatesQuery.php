@@ -229,32 +229,53 @@ final class AggregatesQuery
             return [];
         }
 
-        $redis = $this->redis();
-        $now = Date::now()->getTimestamp();
-        $bars = [];
+        $keys = [];
+        foreach ($tasks as $task) {
+            $key = is_string($task['task_key'] ?? null) ? $task['task_key'] : null;
+            if ($key !== null) {
+                $keys[] = $key;
+            }
+        }
 
+        if ($keys === []) {
+            return [];
+        }
+
+        $now = Date::now()->getTimestamp();
+        // hour-ordered oldest→newest so output stays in the same shape
+        // the view expects (left-to-right bars are 23h-ago → now).
+        $buckets = [];
+        $hourLabels = [];
         for ($i = 23; $i >= 0; --$i) {
             $ts = $now - ($i * 3600);
-            $bucket = Date::createFromTimestamp($ts)->format('YmdH');
+            $buckets[] = Date::createFromTimestamp($ts)->format('YmdH');
+            $hourLabels[] = Date::createFromTimestamp($ts)->format('H:00');
+        }
+
+        // Single pipeline for the entire (hours × tasks) fan-out.
+        $results = $this->redis()->pipeline(static function ($pipe) use ($buckets, $keys): void {
+            foreach ($buckets as $bucket) {
+                foreach ($keys as $taskKey) {
+                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
+                }
+            }
+        });
+
+        $bars = [];
+        $tasksPerHour = count($keys);
+        foreach ($buckets as $hourIdx => $bucket) {
             $success = 0;
             $failed = 0;
-            foreach ($tasks as $task) {
-                $key = is_string($task['task_key'] ?? null) ? $task['task_key'] : null;
-                if ($key === null) {
-                    continue;
+            $base = $hourIdx * $tasksPerHour;
+            for ($t = 0; $t < $tasksPerHour; ++$t) {
+                $hash = $results[$base + $t] ?? null;
+                if (is_array($hash) && $hash !== []) {
+                    $success += HashFields::int($hash, 'success_count');
+                    $failed += HashFields::int($hash, 'failed_count');
                 }
-
-                $hash = $redis->command('hgetall', [KeyPrefix::make("sched:agg:{$key}:{$bucket}")]);
-                if (! is_array($hash)) {
-                    continue;
-                }
-
-                $success += HashFields::int($hash, 'success_count');
-                $failed += HashFields::int($hash, 'failed_count');
             }
-
             $bars[] = [
-                'hour' => Date::createFromTimestamp($ts)->format('H:00'),
+                'hour' => $hourLabels[$hourIdx],
                 'success' => $success,
                 'failed' => $failed,
             ];
