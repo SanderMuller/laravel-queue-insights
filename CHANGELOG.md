@@ -4,6 +4,33 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.16.0 - 2026-05-12
+
+### Highlights
+
+- **SQS pending-tracking fix for non-default queue names.** When the dispatcher omits `->onQueue()`, Laravel emits `JobQueued` with an empty `$event->queue` even though the driver routes to its configured default at push time. The producer-side listener previously fell back to the literal `'default'` while the worker-side cleanup keyed off the popped job's real queue — keys diverged, pending entries never cleared, and `oldest_pending` tripped on long-completed jobs. Hits any host whose `queue.connections.{conn}.queue` isn't literally `'default'` (Vapor / SQS with `SQS_QUEUE=staging_default` is the canonical case, but redis / database connections with a custom default queue had the same symptom). The new `CanonicalQueueKey::fromOrDefault($input, $connection)` helper resolves the connection's configured default at both producer and worker sites; the same path also fixes a parallel chain-lineage misattribution on chained SQS jobs. Reported via real-world adoption feedback.
+- **Schedule dashboard render: 13,030 → 6 Redis round-trips per render.** The scheduler tab previously fanned out tens of thousands of serial commands per refresh (24 hourly aggregates × N tasks for stats; 24 × N for the sparkline; 600 HGETALLs for recent runs; N HGETs for the task index). Pipelined into single round-trips: `computeStatsForTasks`, `throughputSparkline`, `RunsQuery::collectMatchingRows`. `ScheduleReader::tasks()` now uses HMGET; empty-filter `countRuns` returns ZCARD. New `Support\RedisPipeline` helper consolidates the predis-vs-phpredis driver shim. On production Redis at ~1 ms RTT, render latency on a 157-task / 600-run benchmark drops from ~13 s to ~6 ms.
+- **Schedule list-path payload tightened.** `ScheduleReader::recentRuns()` no longer hydrates `output`, `exception`, `skip_reason`, or `is_background` — the run-row blade doesn't render any of them, and `output` / `exception` can each grow to several KiB per row. With `scheduler.capture.output=full` and a high `max_output_bytes`, the previous fan-out could buffer multi-MB into a single Redis reply. The drilldown modal still hydrates the full payload via `runDetail()` / `runOutput()` (unchanged).
+- **Chain-lineage queue canonicalisation.** `Bus::chain(...)->onConnection('foo')` (without `->onQueue()`) on a parent whose own `getQueue()` returned empty now correctly keys the chain-claim under `foo`'s configured default — previously it landed under the outer connection's default and the child's `JobQueued` RPOP missed silently. Regression test added.
+
+### Breaking changes
+
+- **`ScheduleReader::recentRuns()` row contract.** The list path returns `null` for `output` / `exception` / `skip_reason` and `false` for `is_background` regardless of stored value. Hosts consuming `RunsQuery` / `recentRuns()` directly and reading those four fields must migrate to `ScheduleReader::runDetail()`. See [UPGRADING.md#schedulereaderrecentruns-list-path-now-omits-output--exception--skip_reason--is_background](UPGRADING.md#schedulereaderrecentruns-list-path-now-omits-output--exception--skip_reason--is_background) for the full migration note.
+- **Pending-zset key shape on connections whose default queue isn't `'default'`.** The producer now writes `pending-zset:{conn}:{configured-default}` instead of `pending-zset:{conn}:default`. Hosts with `queue-insights.snapshots` entries pointing at the old literal `'default'` need to update them to match the real queue (Vapor / SQS being the canonical case); pre-0.16 orphans on the old zset age out via the 24-h `pending.ttl_seconds`. See [UPGRADING.md#pending-zset-key-now-uses-the-connections-configured-default-queue](UPGRADING.md#pending-zset-key-now-uses-the-connections-configured-default-queue) for the snapshots realignment + cutover-window note.
+
+### What's Changed
+
+* fix(listeners): resolve connection-default queue when JobQueued carries an empty queue (62ede1d)
+* fix: address code-review findings on the SQS pending-orphan fix (5ce1b4f)
+* fix(chain-lineage): canonicalise queue under chain_connection in pushChainClaim (f2dfe3c)
+* perf(scheduler): pipeline render fan-outs — 13k → 6 Redis round-trips (dd34d64..f1b4e9e, 6684578)
+* fix(scheduler): omit `output` / `exception` / `skip_reason` / `is_background` on the recent-runs list path (6684578, bf79c61)
+* fix(tests): clear pest-plugin-phpstan rules under `--error-format=github` (44cce28)
+* chore: rector + pint mechanical cleanup (9aa6b74, 42bbb81, ff2fda8)
+* docs(readme): add Upgrading section linking to UPGRADING.md (026b6ad)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.15.0...0.16.0
+
 ## 0.15.0 - 2026-05-10
 
 ### Highlights
@@ -93,6 +120,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -305,6 +333,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -417,6 +446,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -452,6 +482,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -578,6 +609,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
