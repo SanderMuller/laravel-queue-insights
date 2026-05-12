@@ -150,7 +150,7 @@ final class PendingJobsReader
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
         $keyPrefix = $inFlight ? 'inflight-zset' : 'pending-zset';
 
-        $results = RedisPipeline::run($redis, static function ($client) use ($resolved, $keyPrefix, $min, $max, $effective): void {
+        $results = RedisPipeline::run($redis, static function (mixed $client) use ($resolved, $keyPrefix, $min, $max, $effective): void {
             foreach ($resolved as $pair) {
                 $client->zrangebyscore(
                     KeyPrefix::make("{$keyPrefix}:{$pair['connection']}:{$pair['canonical']}"),
@@ -380,7 +380,7 @@ final class PendingJobsReader
         // issued one HGETALL per uuid sequentially (50 + 50 + 50 = 150 RTT
         // per warm dashboard render with seeded pending/delayed/inflight
         // tables). On non-loopback Redis each RTT is the dominant cost.
-        $results = RedisPipeline::run($redis, static function ($client) use ($valid): void {
+        $results = RedisPipeline::run($redis, static function (mixed $client) use ($valid): void {
             foreach ($valid as $uuid) {
                 $client->hgetall(KeyPrefix::make("pending:{$uuid}"));
             }
@@ -409,10 +409,9 @@ final class PendingJobsReader
     }
 
     /**
-     * @param  mixed  $hash
      * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int}|null
      */
-    private static function parseHash(string $uuid, $hash): ?array
+    private static function parseHash(string $uuid, mixed $hash): ?array
     {
         if (! is_array($hash) || $hash === []) {
             return null;
