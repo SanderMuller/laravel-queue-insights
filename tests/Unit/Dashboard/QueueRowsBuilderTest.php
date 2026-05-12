@@ -22,6 +22,22 @@ beforeEach(function (): void {
     config()->set('queue.connections.redis', ['driver' => 'redis']);
 });
 
+/**
+ * @param  array{depth?: int, delayed?: ?int, inflight?: ?int, error?: ?string, last_at?: ?\Carbon\CarbonInterface, pending_tracked_count?: ?int}  $overrides
+ * @return array{depth: int, delayed: ?int, inflight: ?int, error: ?string, last_at: ?\Carbon\CarbonInterface, pending_tracked_count: ?int}
+ */
+function snapshot(array $overrides = []): array
+{
+    return array_merge([
+        'depth' => 0,
+        'delayed' => 0,
+        'inflight' => 0,
+        'error' => null,
+        'last_at' => Date::now(),
+        'pending_tracked_count' => 0,
+    ], $overrides);
+}
+
 it('build returns one row per configured queue with live metrics + snapshot state', function (): void {
     Date::setTestNow('2026-04-28 10:00:00');
 
@@ -29,13 +45,10 @@ it('build returns one row per configured queue with live metrics + snapshot stat
     $svc->shouldReceive('configuredQueues')->once()->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->with('redis', 'default')->andReturn(Date::now()->subSeconds(30));
+    $svc->shouldReceive('queueRowSnapshots')->once()->andReturn([
+        snapshot(['depth' => 50, 'inflight' => 3, 'delayed' => 2, 'last_at' => Date::now()->subSeconds(30), 'pending_tracked_count' => 52]),
+    ]);
     $svc->shouldReceive('queueWaitPercentiles')->with('redis', 'default')->andReturn(['p50' => 120, 'p95' => 540]);
-    $svc->shouldReceive('liveDepth')->with('redis', 'default')->andReturn(50);
-    $svc->shouldReceive('liveInFlight')->with('redis', 'default')->andReturn(3);
-    $svc->shouldReceive('liveDelayed')->with('redis', 'default')->andReturn(2);
-    $svc->shouldReceive('snapshotError')->with('redis', 'default')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->with('redis', 'default')->andReturn(52);
 
     $rows = queueRowsBuilder($svc)->build('');
 
@@ -66,13 +79,8 @@ it('build flags rows older than 120s as stale', function (): void {
     $svc->shouldReceive('configuredQueues')->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now()->subSeconds(180));
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['last_at' => Date::now()->subSeconds(180)])]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(0);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(0);
 
     expect(queueRowsBuilder($svc)->build('')[0]['stale'])->toBeTrue();
 
@@ -84,13 +92,8 @@ it('build flags rows with a null lastSnapshotAt as stale', function (): void {
     $svc->shouldReceive('configuredQueues')->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturnNull();
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['last_at' => null])]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(0);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(0);
 
     expect(queueRowsBuilder($svc)->build('')[0]['stale'])->toBeTrue();
 });
@@ -101,13 +104,8 @@ it('build skips configured entries whose queue name fails canonicalisation', fun
         ['connection' => 'redis', 'queue' => ''], // empty queue name → InvalidArgumentException from CanonicalQueueKey::from
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->with('redis', 'default')->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot()]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(0);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(0);
 
     $rows = queueRowsBuilder($svc)->build('');
 
@@ -120,13 +118,8 @@ it('build expands the inspector for the matching key and loads the per-queue job
     $svc->shouldReceive('configuredQueues')->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['depth' => 10, 'pending_tracked_count' => 10])]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(10);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(10);
     $pendingList = [['uuid' => 'p1'], ['uuid' => 'p2']];
     $delayedList = [['uuid' => 'd1']];
     $svc->shouldReceive('pendingJobs')->with('redis', 'default')->once()->andReturn($pendingList);
@@ -146,13 +139,8 @@ it('build short-circuits inspector fields when pending tracking is disabled', fu
     $svc->shouldReceive('configuredQueues')->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['depth' => 10, 'pending_tracked_count' => null])]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(10);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldNotReceive('pendingTrackedCount');
     $svc->shouldNotReceive('pendingJobs');
     $svc->shouldNotReceive('delayedJobs');
 
@@ -169,13 +157,8 @@ it('build computes pending_gap from |tracked - (depth + delayed)|', function ():
     $svc->shouldReceive('configuredQueues')->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['depth' => 50, 'delayed' => 10, 'pending_tracked_count' => 45])]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(50);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(10);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(45);
 
     expect(queueRowsBuilder($svc)->build('')[0]['pending_gap'])->toBe(15);
 });
@@ -190,13 +173,8 @@ it('build restricts iteration to a scoped connection when one is provided', func
     $svc->shouldReceive('configuredQueues')->with('sqs')->once()->andReturn([
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->with('sqs', 'work')->once()->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->once()->andReturn([snapshot()]);
     $svc->shouldReceive('queueWaitPercentiles')->with('sqs', 'work')->once()->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->with('sqs', 'work')->once()->andReturn(0);
-    $svc->shouldReceive('liveInFlight')->with('sqs', 'work')->once()->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->with('sqs', 'work')->once()->andReturn(0);
-    $svc->shouldReceive('snapshotError')->with('sqs', 'work')->once()->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->with('sqs', 'work')->once()->andReturn(0);
 
     $rows = queueRowsBuilder($svc)->build('', 'sqs');
 
@@ -213,13 +191,8 @@ it('build returns every row when scope is null (back-compat)', function (): void
         ['connection' => 'redis', 'queue' => 'default'],
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(), snapshot()]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(0);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(0);
 
     $rows = queueRowsBuilder($svc)->build('');
 
@@ -233,13 +206,8 @@ it('build falls back to em-dash for a non-string driver config', function (): vo
     $svc->shouldReceive('configuredQueues')->andReturn([
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
-    $svc->shouldReceive('lastSnapshotAt')->andReturn(Date::now());
+    $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot()]);
     $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
-    $svc->shouldReceive('liveDepth')->andReturn(0);
-    $svc->shouldReceive('liveInFlight')->andReturn(0);
-    $svc->shouldReceive('liveDelayed')->andReturn(0);
-    $svc->shouldReceive('snapshotError')->andReturnNull();
-    $svc->shouldReceive('pendingTrackedCount')->andReturn(0);
 
     expect(queueRowsBuilder($svc)->build('')[0]['driver'])->toBe('—');
 });

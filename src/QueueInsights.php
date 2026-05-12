@@ -16,6 +16,7 @@ use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\HourlyBucketReader;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
+use SanderMuller\QueueInsights\Support\RedisPipeline;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
@@ -59,17 +60,78 @@ final class QueueInsights
             ['withscores' => true],
         ]);
 
-        if (! is_array($result) || $result === []) {
+        return $this->decodeLastSnapshotAt($result);
+    }
+
+    /**
+     * Batch the per-queue snapshot reads (depth + delayed + inflight +
+     * snapshot:error + lastSnapshotAt + pendingTrackedCount) into one
+     * pipelined Redis round-trip. Used by the dashboard's QueueRowsBuilder
+     * so an 8-queue tenant pays 1 RTT per render instead of 48.
+     *
+     * Includes `pending_tracked_count` only when `pending.enabled` is true —
+     * otherwise the field is `null` and callers should treat the inspector
+     * as disabled.
+     *
+     * @param  list<array{connection: string, queue: string}>  $pairs  canonicalised (connection, queue) tuples
+     * @return list<array{depth: int, delayed: ?int, inflight: ?int, error: ?string, last_at: ?CarbonInterface, pending_tracked_count: ?int}>
+     */
+    public function queueRowSnapshots(array $pairs): array
+    {
+        if ($pairs === []) {
+            return [];
+        }
+
+        $pendingEnabled = Config::bool('pending.enabled', true);
+
+        $results = RedisPipeline::run($this->redis(), static function ($client) use ($pairs, $pendingEnabled): void {
+            foreach ($pairs as $pair) {
+                $c = $pair['connection'];
+                $q = $pair['queue'];
+                $client->get(KeyPrefix::make("live:depth:{$c}:{$q}"));
+                $client->get(KeyPrefix::make("live:delayed:{$c}:{$q}"));
+                $client->get(KeyPrefix::make("live:inflight:{$c}:{$q}"));
+                $client->get(KeyPrefix::make("snapshot:error:{$c}:{$q}"));
+                $client->zrange(KeyPrefix::make("depth:{$c}:{$q}"), -1, -1, ['withscores' => true]);
+                if ($pendingEnabled) {
+                    $client->zcard(KeyPrefix::make("pending-zset:{$c}:{$q}"));
+                }
+            }
+        });
+
+        $stride = $pendingEnabled ? 6 : 5;
+        $out = [];
+        foreach (array_keys($pairs) as $i) {
+            $offset = $i * $stride;
+            $depthRaw = $results[$offset] ?? null;
+            $delayedRaw = $results[$offset + 1] ?? null;
+            $inflightRaw = $results[$offset + 2] ?? null;
+            $errorRaw = $results[$offset + 3] ?? null;
+            $tailRaw = $results[$offset + 4] ?? null;
+            $trackedRaw = $pendingEnabled ? ($results[$offset + 5] ?? null) : null;
+
+            $out[] = [
+                'depth' => is_string($depthRaw) || is_int($depthRaw) ? (int) $depthRaw : 0,
+                'delayed' => is_string($delayedRaw) || is_int($delayedRaw) ? (int) $delayedRaw : null,
+                'inflight' => is_string($inflightRaw) || is_int($inflightRaw) ? (int) $inflightRaw : null,
+                'error' => is_string($errorRaw) && $errorRaw !== '' ? $errorRaw : null,
+                'last_at' => $this->decodeLastSnapshotAt($tailRaw),
+                'pending_tracked_count' => $pendingEnabled && is_numeric($trackedRaw) ? (int) $trackedRaw : null,
+            ];
+        }
+
+        return $out;
+    }
+
+    private function decodeLastSnapshotAt(mixed $tail): ?CarbonInterface
+    {
+        if (! is_array($tail) || $tail === []) {
             return null;
         }
 
-        $score = array_values($result)[0] ?? null;
+        $score = array_values($tail)[0] ?? null;
 
-        if (! is_numeric($score)) {
-            return null;
-        }
-
-        return Date::createFromTimestamp((int) $score);
+        return is_numeric($score) ? Date::createFromTimestamp((int) $score) : null;
     }
 
     /**

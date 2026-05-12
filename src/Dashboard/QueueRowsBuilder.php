@@ -7,7 +7,6 @@ use Illuminate\Support\Facades\Date;
 use InvalidArgumentException;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
-use SanderMuller\QueueInsights\Support\Config;
 
 /** @internal */
 final readonly class QueueRowsBuilder
@@ -25,14 +24,11 @@ final readonly class QueueRowsBuilder
      */
     public function build(string $expandedQueueKey, ?string $scopeConnection = null): array
     {
-        $rows = [];
-
+        $configured = [];
+        $canonical = [];
         foreach ($this->svc->configuredQueues($scopeConnection) as $entry) {
-            $connection = $entry['connection'];
-            $queue = $entry['queue'];
-
             try {
-                $canonical = CanonicalQueueKey::from($queue);
+                $canonicalQueue = CanonicalQueueKey::from($entry['queue']);
             } catch (InvalidArgumentException) {
                 // Invalid entry — skip rather than crash the whole render.
                 // Boot-time ConfigValidator catches these at boot; this guards
@@ -40,36 +36,69 @@ final readonly class QueueRowsBuilder
                 continue;
             }
 
-            $lastAt = $this->svc->lastSnapshotAt($connection, $canonical);
-            $stale = ! $lastAt instanceof CarbonInterface || $lastAt->diffInSeconds(Date::now()) > 120;
+            $configured[] = $entry;
+            $canonical[] = $canonicalQueue;
+        }
+
+        if ($configured === []) {
+            return [];
+        }
+
+        // Pipeline every per-queue snapshot read into a single round-trip.
+        // QueueInsights::queueRowSnapshots batches depth/delayed/inflight/
+        // snapshot:error/lastSnapshotAt/pendingTrackedCount so a 10-queue
+        // dashboard pays 1 RTT instead of 60.
+        $pairs = [];
+        foreach ($configured as $i => $entry) {
+            $pairs[] = ['connection' => $entry['connection'], 'queue' => $canonical[$i]];
+        }
+        $snapshots = $this->svc->queueRowSnapshots($pairs);
+        $now = Date::now();
+
+        $rows = [];
+        foreach ($configured as $i => $entry) {
+            $connection = $entry['connection'];
+            $queue = $entry['queue'];
+            $canonicalQueue = $canonical[$i];
+            $snapshot = $snapshots[$i] ?? [
+                'depth' => 0,
+                'delayed' => null,
+                'inflight' => null,
+                'error' => null,
+                'last_at' => null,
+                'pending_tracked_count' => null,
+            ];
+
+            $depth = $snapshot['depth'];
+            $delayed = $snapshot['delayed'];
+            $lastAt = $snapshot['last_at'];
+            $stale = ! $lastAt instanceof CarbonInterface || $lastAt->diffInSeconds($now) > 120;
 
             $driverRaw = config("queue.connections.{$connection}.driver", '—');
 
-            $waitPercentiles = $this->svc->queueWaitPercentiles($connection, $canonical);
-
-            $depth = $this->svc->liveDepth($connection, $canonical);
-            $delayed = $this->svc->liveDelayed($connection, $canonical);
+            $waitPercentiles = $this->svc->queueWaitPercentiles($connection, $canonicalQueue);
 
             $rows[] = $this->attachInspectorFields(
                 [
                     'connection' => $connection,
                     'queue' => $queue,
-                    'canonical' => $canonical,
+                    'canonical' => $canonicalQueue,
                     'driver' => is_string($driverRaw) ? $driverRaw : '—',
                     'depth' => $depth,
-                    'inflight' => $this->svc->liveInFlight($connection, $canonical),
+                    'inflight' => $snapshot['inflight'],
                     'delayed' => $delayed,
                     'last_at' => $lastAt,
                     'stale' => $stale,
-                    'error' => $this->svc->snapshotError($connection, $canonical),
+                    'error' => $snapshot['error'],
                     'wait_p50_ms' => $waitPercentiles['p50'],
                     'wait_p95_ms' => $waitPercentiles['p95'],
                 ],
                 $expandedQueueKey,
                 $connection,
-                $canonical,
+                $canonicalQueue,
                 $depth,
                 $delayed,
+                $snapshot['pending_tracked_count'],
             );
         }
 
@@ -93,8 +122,9 @@ final readonly class QueueRowsBuilder
         string $canonical,
         int $depth,
         ?int $delayed,
+        ?int $trackedCount,
     ): array {
-        if (! Config::bool('pending.enabled', true)) {
+        if ($trackedCount === null) {
             return $row + [
                 'inspector_key' => "{$connection}:{$canonical}",
                 'inspector_open' => false,
@@ -109,15 +139,14 @@ final readonly class QueueRowsBuilder
         $key = "{$connection}:{$canonical}";
         $isOpen = $expandedQueueKey === $key;
 
-        $tracked = $this->svc->pendingTrackedCount($connection, $canonical);
         $actual = $depth + ($delayed ?? 0);
-        $gap = abs($tracked - $actual);
+        $gap = abs($trackedCount - $actual);
 
         return $row + [
             'inspector_key' => $key,
             'inspector_open' => $isOpen,
             'inspector_disabled' => false,
-            'tracked_count' => $tracked,
+            'tracked_count' => $trackedCount,
             'pending_gap' => $gap,
             'pending_jobs' => $isOpen ? $this->svc->pendingJobs($connection, $canonical) : [],
             'delayed_jobs' => $isOpen ? $this->svc->delayedJobs($connection, $canonical) : [],
