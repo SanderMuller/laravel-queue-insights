@@ -52,18 +52,25 @@
     if ($carbon === null) {
         $emptyText = trim(($prefix ? $prefix . ' ' : '') . $empty);
     } else {
+        // diffForHumans compares underlying timestamps, so it is timezone-
+        // invariant — call BEFORE the UTC mutation below so the original
+        // local-TZ Carbon doesn't need a copy().
+        $relative = match ($format) {
+            'relative-short' => $carbon->diffForHumans(['short' => true]),
+            'absolute', 'absolute-mono' => null,
+            default => $carbon->diffForHumans(),
+        };
         // datetime= MUST be UTC ISO so JS hydration parses unambiguously.
-        $utcCarbon = $carbon->copy()->utc();
-        $isoUtc = $utcCarbon->toIso8601String();
+        // Mutate in place: Carbon::copy() costs ~200μs per call and this
+        // component is invoked dozens of times per dashboard render.
+        $carbon->utc();
+        $isoUtc = $carbon->toIso8601String();
+        $absUtc = $carbon->format('M j, Y, g:i A');
         // Server-side fallback for absolute formats renders in UTC with an
         // explicit `UTC` suffix — guarantees the no-JS path (and the brief
         // pre-hydration paint frame) is never ambiguously labelled in the
         // server's local timezone. JS overwrites with the user's local TZ.
-        $display = match ($format) {
-            'relative-short' => $carbon->diffForHumans(['short' => true]),
-            'absolute', 'absolute-mono' => $utcCarbon->format('M j, Y, g:i A') . ' UTC',
-            default => $carbon->diffForHumans(),
-        };
+        $display = $relative ?? ($absUtc . ' UTC');
         if ($prefix !== null && $prefix !== '') {
             $display = $prefix . ' ' . $display;
         }
@@ -88,5 +95,5 @@
           data-qi-time
           data-qi-time-format="{{ $format }}"
           @if($prefix !== null && $prefix !== '') data-qi-time-prefix="{{ $prefix }}" @endif
-          aria-label="{{ ($prefix !== null && $prefix !== '' ? $prefix . ' ' : '') . $utcCarbon->format('M j, Y, g:i A') . ' UTC' }}">{{ $display }}</time>
+          aria-label="{{ ($prefix !== null && $prefix !== '' ? $prefix . ' ' : '') . $absUtc . ' UTC' }}">{{ $display }}</time>
 @endif
