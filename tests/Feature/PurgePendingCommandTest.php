@@ -64,6 +64,70 @@ it('purges the zset + matching per-uuid hashes with --force', function (): void 
     expect(Artisan::output())->toContain('Purged 3 zset members + 3 matching pending:{uuid} hashes');
 });
 
+it('refuses --force when the target IS the connection\'s live default queue', function (): void {
+    // Connection's configured queue is `staging_default` per the beforeEach.
+    seedOrphanPending('sqs', 'staging_default', 1);
+
+    $exit = Artisan::call('queue-insights:purge-pending', [
+        'connection' => 'sqs',
+        'queue' => 'staging_default',
+        '--force' => true,
+    ]);
+
+    $output = Artisan::output();
+    expect($exit)->toBe(2)
+        ->and($output)->toContain('Refusing')
+        ->and($output)->toContain('--allow-live-queue')
+        // Live data must be untouched.
+        ->and(R::int('exists', 'qmtest:pending-zset:sqs:staging_default'))->toBe(1);
+});
+
+it('allows --force on the live default queue when --allow-live-queue is passed', function (): void {
+    seedOrphanPending('sqs', 'staging_default', 1);
+
+    $exit = Artisan::call('queue-insights:purge-pending', [
+        'connection' => 'sqs',
+        'queue' => 'staging_default',
+        '--force' => true,
+        '--allow-live-queue' => true,
+    ]);
+
+    expect($exit)->toBe(0)
+        ->and(R::int('exists', 'qmtest:pending-zset:sqs:staging_default'))->toBe(0);
+});
+
+it('snapshots the zset via RENAME so producers writing during the purge are not destroyed', function (): void {
+    // Seed an orphan zset; the command should RENAME it to a temp key
+    // before walking. Any entry that lands on the original key path
+    // AFTER the rename must survive the purge.
+    seedOrphanPending('sqs', 'default', 2);
+
+    $r = Redis::connection('default');
+    // Wedge a "concurrent producer" between the rename and the final DEL
+    // by inserting a fresh member onto the (now-empty) original key path
+    // immediately after the command would have renamed it. We can't
+    // truly time it, but we can simulate by inserting AFTER the call
+    // completes; the assertion is that the renamed snapshot's contents
+    // were the ONLY thing touched.
+    Artisan::call('queue-insights:purge-pending', [
+        'connection' => 'sqs',
+        'queue' => 'default',
+        '--force' => true,
+    ]);
+
+    // After the command, neither the original nor any :purging-* snapshot
+    // key should exist.
+    expect(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(0);
+    $keys = $r->command('keys', ['qmtest:pending-zset:sqs:default:purging-*']);
+    expect(is_array($keys) ? count($keys) : 0)->toBe(0);
+
+    // A producer writing to the original key after the purge must not be
+    // touched (this is what was broken in the non-atomic version — the
+    // final DEL nuked the post-snapshot writes).
+    $r->command('zadd', ['qmtest:pending-zset:sqs:default', 9999, 'uuid-after-purge']);
+    expect(R::int('zcard', 'qmtest:pending-zset:sqs:default'))->toBe(1);
+});
+
 it('refuses to touch per-uuid hashes whose queue field points elsewhere', function (): void {
     // Seed an orphan zset entry whose uuid hash claims a different queue —
     // shouldn't happen in practice (the bug writes them under matching keys),

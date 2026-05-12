@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use Throwable;
 
 /**
  * One-shot cleanup for `pending-zset:{connection}:{queue}` and its
@@ -31,7 +32,8 @@ final class QueueInsightsPurgePendingCommand extends Command
     protected $signature = 'queue-insights:purge-pending
         {connection : Queue connection name (must be configured under `queue.connections.*`)}
         {queue : Queue value as recorded on the orphan zset (e.g. `default`)}
-        {--force : Actually delete. Without this flag the command is a dry-run.}';
+        {--force : Actually delete. Without this flag the command is a dry-run.}
+        {--allow-live-queue : Override the live-default-queue refusal. Only set when you genuinely want to scrub the connection CURRENT default queue (not an orphan key).}';
 
     protected $description = 'Purge a pending-tracking zset + matching per-uuid hashes for a single (connection, queue) pair. Intended for pre-0.16 orphan cleanup ONLY — destroys every entry on the target zset.';
 
@@ -56,6 +58,23 @@ final class QueueInsightsPurgePendingCommand extends Command
             $canonical = CanonicalQueueKey::from($queueRaw);
         } catch (InvalidArgumentException $e) {
             $this->error("Invalid queue value [{$queueRaw}]: {$e->getMessage()}");
+
+            return self::INVALID;
+        }
+
+        // Live-default refusal guard. The command's intended use is the
+        // pre-0.16 orphan zset (under literal `'default'` when the
+        // connection's real default is something else). If the operator
+        // points it at the connection's CURRENT default queue, --force
+        // would shred live in-flight pending tracking. Refuse unless the
+        // override flag is set.
+        $liveDefault = CanonicalQueueKey::fromOrDefault('', $connection);
+        if ($canonical === $liveDefault && ! (bool) $this->option('allow-live-queue')) {
+            $this->error(sprintf(
+                'Refusing: %s IS the live default queue for connection [%s]. Producers are actively writing here; --force would delete in-flight pending visibility. Pass --allow-live-queue if you really want to scrub the live default queue.',
+                $canonical,
+                $connection,
+            ));
 
             return self::INVALID;
         }
@@ -84,34 +103,64 @@ final class QueueInsightsPurgePendingCommand extends Command
             $this->line('sample  : ' . implode(', ', $uuids) . ($count > count($uuids) ? ', …' : ''));
         }
 
-        $force = (bool) $this->option('force');
-        if (! $force) {
-            $this->newLine();
-            $this->warn(sprintf(
-                'About to destroy %d pending entr%s on %s. This command is intended for the pre-0.16 orphan-cleanup case ONLY. If %s the live queue for this connection (not an orphan key), --force will shred legitimate in-flight pending tracking. Verify before re-running.',
-                $count,
-                $count === 1 ? 'y' : 'ies',
-                $zsetKey,
-                $count === 1 ? 'this entry belongs to' : 'these entries belong to',
-            ));
-            $this->line('<fg=yellow>Dry-run.</> Re-run with --force to actually delete.');
+        if (! (bool) $this->option('force')) {
+            $this->printDryRunWarning($count, $zsetKey);
 
             return self::SUCCESS;
         }
 
-        $hashesDeleted = $this->deleteMatchingHashes($redis, $zsetKey, $canonical);
-        $zsetDelReply = $redis->command('del', [$zsetKey]);
+        return $this->forcePurge($redis, $zsetKey, $canonical);
+    }
+
+    private function printDryRunWarning(int $count, string $zsetKey): void
+    {
+        $this->newLine();
+        $this->warn(sprintf(
+            'About to destroy %d pending entr%s on %s. This command is intended for the pre-0.16 orphan-cleanup case ONLY. If %s the live queue for this connection (not an orphan key), --force will shred legitimate in-flight pending tracking. Verify before re-running.',
+            $count,
+            $count === 1 ? 'y' : 'ies',
+            $zsetKey,
+            $count === 1 ? 'this entry belongs to' : 'these entries belong to',
+        ));
+        $this->line('<fg=yellow>Dry-run.</> Re-run with --force to actually delete.');
+    }
+
+    /**
+     * RENAME the zset to a per-run temp key BEFORE walking it. Atomic
+     * snapshot — any producer still writing to the original key path
+     * (mis-configured fix, stragglers, etc.) creates a fresh zset and
+     * is left undisturbed; we only ever delete the renamed snapshot.
+     * Also defends against the ZRANGE-vs-DEL window: a member added
+     * after the read but before the original DEL would have been
+     * silently nuked by the old path. Now they land on the new zset
+     * that we never touch.
+     */
+    private function forcePurge(RedisConnection $redis, string $zsetKey, string $canonical): int
+    {
+        $tempKey = $zsetKey . ':purging-' . bin2hex(random_bytes(4));
+        try {
+            $redis->command('rename', [$zsetKey, $tempKey]);
+        } catch (Throwable $e) {
+            $this->error("Failed to snapshot {$zsetKey} via RENAME: {$e->getMessage()}");
+
+            return self::FAILURE;
+        }
+
+        $hashesDeleted = $this->deleteMatchingHashes($redis, $tempKey, $canonical);
+        $snapshotCard = $redis->command('zcard', [$tempKey]);
+        $snapshotCount = is_numeric($snapshotCard) ? (int) $snapshotCard : 0;
+        $zsetDelReply = $redis->command('del', [$tempKey]);
         $zsetDeleted = is_numeric($zsetDelReply) ? (int) $zsetDelReply : 0;
 
         $this->newLine();
         $this->info(sprintf(
             'Purged %d zset member%s + %d matching pending:{uuid} hash%s.',
-            $count,
-            $count === 1 ? '' : 's',
+            $snapshotCount,
+            $snapshotCount === 1 ? '' : 's',
             $hashesDeleted,
             $hashesDeleted === 1 ? '' : 'es',
         ));
-        $this->line(sprintf('zset key deleted: %s', $zsetDeleted === 1 ? 'yes' : 'no (already gone)'));
+        $this->line(sprintf('snapshot key deleted: %s', $zsetDeleted === 1 ? 'yes' : 'no (already gone)'));
 
         return self::SUCCESS;
     }
