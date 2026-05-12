@@ -179,6 +179,7 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
             if ($json === null) {
                 continue;
             }
+
             if ($json === '') {
                 continue;
             }

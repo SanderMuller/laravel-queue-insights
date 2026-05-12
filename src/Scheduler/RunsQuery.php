@@ -53,7 +53,7 @@ final class RunsQuery
      * the orphan-detection sentinel because `RunStore::start` always
      * writes it on a real run.
      */
-    private const LIST_FIELDS = [
+    private const array LIST_FIELDS = [
         'started_at',
         'finished_at',
         'runtime_ms',

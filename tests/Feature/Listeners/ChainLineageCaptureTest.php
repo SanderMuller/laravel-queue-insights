@@ -351,6 +351,7 @@ it('pushChainClaim canonicalises queue under chain_connection when chain_queue i
     $parent = new ChainParentJob();
     $parent->chainConnection = 'chain_dest';
     $parent->chained = [serialize(new ChainChildJob())];
+
     $serialized = serialize($parent);
 
     $payload = [
@@ -401,6 +402,7 @@ it('pushChainClaim uses outer connection + chain_queue override when chain_conne
     $parent = new ChainParentJob();
     $parent->chainQueue = 'explicit_chain_queue';
     $parent->chained = [serialize(new ChainChildJob())];
+
     $serialized = serialize($parent);
 
     $payload = [
