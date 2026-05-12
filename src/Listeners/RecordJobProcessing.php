@@ -34,7 +34,7 @@ final class RecordJobProcessing
             // but `getQueue()` can be null on driver edges — resolve via the
             // connection's configured default so the key matches the
             // producer-side write in RecordJobQueued.
-            $queue = (string) ($event->job->getQueue() ?? '');
+            $queue = (string) $event->job->getQueue();
 
             // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
             // `SET key val EX ttl` has divergent arg shapes across drivers.
@@ -239,7 +239,7 @@ final class RecordJobProcessing
             $connection = $context['chain_connection']
                 ?? (string) $event->connectionName;
             $queueRaw = $context['chain_queue']
-                ?? (string) ($event->job->getQueue() ?? '');
+                ?? (string) $event->job->getQueue();
 
             // Canonicalize the queue value before composing the key so SQS
             // (where producers stamp queue URLs and workers report logical

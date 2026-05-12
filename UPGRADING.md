@@ -2,6 +2,49 @@
 
 This file lists the migration steps between major / minor versions of `laravel-queue-insights`. Patch releases never require manual steps. The Changelog (`CHANGELOG.md`) is the canonical record of what changed; this file covers only the steps a host must perform to land cleanly on the new version.
 
+## Pending-zset key alignment for hosts whose default queue isn't literally `default` (0.16)
+
+The producer-side listener (`RecordJobQueued`) previously fell back to the literal string `'default'` when `$event->queue` was empty — the JobQueued event shape Laravel emits when a job is dispatched without an explicit `->onQueue()`. The worker side reads the real queue off the popped job (`$job->getQueue()`), so on hosts where the connection's configured default isn't the literal `'default'` (Vapor / SQS with `SQS_QUEUE=staging_default` is the canonical case, but the same applies to any redis / database connection whose `queue` config differs) the producer wrote `pending-zset:{conn}:default` while the worker tried to clean `pending-zset:{conn}:{configured-default}`. Keys diverged, pending entries never cleared, `oldest_pending` tripped on long-completed jobs.
+
+0.16 resolves the connection's configured default queue (`queue.connections.{connection}.queue`) at both producer and worker sites via the new `CanonicalQueueKey::fromOrDefault()` helper, so both sides land on the same key.
+
+### Action required
+
+**If your `queue-insights.snapshots` config lists `'queue' => 'default'` but your actual queue connection routes to a different default (e.g. `staging_default`)**, update the snapshots entry to match the real queue. Otherwise the dashboard / Prometheus exporter / alert detectors keep reading the (now-empty) `pending-zset:{conn}:default` while real traffic is keyed under `:{conn}:{real-default}` — surfaces will silently show zero pending for that queue.
+
+```php
+// config/queue-insights.php — before
+'snapshots' => [
+    ['connection' => 'sqs', 'queue' => 'default'],
+],
+
+// after — match the connection's real default
+'snapshots' => [
+    ['connection' => 'sqs', 'queue' => 'staging_default'],
+],
+```
+
+### Cutover window
+
+Hosts running 0.15 with the bug will have pre-existing entries on `pending-zset:{conn}:default` at upgrade time. Those entries:
+
+- Are no longer touched by the post-upgrade listeners (producer + worker now key the configured-default zset instead).
+- Age out via the `pending.ttl_seconds` TTL (24 h default).
+
+During that 24 h window, if your `snapshots` config still references the old literal `default` queue, `oldest_pending` may keep firing on the stale entries. The two mitigations:
+
+1. **Recommended**: update `snapshots[].queue` (above) so the detector reads the new zset, and let the orphans age out naturally on the old key.
+2. **One-off cleanup**: redis-cli the pre-fix orphans yourself once after upgrade:
+
+   ```bash
+   # Replace {prefix} with your `queue-insights.key_prefix` (default 'qi:').
+   redis-cli DEL '{prefix}pending-zset:sqs:default'
+   ```
+
+   Only do this if you've confirmed no actively-pending jobs are still keyed under the old shape (i.e. no producers running on 0.15 against the same Redis).
+
+Hosts whose configured default queue is already the literal string `'default'` (the common single-queue case) need no action — both old and new code paths key the same zset for them.
+
 ## Failed-pane class filter URL key removed (`?fk=` → `?ck=`)
 
 The Failed list's class filter is now bound to the same Livewire prop the Completed list uses (`selectedClass`), so a class picked in either dropdown — or via a click on the Classes tab — scopes both panes simultaneously. As part of that unification, the Failed-pane's old `?fk=` URL key was removed; the surviving key is `?ck=` (which both panes now share).

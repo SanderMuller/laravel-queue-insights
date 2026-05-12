@@ -51,9 +51,12 @@ final class CanonicalQueueKey
      */
     public static function fromOrDefault(string $input, string $connection): string
     {
-        $trimmed = trim($input);
-        if ($trimmed !== '') {
-            return self::from($trimmed);
+        // `from()` is the single trim site — call it on either the raw input
+        // (when non-blank) or the resolved fallback. Letting `from()` own the
+        // trim keeps the contract in one place; callers don't need to know
+        // whether they're handing over a pre-trimmed value.
+        if (trim($input) !== '') {
+            return self::from($input);
         }
 
         $configured = $connection !== ''
@@ -61,7 +64,7 @@ final class CanonicalQueueKey
             : null;
 
         $resolved = is_string($configured) && trim($configured) !== ''
-            ? trim($configured)
+            ? $configured
             : 'default';
 
         return self::from($resolved);

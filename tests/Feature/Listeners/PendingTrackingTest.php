@@ -347,3 +347,68 @@ it('producer falls back to the literal "default" when no connection default is c
     expect(R::int('exists', 'qmtest:pending-zset:weird:default'))->toBe(1)
         ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'queue'))->toBe('default');
 });
+
+/**
+ * Cross-driver regression — same bug class exists on the redis driver
+ * when the connection's configured queue isn't the literal 'default'.
+ * Asserts the producer + worker key on the connection-default zset just
+ * like the SQS case.
+ */
+it('aligns producer and worker zset keys on the redis driver when JobQueued carries an empty queue', function (): void {
+    config()->set('queue.connections.redis.queue', 'redis_default');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69REDS';
+
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'redis', ''));
+
+    expect(R::int('exists', 'qmtest:pending-zset:redis:redis_default'))->toBe(1)
+        ->and(R::int('exists', 'qmtest:pending-zset:redis:default'))->toBe(0)
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'queue'))->toBe('redis_default');
+
+    $event = new JobProcessed(connectionName: 'redis', job: makePendingJobMock($uuid, 'redis_default'));
+    resolve(RecordJobProcessed::class)->handle($event);
+
+    expect(R::int('zcard', 'qmtest:pending-zset:redis:redis_default'))->toBe(0)
+        ->and(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0);
+});
+
+/**
+ * Worker-side null-`getQueue()` regression. Some driver edges (rare, but
+ * possible for custom drivers / mocks) return null from `getQueue()`; the
+ * worker must still resolve the connection's configured default so its
+ * markInFlight / cleanup keys match the producer side. Tests the
+ * `?? '' → fromOrDefault('', $connection)` path on RecordJobProcessing.
+ */
+it('aligns the worker side when getQueue() returns null', function (): void {
+    config()->set('queue.connections.sqs.queue', 'staging_default');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69NULL';
+
+    // Producer seeds the entry under the configured default.
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'sqs', ''));
+
+    expect(R::int('exists', 'qmtest:pending-zset:sqs:staging_default'))->toBe(1);
+
+    // Worker pops a job whose driver returns null for getQueue() — the
+    // listener must still land its inflight + cleanup keys on the
+    // connection-default zset, NOT on the literal ':default'.
+    /** @var Job&MockInterface $job */
+    $job = Mockery::mock(Job::class);
+    $job->shouldReceive('uuid')->andReturn($uuid);
+    $job->shouldReceive('getQueue')->andReturn(null);
+    $job->shouldReceive('payload')->andReturn(['displayName' => 'App\\Jobs\\PendingTestJob']);
+    $job->shouldReceive('resolveName')->andReturn('App\\Jobs\\PendingTestJob');
+    $job->shouldReceive('attempts')->andReturn(1);
+    $job->shouldReceive('getJobId')->andReturn($uuid);
+
+    (new RecordJobProcessing())->handle(new JobProcessing(connectionName: 'sqs', job: $job));
+
+    expect(R::int('exists', 'qmtest:inflight-zset:sqs:staging_default'))->toBe(1)
+        ->and(R::int('exists', 'qmtest:inflight-zset:sqs:default'))->toBe(0);
+
+    // Cleanup uses the same null-getQueue() mock — must scrub the same key.
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'sqs', job: $job));
+
+    expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
+        ->and(R::int('zcard', 'qmtest:inflight-zset:sqs:staging_default'))->toBe(0);
+});
