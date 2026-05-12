@@ -78,5 +78,6 @@ return RectorConfig::configure()
         // also produces invalid PHP (`Env::get(...) = $value`).
         EnvVariableToEnvHelperRector::class => [
             __DIR__ . '/tests/Fixtures/SupervisorLauncher.php',
+            __DIR__ . '/tests/Fixtures/SnapshotterRaceRunner.php',
         ],
     ]);

@@ -24,6 +24,8 @@ final class LuaScripts
 
     private static ?string $classesRoster = null;
 
+    private static ?string $rewriteScheduleSnapshot = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
@@ -67,6 +69,11 @@ final class LuaScripts
     public static function classesRoster(): string
     {
         return self::$classesRoster ??= self::load(__DIR__ . '/Lua/ClassesRoster.lua');
+    }
+
+    public static function rewriteScheduleSnapshot(): string
+    {
+        return self::$rewriteScheduleSnapshot ??= self::load(__DIR__ . '/Lua/RewriteScheduleSnapshot.lua');
     }
 
     private static function load(string $path): string

@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use Throwable;
 
 /**
@@ -52,19 +54,31 @@ final readonly class ScheduleSnapshotter
                 return;
             }
 
-            // Best-effort full rewrite. Removed tasks drop off the hash +
-            // order list; their per-task counters and historical run keys
-            // age out via TTL.
-            $redis->command('del', [$tasksKey]);
-            $redis->command('del', [$orderKey]);
-
+            // Atomic full rewrite via Lua — DEL+RPUSH was previously
+            // four-or-more separate round-trips, and two concurrent
+            // boots (FPM + queue workers after a deploy) could
+            // interleave their writes and produce duplicate entries
+            // in the order list. The script wraps everything in one
+            // call so concurrent rebuilders become last-writer-wins.
+            // Removed tasks drop off the hash + order list; their
+            // per-task counters and historical run keys age out via
+            // TTL.
+            $argv = [$hash, (string) Date::now()->getTimestampMs()];
             foreach ($summaries as $key => $summary) {
-                $redis->command('hset', [$tasksKey, $key, (string) json_encode($summary)]);
-                $redis->command('rpush', [$orderKey, $key]);
+                $argv[] = $key;
+                $argv[] = (string) json_encode($summary);
             }
 
-            $redis->command('set', [$hashKey, $hash]);
-            $redis->command('set', [$atKey, (string) Date::now()->getTimestampMs()]);
+            RedisEval::exec(
+                $redis,
+                LuaScripts::rewriteScheduleSnapshot(),
+                4,
+                $tasksKey,
+                $orderKey,
+                $hashKey,
+                $atKey,
+                ...$argv,
+            );
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: ScheduleSnapshotter::rebuild failed', [
                 'exception' => $throwable::class,

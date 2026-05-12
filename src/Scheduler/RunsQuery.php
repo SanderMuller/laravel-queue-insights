@@ -2,6 +2,9 @@
 
 namespace SanderMuller\QueueInsights\Scheduler;
 
+use Closure;
+use Illuminate\Redis\Connections\Connection;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
@@ -100,10 +103,12 @@ final class RunsQuery
         // HGETALL calls — keeps result-index alignment trivial.
         $pairs = [];
         foreach ($members as $member) {
-            if (! is_string($member) || $member === '') {
+            if (! is_string($member)) {
                 continue;
             }
-
+            if ($member === '') {
+                continue;
+            }
             $parts = explode(':', $member, 2);
             if (count($parts) !== 2) {
                 continue;
@@ -118,7 +123,7 @@ final class RunsQuery
 
         // Single pipeline for the N per-run HGETALL fan-out. ZREVRANGE
         // result order is preserved in the pipeline response.
-        $hashes = $redis->pipeline(static function ($pipe) use ($pairs): void {
+        $hashes = $this->pipeline($redis, static function ($pipe) use ($pairs): void {
             foreach ($pairs as [$taskKey, $runId]) {
                 $pipe->hgetall(KeyPrefix::make("sched:run:{$taskKey}:{$runId}"));
             }
@@ -127,7 +132,10 @@ final class RunsQuery
         $rows = [];
         foreach ($pairs as $idx => [$taskKey, $runId]) {
             $hash = $hashes[$idx] ?? null;
-            if (! is_array($hash) || $hash === []) {
+            if (! is_array($hash)) {
+                continue;
+            }
+            if ($hash === []) {
                 continue;
             }
 
@@ -140,6 +148,24 @@ final class RunsQuery
         }
 
         return $rows;
+    }
+
+    /**
+     * Connection wrapper that returns a pipeline result as a numerically
+     * indexed list. Branches on driver: phpredis exposes a typed
+     * `pipeline(callable)` method on its Connection class; predis only
+     * exposes it via the magic `__call → command('pipeline', …)` path.
+     *
+     * @param  Closure(\Predis\ClientInterface): void  $callback
+     * @return list<mixed>
+     */
+    private function pipeline(Connection $redis, Closure $callback): array
+    {
+        $results = $redis instanceof PhpRedisConnection
+            ? $redis->pipeline($callback)
+            : $redis->command('pipeline', [$callback]);
+
+        return is_array($results) ? array_values($results) : [];
     }
 
     /**

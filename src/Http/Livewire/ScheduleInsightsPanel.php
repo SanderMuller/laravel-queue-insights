@@ -210,6 +210,7 @@ final class ScheduleInsightsPanel extends Component
         foreach ($aggregates->computeStatsForTasks($tasks) as $row) {
             $statsByKey[$row['task_key']] = $row['stats'];
         }
+
         $tasksWithStats = [];
         foreach ($tasks as $task) {
             $tasksWithStats[] = $task + [

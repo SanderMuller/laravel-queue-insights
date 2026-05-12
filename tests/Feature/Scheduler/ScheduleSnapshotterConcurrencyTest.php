@@ -30,7 +30,7 @@ it('ScheduleReader::tasks() returns each task once even when the order list has 
     // Seed three unique task summaries.
     $unique = ['task-a', 'task-b', 'task-c'];
     foreach ($unique as $i => $key) {
-        R::raw('hset', $tasksKey, $key, json_encode([
+        R::raw('hset', $tasksKey, $key, (string) json_encode([
             'description' => null,
             'command' => "echo {$key}",
             'expression' => '* * * * *',
@@ -52,6 +52,7 @@ it('ScheduleReader::tasks() returns each task once even when the order list has 
             $polluted[] = $key;
         }
     }
+
     foreach ($polluted as $key) {
         R::raw('rpush', $orderKey, $key);
     }
@@ -88,7 +89,8 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
 
     $packageRoot = dirname(__DIR__, 3);
     $runner = $packageRoot . '/tests/Fixtures/SnapshotterRaceRunner.php';
-    expect(is_file($runner))->toBeTrue();
+    expect($runner)
+        ->toBeFile();
 
     $prefix = 'qmrace:';
     $orderKey = $prefix . 'sched:tasks:order';
@@ -96,12 +98,13 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
     $workerCount = 4;
     $iterations = 4;
 
+    $envOr = static fn (string $name, string $fallback): string => is_string($v = getenv($name)) && $v !== '' ? $v : $fallback;
     $childEnv = [
         'QI_SCHED_RACE_PREFIX' => $prefix,
         'QI_SCHED_RACE_TASKS' => (string) $taskCount,
-        'REDIS_HOST' => getenv('REDIS_HOST') ?: '127.0.0.1',
-        'REDIS_PORT' => getenv('REDIS_PORT') ?: '6379',
-        'REDIS_DB' => getenv('REDIS_DB') ?: '15',
+        'REDIS_HOST' => $envOr('REDIS_HOST', '127.0.0.1'),
+        'REDIS_PORT' => $envOr('REDIS_PORT', '6379'),
+        'REDIS_DB' => $envOr('REDIS_DB', '15'),
     ];
 
     for ($iter = 0; $iter < $iterations; ++$iter) {
@@ -134,7 +137,7 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
         }
 
         $orderRaw = R::raw('lrange', $orderKey, 0, -1);
-        $order = is_array($orderRaw) ? array_values(array_filter($orderRaw, 'is_string')) : [];
+        $order = is_array($orderRaw) ? array_values(array_filter($orderRaw, is_string(...))) : [];
 
         $unique = array_values(array_unique($order));
 

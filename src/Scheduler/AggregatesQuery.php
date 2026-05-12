@@ -2,7 +2,9 @@
 
 namespace SanderMuller\QueueInsights\Scheduler;
 
+use Closure;
 use Illuminate\Redis\Connections\Connection;
+use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\Config;
@@ -127,64 +129,73 @@ final class AggregatesQuery
             $buckets[] = Date::createFromTimestamp($now - ($i * 3600))->format('YmdH');
         }
 
-        // Single pipeline for the entire per-task fan-out: 49 commands per
-        // task collapse into one round-trip across all tasks.
-        $results = $this->redis()->pipeline(static function ($pipe) use ($keys, $buckets): void {
-            foreach ($keys as $taskKey) {
-                foreach ($buckets as $bucket) {
-                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
-                    $pipe->lrange(KeyPrefix::make("sched:samples:{$taskKey}:{$bucket}"), 0, -1);
-                }
-                $pipe->hgetall(KeyPrefix::make("sched:counters:{$taskKey}"));
-            }
-        });
-
+        $results = $this->pipelineStatsFanOut($keys, $buckets);
         $bucketsPerTask = count($buckets);
         $stride = ($bucketsPerTask * 2) + 1;
         $out = [];
         foreach ($keys as $idx => $taskKey) {
-            $base = $idx * $stride;
-            $runs = 0;
-            $failed = 0;
-            $samples = [];
-
-            for ($b = 0; $b < $bucketsPerTask; ++$b) {
-                $aggHash = $results[$base + ($b * 2)] ?? null;
-                if (is_array($aggHash) && $aggHash !== []) {
-                    $s = HashFields::int($aggHash, 'success_count');
-                    $f = HashFields::int($aggHash, 'failed_count');
-                    $runs += $s + $f;
-                    $failed += $f;
-                }
-
-                $list = $results[$base + ($b * 2) + 1] ?? null;
-                if (is_array($list)) {
-                    foreach ($list as $entry) {
-                        if (is_numeric($entry)) {
-                            $samples[] = (int) $entry;
-                        }
-                    }
-                }
-            }
-
-            $countersHash = $results[$base + ($bucketsPerTask * 2)] ?? null;
-            $countersHash = is_array($countersHash) ? $countersHash : [];
-
             $out[] = [
                 'task_key' => $taskKey,
-                'stats' => [
-                    'runs' => $runs,
-                    'failed' => $failed,
-                    'skipped' => HashFields::int($countersHash, 'total_skipped'),
-                    'hung' => HashFields::int($countersHash, 'total_hung'),
-                    'missed' => HashFields::int($countersHash, 'total_missed'),
-                    'last_run_at_ms' => HashFields::nullableInt($countersHash, 'last_run_at'),
-                    'p95_ms' => $this->p95FromSamples($samples),
-                ],
+                'stats' => $this->projectTaskStats($results, $idx * $stride, $bucketsPerTask),
             ];
         }
 
         return $out;
+    }
+
+    /**
+     * Project one task's slice of the stats pipeline result into the
+     * public stats shape. Layout per task: `[agg, samples, agg, samples,
+     * …, counters]` of size `2*N+1` starting at `$base`.
+     *
+     * @param  list<mixed>  $results
+     * @return array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}
+     */
+    private function projectTaskStats(array $results, int $base, int $bucketsPerTask): array
+    {
+        $runs = 0;
+        $failed = 0;
+        $samples = [];
+
+        for ($b = 0; $b < $bucketsPerTask; ++$b) {
+            $aggHash = $results[$base + ($b * 2)] ?? null;
+            if (is_array($aggHash) && $aggHash !== []) {
+                $f = HashFields::int($aggHash, 'failed_count');
+                $runs += HashFields::int($aggHash, 'success_count') + $f;
+                $failed += $f;
+            }
+
+            $list = $results[$base + ($b * 2) + 1] ?? null;
+            if (is_array($list)) {
+                $this->appendNumericSamples($list, $samples);
+            }
+        }
+
+        $countersHash = $results[$base + ($bucketsPerTask * 2)] ?? null;
+        $countersHash = is_array($countersHash) ? $countersHash : [];
+
+        return [
+            'runs' => $runs,
+            'failed' => $failed,
+            'skipped' => HashFields::int($countersHash, 'total_skipped'),
+            'hung' => HashFields::int($countersHash, 'total_hung'),
+            'missed' => HashFields::int($countersHash, 'total_missed'),
+            'last_run_at_ms' => HashFields::nullableInt($countersHash, 'last_run_at'),
+            'p95_ms' => $this->p95FromSamples($samples),
+        ];
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $list
+     * @param  list<int>  $samples
+     */
+    private function appendNumericSamples(array $list, array &$samples): void
+    {
+        foreach ($list as $entry) {
+            if (is_numeric($entry)) {
+                $samples[] = (int) $entry;
+            }
+        }
     }
 
     /**
@@ -252,14 +263,7 @@ final class AggregatesQuery
             $hourLabels[] = Date::createFromTimestamp($ts)->format('H:00');
         }
 
-        // Single pipeline for the entire (hours × tasks) fan-out.
-        $results = $this->redis()->pipeline(static function ($pipe) use ($buckets, $keys): void {
-            foreach ($buckets as $bucket) {
-                foreach ($keys as $taskKey) {
-                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
-                }
-            }
-        });
+        $results = $this->pipelineSparklineFanOut($keys, $buckets);
 
         $bars = [];
         $tasksPerHour = count($keys);
@@ -274,6 +278,7 @@ final class AggregatesQuery
                     $failed += HashFields::int($hash, 'failed_count');
                 }
             }
+
             $bars[] = [
                 'hour' => $hourLabels[$hourIdx],
                 'success' => $success,
@@ -282,6 +287,69 @@ final class AggregatesQuery
         }
 
         return $bars;
+    }
+
+    /**
+     * One round-trip for the per-task stats fan-out — N tasks × (24 agg
+     * HGETALL + 24 samples LRANGE + 1 counters HGETALL).
+     *
+     * @param  list<string>  $keys
+     * @param  list<string>  $buckets
+     * @return list<mixed>
+     */
+    private function pipelineStatsFanOut(array $keys, array $buckets): array
+    {
+        return $this->pipeline(static function ($pipe) use ($keys, $buckets): void {
+            foreach ($keys as $taskKey) {
+                foreach ($buckets as $bucket) {
+                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
+                    $pipe->lrange(KeyPrefix::make("sched:samples:{$taskKey}:{$bucket}"), 0, -1);
+                }
+
+                $pipe->hgetall(KeyPrefix::make("sched:counters:{$taskKey}"));
+            }
+        });
+    }
+
+    /**
+     * One round-trip for the sparkline fan-out — 24 hours × N tasks of
+     * HGETALL against the per-task hourly aggregate hashes.
+     *
+     * @param  list<string>  $keys
+     * @param  list<string>  $buckets
+     * @return list<mixed>
+     */
+    private function pipelineSparklineFanOut(array $keys, array $buckets): array
+    {
+        return $this->pipeline(static function ($pipe) use ($buckets, $keys): void {
+            foreach ($buckets as $bucket) {
+                foreach ($keys as $taskKey) {
+                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
+                }
+            }
+        });
+    }
+
+    /**
+     * Connection wrapper that returns the pipeline result as a numerically
+     * indexed list. Branches on driver: phpredis exposes a typed
+     * `pipeline(callable)` method on its Connection class; predis only
+     * exposes it via the magic `__call → command('pipeline', …)` path.
+     * Same closure shape works on both at runtime — the inner proxy is
+     * either a phpredis Redis MULTI handle or a `\Predis\Pipeline\Pipeline`,
+     * each accepting `hgetall` / `lrange` / etc. via `__call`.
+     *
+     * @param  Closure(\Predis\ClientInterface): void  $callback
+     * @return list<mixed>
+     */
+    private function pipeline(Closure $callback): array
+    {
+        $conn = $this->redis();
+        $results = $conn instanceof PhpRedisConnection
+            ? $conn->pipeline($callback)
+            : $conn->command('pipeline', [$callback]);
+
+        return is_array($results) ? array_values($results) : [];
     }
 
     /**

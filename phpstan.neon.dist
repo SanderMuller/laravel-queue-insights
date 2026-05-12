@@ -179,6 +179,13 @@ parameters:
             identifier: disallowed.function
             path: tests/Fixtures/SupervisorLauncher.php
             reportUnmatched: false
+        # SnapshotterRaceRunner seeds APP_KEY via putenv for the same
+        # reason as SupervisorLauncher — testbench's bundled skeleton
+        # has no `.env` on fresh CI installs.
+        -
+            identifier: disallowed.function
+            path: tests/Fixtures/SnapshotterRaceRunner.php
+            reportUnmatched: false
         -
             identifier: staticMethod.void
             path: tests/Feature/QueueInsightsWorkSignalTest.php

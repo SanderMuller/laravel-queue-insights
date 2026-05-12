@@ -52,11 +52,27 @@ final class ScheduleReader
             return [];
         }
 
+        // Defense in depth against legacy polluted order lists. Pre-fix
+        // installs may carry duplicate entries in `sched:tasks:order`
+        // from a prior non-atomic rebuild race; dedup at read time so
+        // the dashboard recovers without waiting for the next rebuild
+        // to roll the snapshot over. New writes go through the atomic
+        // Lua rewrite and won't introduce duplicates.
         $keys = [];
+        $seen = [];
         foreach ($orderRaw as $key) {
-            if (is_string($key) && $key !== '') {
-                $keys[] = $key;
+            if (! is_string($key)) {
+                continue;
             }
+            if ($key === '') {
+                continue;
+            }
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $keys[] = $key;
         }
 
         if ($keys === []) {
@@ -76,7 +92,10 @@ final class ScheduleReader
         $rows = [];
         foreach ($keys as $idx => $key) {
             $json = $values[$idx] ?? null;
-            if (! is_string($json) || $json === '') {
+            if (! is_string($json)) {
+                continue;
+            }
+            if ($json === '') {
                 continue;
             }
 
