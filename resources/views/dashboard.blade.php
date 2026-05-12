@@ -89,7 +89,7 @@
                         <span class="text-gray-500 dark:text-gray-400">queue</span>
                         <code class="font-mono font-medium text-gray-900 dark:text-gray-100" title="{{ $selectedQueueConnection }} / {{ $selectedQueueName }}">{{ $selectedQueueName }}</code>
                         <button type="button" wire:click="clearSelectedQueue" class="-mr-0.5 text-gray-400 hover:text-gray-900 dark:hover:text-gray-100" aria-label="Clear queue scope">
-                            <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/></svg>
+                            <x-queue-insights::icon-close class="size-3"/>
                         </button>
                     </span>
                 @endif
@@ -101,7 +101,7 @@
                         <span class="text-emerald-600/80 dark:text-emerald-400/80">class</span>
                         <code class="font-mono font-medium" title="{{ $selectedClass }}">{{ $scopedClassShort }}</code>
                         <button type="button" wire:click="clearSelectedClass" class="-mr-0.5 hover:text-emerald-900 dark:hover:text-emerald-200" aria-label="Clear class scope">
-                            <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/></svg>
+                            <x-queue-insights::icon-close class="size-3"/>
                         </button>
                     </span>
                 @endif
