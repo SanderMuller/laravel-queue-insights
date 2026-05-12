@@ -168,7 +168,7 @@
                                     <span class="col-span-3 sm:col-span-2 text-xs tabular-nums text-red-700 dark:text-red-300">
                                         ✗{{ $row['stats']['failed'] }}<span class="text-gray-400 dark:text-gray-400"> / {{ $runsTotal }}</span>
                                     </span>
-                                    <span class="col-span-3 sm:col-span-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-300">last {{ $formatTime($row['counters']['last_run_at']) }}</span>
+                                    <span class="col-span-3 sm:col-span-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-300">last {{ $formatTime($row['stats']['last_run_at_ms']) }}</span>
                                 </button>
                             </li>
                         @endforeach
@@ -289,7 +289,6 @@
         <x-queue-insights::schedule-task-modal
             :task="$selectedTask"
             :stats="$selectedTask['stats']"
-            :counters="$selectedTask['counters']"
             :hostDistribution="$selectedTaskHosts"
             :recentRuns="$selectedTaskRuns"/>
     @endif

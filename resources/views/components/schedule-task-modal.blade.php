@@ -15,12 +15,6 @@
      */
     'stats' => ['runs' => 0, 'failed' => 0, 'skipped' => 0, 'hung' => 0, 'missed' => 0, 'last_run_at_ms' => null, 'p95_ms' => null],
     /**
-     * Lifetime counters for this task.
-     *
-     * @var array<string, mixed>
-     */
-    'counters' => [],
-    /**
      * host_id → run count, sorted desc.
      *
      * @var array<string, int>
