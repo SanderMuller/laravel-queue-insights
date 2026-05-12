@@ -202,10 +202,6 @@ final class ScheduleInsightsPanel extends Component
         ];
 
         $tasks = $reader->tasks();
-        // Batched per-task stats fan-out — one pipeline collapses the
-        // 49 commands/task into a single Redis round-trip for all tasks.
-        // `stats` already carries `last_run_at_ms` (the only counters
-        // field the view reads), so we no longer fetch counters separately.
         $statsByKey = [];
         foreach ($aggregates->computeStatsForTasks($tasks) as $row) {
             $statsByKey[$row['task_key']] = $row['stats'];
@@ -214,10 +210,7 @@ final class ScheduleInsightsPanel extends Component
         $tasksWithStats = [];
         foreach ($tasks as $task) {
             $tasksWithStats[] = $task + [
-                'stats' => $statsByKey[$task['task_key']] ?? [
-                    'runs' => 0, 'failed' => 0, 'skipped' => 0, 'hung' => 0,
-                    'missed' => 0, 'last_run_at_ms' => null, 'p95_ms' => null,
-                ],
+                'stats' => $statsByKey[$task['task_key']] ?? AggregatesQuery::emptyStats(),
             ];
         }
 

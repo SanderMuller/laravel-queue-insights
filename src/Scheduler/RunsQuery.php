@@ -115,8 +115,6 @@ final class RunsQuery
             return [];
         }
 
-        // Pre-split member ids so the pipeline closure stays a plain list of
-        // HGETALL calls — keeps result-index alignment trivial.
         $pairs = [];
         foreach ($members as $member) {
             if (! is_string($member)) {
@@ -139,26 +137,27 @@ final class RunsQuery
             return [];
         }
 
-        // Single pipeline for the N per-run HGETALL fan-out. ZREVRANGE
-        // result order is preserved in the pipeline response.
+        // HMGET the metadata fields only. `output` is excluded — it can grow
+        // to `scheduler.capture.max_output_bytes` per run, so pipelining 2k
+        // candidates' worth would buffer multi-MB into a single Redis reply.
+        // The modal fetches it on demand via `ScheduleReader::runOutput()`.
         $hashes = RedisPipeline::run($redis, static function (mixed $pipe) use ($pairs): void {
             foreach ($pairs as [$taskKey, $runId]) {
-                $pipe->hgetall(KeyPrefix::make("sched:run:{$taskKey}:{$runId}"));
+                $pipe->hmget(
+                    KeyPrefix::make("sched:run:{$taskKey}:{$runId}"),
+                    self::LIST_FIELDS,
+                );
             }
         });
 
         $rows = [];
         foreach ($pairs as $idx => [$taskKey, $runId]) {
-            $hash = $hashes[$idx] ?? null;
-            if (! is_array($hash)) {
+            $hashArray = $this->mapHmgetReply($hashes[$idx] ?? null);
+            if ($hashArray === null) {
                 continue;
             }
 
-            if ($hash === []) {
-                continue;
-            }
-
-            $row = $this->projectRunRow($taskKey, $runId, $hash);
+            $row = $this->projectRunRow($taskKey, $runId, $hashArray);
             if (! $this->matchesFilters($row, $filters)) {
                 continue;
             }
@@ -167,6 +166,50 @@ final class RunsQuery
         }
 
         return $rows;
+    }
+
+    /**
+     * Field list the dashboard list path needs. `output` + `exception` blob
+     * are deliberately omitted — they can each grow to several KiB per run
+     * and would explode the pipelined HMGET response for a 2k-candidate
+     * page.
+     */
+    private const LIST_FIELDS = [
+        'started_at',
+        'finished_at',
+        'runtime_ms',
+        'exit_code',
+        'status',
+        'skip_reason',
+        'host_id',
+        'is_background',
+    ];
+
+    /**
+     * Normalise the HMGET reply to a `field => value` assoc array.
+     * phpredis returns it that way already; predis returns a positional list
+     * aligned with the requested fields.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function mapHmgetReply(mixed $reply): ?array
+    {
+        if (! is_array($reply) || $reply === []) {
+            return null;
+        }
+
+        $values = array_values($reply);
+        $any = false;
+        $out = [];
+        foreach (self::LIST_FIELDS as $idx => $field) {
+            $value = $values[$idx] ?? null;
+            if ($value !== null && $value !== false) {
+                $any = true;
+            }
+            $out[$field] = $value;
+        }
+
+        return $any ? $out : null;
     }
 
     /**
@@ -186,8 +229,11 @@ final class RunsQuery
             'skip_reason' => HashFields::nullableString($hash['skip_reason'] ?? null),
             'host_id' => HashFields::string($hash, 'host_id', 'unknown'),
             'is_background' => HashFields::bool01($hash, 'is_background'),
-            'exception' => HashFields::decodeJson($hash['exception'] ?? null),
-            'output' => HashFields::nullableString($hash['output'] ?? null),
+            // `exception` + `output` are list-path-omitted to keep the
+            // pipelined HMGET response small; the modal fetches them via
+            // `ScheduleReader::runDetail` / `runOutput` on demand.
+            'exception' => null,
+            'output' => null,
         ];
     }
 

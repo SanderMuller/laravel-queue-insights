@@ -59,9 +59,12 @@ final class RecordJobQueued
                 (string) microtime(true),
             ]);
 
-            $this->writePendingTracking($redis, $event, $uuid, $payload);
-            $this->writeBatchTracking($redis, $uuid, $payload, (string) $event->connectionName);
-            $this->resolveChainLineage($event, $uuid, $payload);
+            $connection = (string) $event->connectionName;
+            $queueKey = CanonicalQueueKey::fromOrDefault((string) $event->queue, $connection);
+
+            $this->writePendingTracking($redis, $event, $uuid, $payload, $connection, $queueKey);
+            $this->writeBatchTracking($redis, $uuid, $payload, $connection);
+            $this->resolveChainLineage($uuid, $payload, $connection, $queueKey);
             $this->writeScheduleAttribution($redis, $uuid);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
@@ -79,7 +82,7 @@ final class RecordJobQueued
      *
      * @param  array<array-key, mixed>|null  $payload  Decoded JobQueued payload.
      */
-    private function writePendingTracking(RedisConnection $redis, JobQueued $event, string $uuid, ?array $payload): void
+    private function writePendingTracking(RedisConnection $redis, JobQueued $event, string $uuid, ?array $payload, string $connection, string $queueKey): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
@@ -98,19 +101,6 @@ final class RecordJobQueued
         $queuedAt = Date::now()
             ->getTimestamp();
         $availableAt = $this->resolveAvailableAt($event, $queuedAt);
-
-        $connection = (string) $event->connectionName;
-        $queueRaw = (string) $event->queue;
-        // CanonicalQueueKey collapses driver-specific raw queue values (SQS
-        // URLs vs plain names) so the zset key written here matches the
-        // cleanup zset key read in RecordJobProcessing / Processed / Failed,
-        // where the queue arrives as `$event->job->getQueue()` (a name, not
-        // a URL). `fromOrDefault` resolves the connection's configured
-        // default queue when JobQueued carries an empty value (Laravel
-        // doesn't fill it in when the caller omits `->onQueue()`); writing
-        // the literal 'default' here would orphan pending entries on hosts
-        // whose default queue is, e.g., 'staging_default' (Vapor / SQS).
-        $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
         $hashKey = KeyPrefix::make("pending:{$uuid}");
         $zsetKey = KeyPrefix::make("pending-zset:{$connection}:{$queueKey}");
@@ -284,7 +274,7 @@ final class RecordJobQueued
      *
      * @param  array<array-key, mixed>|null  $payload
      */
-    private function resolveChainLineage(JobQueued $event, string $uuid, ?array $payload): void
+    private function resolveChainLineage(string $uuid, ?array $payload, string $connection, string $queueKey): void
     {
         if (! Config::bool('chain_lineage.enabled', true)) {
             return;
@@ -310,22 +300,10 @@ final class RecordJobQueued
 
         $tailClasses = $this->extractTailClasses($extracted['properties']['chained'] ?? null);
         if ($tailClasses === null) {
-            // A malformed chained entry — bail rather than guessing on a
-            // tail that won't match the parent's fingerprint.
+            // Malformed chained entry — bail rather than collide on a
+            // partially-parsed parent fingerprint.
             return;
         }
-
-        $connection = (string) $event->connectionName;
-        $queueRaw = (string) $event->queue;
-        // Match the canonicalisation in RecordJobProcessing's push side —
-        // SQS producers stamp queue URLs on JobQueued while the worker
-        // reports the logical name on JobProcessing. Without canonicalising
-        // both sides, every chained SQS job would silently miss its claim.
-        // `fromOrDefault` also resolves the connection-default queue when
-        // the dispatcher didn't pass `->onQueue()` (Vapor/SQS hosts with
-        // a non-'default' `SQS_QUEUE` would otherwise key the claim under
-        // 'default' while the parent worker keyed it under the real name).
-        $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
         $store = new ChainLineageStore();
         $key = ChainLineageClaim::key($connection, $queueKey, $childClass, $tailClasses);

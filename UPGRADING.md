@@ -2,6 +2,14 @@
 
 This file lists the migration steps between major / minor versions of `laravel-queue-insights`. Patch releases never require manual steps. The Changelog (`CHANGELOG.md`) is the canonical record of what changed; this file covers only the steps a host must perform to land cleanly on the new version.
 
+## Scheduler recent-runs list path now omits `output` + `exception` (0.16)
+
+`ScheduleReader::recentRuns()` (and `countRuns`'s filtered path that flows through `RunsQuery::collectMatchingRows`) now fetches only metadata fields per run — the per-row `output` and `exception` slots return `null` on the list path regardless of stored value. The drilldown modal hydrates both via the separate `ScheduleReader::runDetail()` / `runOutput()` accessors, so the UI is unaffected.
+
+### Action required
+
+Only hosts that consumed `RunsQuery` / `ScheduleReader::recentRuns()` from their own code AND relied on `$row['output']` / `$row['exception']` being populated need to migrate. Switch to `ScheduleReader::runDetail($taskKey, $runId)` for the modal-style hydration. The change keeps pipelined HMGET responses small under load (with `scheduler.capture.output=full` and a high `max_output_bytes` the previous HGETALL fan-out could buffer multi-MB into one Redis reply).
+
 ## Pending-zset key alignment for hosts whose default queue isn't literally `default` (0.16)
 
 The producer-side listener (`RecordJobQueued`) previously fell back to the literal string `'default'` when `$event->queue` was empty — the JobQueued event shape Laravel emits when a job is dispatched without an explicit `->onQueue()`. The worker side reads the real queue off the popped job (`$job->getQueue()`), so on hosts where the connection's configured default isn't the literal `'default'` (Vapor / SQS with `SQS_QUEUE=staging_default` is the canonical case, but the same applies to any redis / database connection whose `queue` config differs) the producer wrote `pending-zset:{conn}:default` while the worker tried to clean `pending-zset:{conn}:{configured-default}`. Keys diverged, pending entries never cleared, `oldest_pending` tripped on long-completed jobs.

@@ -52,12 +52,8 @@ final class ScheduleReader
             return [];
         }
 
-        // Defense in depth against legacy polluted order lists. Pre-fix
-        // installs may carry duplicate entries in `sched:tasks:order`
-        // from a prior non-atomic rebuild race; dedup at read time so
-        // the dashboard recovers without waiting for the next rebuild
-        // to roll the snapshot over. New writes go through the atomic
-        // Lua rewrite and won't introduce duplicates.
+        // Dedup on read — legacy non-atomic rebuilds may have left duplicates
+        // in `sched:tasks:order` that won't clear until the next snapshot roll.
         $keys = [];
         $seen = [];
         foreach ($orderRaw as $key) {
@@ -81,15 +77,10 @@ final class ScheduleReader
             return [];
         }
 
-        // Single HMGET pulls every task summary from the `sched:tasks` hash
-        // in one round-trip, replacing N serial HGETs.
-        // Pass fields as a single array — both predis (variadic-normalised)
-        // and phpredis (strict `hMget(key, array)`) accept that shape; the
-        // variadic spread form blows up on phpredis ('expects exactly 2').
-        // phpredis returns an associative array keyed by field; Predis
-        // returns a positional list. `array_values` normalises both into
-        // the input-field order so the positional access below works for
-        // both client drivers — same pattern as `QueueInsights::classMetrics`.
+        // Pass fields as a single array — phpredis `hMget(key, array)` rejects
+        // the variadic spread shape; predis normalises both. phpredis returns
+        // an assoc array keyed by field, predis a positional list — `array_values`
+        // below collapses to a positional list either way (mirrors `QueueInsights::classMetrics`).
         $raw = $redis->command('hmget', [KeyPrefix::make('sched:tasks'), $keys]);
         if (! is_array($raw)) {
             return [];

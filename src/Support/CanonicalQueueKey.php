@@ -31,30 +31,20 @@ final class CanonicalQueueKey
     }
 
     /**
-     * Canonicalise the queue value, falling back to the connection's
-     * configured default queue (`queue.connections.{$connection}.queue`)
-     * when `$input` is empty.
+     * Canonicalise the queue value; when `$input` is empty fall back to the
+     * connection's configured default (`queue.connections.{$connection}.queue`)
+     * before defaulting to the literal `'default'`.
      *
-     * Empty `$input` is the JobQueued shape Laravel emits when a job is
-     * dispatched without an explicit `->onQueue()` — the driver routes
-     * to its `$this->default` at push time, but the event still carries
-     * `null` / empty for `$event->queue`. Without this lookup the listener
-     * would write to `pending-zset:{conn}:default` while the worker (which
-     * reads the real queue off the popped job) writes to
-     * `pending-zset:{conn}:{configured-default}` — keys diverge and the
-     * pending entry never clears, tripping oldest_pending alerts on
-     * long-completed jobs (Vapor / SQS hit this when `SQS_QUEUE` is set
-     * to anything other than the literal string 'default').
-     *
-     * Last-resort fallback is the literal `'default'` for environments
-     * where the connection isn't configured or `$connection` is empty.
+     * `JobQueued::$queue` is empty when the dispatcher omits `->onQueue()` —
+     * drivers route to `$this->default` at push time but the event keeps the
+     * blank. Without resolving the connection-default here, the producer keys
+     * `pending-zset:{conn}:default` while the worker reads the real queue from
+     * the popped job and keys `pending-zset:{conn}:{configured-default}`; the
+     * pending entry never clears and `oldest_pending` trips. Canonical repro
+     * is Vapor / SQS with `SQS_QUEUE=staging_default`.
      */
     public static function fromOrDefault(string $input, string $connection): string
     {
-        // `from()` is the single trim site — call it on either the raw input
-        // (when non-blank) or the resolved fallback. Letting `from()` own the
-        // trim keeps the contract in one place; callers don't need to know
-        // whether they're handing over a pre-trimmed value.
         if (trim($input) !== '') {
             return self::from($input);
         }

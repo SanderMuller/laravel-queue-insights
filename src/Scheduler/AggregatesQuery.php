@@ -105,6 +105,37 @@ final class AggregatesQuery
     }
 
     /**
+     * Zero-filled stats shape used as a default when a task's pipeline
+     * slot is missing. Single source for the empty-stats literal so the
+     * shape can't drift between this reader and the panel that consumes it.
+     *
+     * @return array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}
+     */
+    public static function emptyStats(): array
+    {
+        return [
+            'runs' => 0,
+            'failed' => 0,
+            'skipped' => 0,
+            'hung' => 0,
+            'missed' => 0,
+            'last_run_at_ms' => null,
+            'p95_ms' => null,
+        ];
+    }
+
+    /**
+     * Known limitation (codex-flagged, deferred): the pipelined fan-out
+     * here concatenates every numeric sample list (24 buckets × N tasks,
+     * each capped at 500 by `RunStore::APPROX_DURATION_SAMPLES`) into one
+     * Redis reply. Hosts running hundreds of tasks with full sample-list
+     * retention can buffer millions of values into a single PHP heap spike
+     * on every dashboard render. The architectural fix is server-side
+     * percentile pre-aggregation at write time; out of scope for this
+     * optimisation round. Recommend monitoring memory under load on
+     * very-large-install scale and chunking the pipeline by task batch if
+     * it bites.
+     *
      * @param  list<array{task_key: string}>|list<array<string, mixed>>  $tasks
      * @return list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}}>
      */
@@ -252,8 +283,7 @@ final class AggregatesQuery
         }
 
         $now = Date::now()->getTimestamp();
-        // hour-ordered oldest→newest so output stays in the same shape
-        // the view expects (left-to-right bars are 23h-ago → now).
+        // Oldest→newest so the view renders 23h-ago → now left-to-right.
         $buckets = [];
         $hourLabels = [];
         for ($i = 23; $i >= 0; --$i) {

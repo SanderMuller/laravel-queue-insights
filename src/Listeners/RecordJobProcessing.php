@@ -30,38 +30,28 @@ final class RecordJobProcessing
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
             $connection = (string) $event->connectionName;
-            // Worker normally surfaces the real queue (popped job carries it),
-            // but `getQueue()` can be null on driver edges — resolve via the
-            // connection's configured default so the key matches the
-            // producer-side write in RecordJobQueued.
-            $queue = (string) $event->job->getQueue();
+            $queueKey = CanonicalQueueKey::fromOrDefault((string) $event->job->getQueue(), $connection);
 
             // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
             // `SET key val EX ttl` has divergent arg shapes across drivers.
             $now = microtime(true);
 
-            // Push the chain-lineage claim ticket FIRST so it's visible by
-            // the time `$job->fire()` runs `dispatchNextJobInChain` and the
-            // child's `JobQueued` fires (Phase 0 ordering proof). Wrapped
-            // in its own try/catch so a redis hiccup on the lineage path
-            // never breaks the wait-time / pending-tracking writes below.
-            $this->pushChainClaim($event, $uuid);
+            // Chain-claim ticket runs before child-fire so the child's
+            // JobQueued listener can RPOP it (Phase 0 ordering proof).
+            $this->pushChainClaim($event, $uuid, $connection, $queueKey);
 
-            // Copy any interim lineage pointer onto the pending hash so the
-            // in-flight modal can surface `↰ From {uuid}` while the job is
-            // still running — before the durable stream row exists.
+            // Copy `qi:lineage:{uuid}` to the pending hash so the in-flight
+            // modal renders `↰ From {uuid}` before the durable stream row
+            // exists.
             $this->copyLineageToPending($redis, $uuid);
 
             // Pending → in-flight transition runs before the wait-time path so
             // it isn't accidentally skipped by an early return below (missing
-            // pushed key, clock-skew rejection). If the worker successfully
-            // picked up a job, it's in-flight regardless.
-            // `$event->job->attempts()` returns the current pickup count
-            // (1 on first try, ≥2 on retries / `release()`). Stamped on the
-            // pending hash so the in-flight row template can flag a retry
-            // without re-reading the failed_jobs table.
+            // pushed key, clock-skew rejection). attempts ≥2 on retries /
+            // release() — stamped so the row template can flag a retry without
+            // touching the failed_jobs table.
             $attempts = (int) $event->job->attempts();
-            $this->markInFlight($redis, $uuid, $connection, $queue, (int) $now, $attempts);
+            $this->markInFlight($redis, $uuid, $connection, $queueKey, (int) $now, $attempts);
             $redis->command('setex', [
                 KeyPrefix::make("start:{$uuid}"),
                 3600,
@@ -98,19 +88,10 @@ final class RecordJobProcessing
                 (string) $waitMs,
             ]);
 
-            // Per-queue rolling sample set keyed for **recency**, not value.
-            //   member = uuid (unique per job)
-            //   score  = $now (insertion timestamp)
-            // Trim drops the oldest 1000+ by score, keeping the most recent
-            // 1000. Percentile reads (queueWaitPercentiles) iterate members
-            // and MGET `wait:{uuid}` to recover wait_ms.
-            // Naive `score = wait_ms` would have made trim drop the fastest
-            // jobs and skew p50/p95 toward outliers — codex review.
-            // Canonicalise the queue value before composing the zset key so a
-            // queue URL (SQS) is written under the same key the dashboard
-            // reads it under (WaitTimeMetrics is called with the canonical
-            // queue from QueueRowsBuilder). Mirrors markInFlight() above.
-            $queueKey = CanonicalQueueKey::fromOrDefault($queue, $connection);
+            // Per-queue rolling wait-time sample set. Score is `$now`
+            // (insertion ts) so trim drops oldest entries; using wait_ms as
+            // score would drop the fastest jobs and skew p50/p95 (codex).
+            // Members are uuids; `queueWaitPercentiles` MGETs `wait:{uuid}`.
             $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
 
             $redis->command('zadd', [$waitKey, $now, $uuid]);
@@ -144,16 +125,11 @@ final class RecordJobProcessing
      * without a second write path. Cleanup on Processed/Failed deletes the
      * hash + both zset entries.
      */
-    private function markInFlight(RedisConnection $redis, string $uuid, string $connection, string $queue, int $startedAt, int $attempts): void
+    private function markInFlight(RedisConnection $redis, string $uuid, string $connection, string $queueKey, int $startedAt, int $attempts): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
         }
-
-        // CanonicalQueueKey on the cleanup side mirrors the writer in
-        // RecordJobQueued, so the zset key matches even when the producer
-        // saw a queue URL (SQS) and the worker reports the plain name.
-        $queueKey = CanonicalQueueKey::fromOrDefault($queue, $connection);
 
         RedisEval::exec(
             $redis,
@@ -210,7 +186,7 @@ final class RecordJobProcessing
      *   - the payload is encrypted (extractChainContext returns null)
      *   - the parent has no chained tail (last link / non-chain dispatch)
      */
-    private function pushChainClaim(JobProcessing $event, string $uuid): void
+    private function pushChainClaim(JobProcessing $event, string $uuid, string $defaultConnection, string $defaultQueueKey): void
     {
         if (! Config::bool('chain_lineage.enabled', true)) {
             return;
@@ -236,19 +212,22 @@ final class RecordJobProcessing
                 $tailClasses[] = $job['class'];
             }
 
-            $connection = $context['chain_connection']
-                ?? (string) $event->connectionName;
-            $queueRaw = $context['chain_queue']
-                ?? (string) $event->job->getQueue();
-
-            // Canonicalize the queue value before composing the key so SQS
-            // (where producers stamp queue URLs and workers report logical
-            // names) and other URL-vs-name divergences land on the same
-            // key shape on both push and pop sides. `fromOrDefault` resolves
-            // the connection's configured default when the chain context /
-            // popped job carry an empty queue (Vapor with non-'default'
-            // SQS_QUEUE) — matches the producer side in RecordJobQueued.
-            $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
+            // Chain-context can override the outer connection/queue (e.g.
+            // `Bus::chain(...)->onConnection('foo')`). When it doesn't —
+            // the common default-Bus::chain case where SerializesModels
+            // strips the null override — fall through to the caller's
+            // already-canonicalised values to skip a second config walk.
+            $chainConnection = $context['chain_connection'];
+            $chainQueue = $context['chain_queue'];
+            if ($chainConnection === null && $chainQueue === null) {
+                $connection = $defaultConnection;
+                $queueKey = $defaultQueueKey;
+            } else {
+                $connection = $chainConnection ?? $defaultConnection;
+                $queueKey = $chainQueue !== null
+                    ? CanonicalQueueKey::fromOrDefault($chainQueue, $connection)
+                    : $defaultQueueKey;
+            }
 
             $key = ChainLineageClaim::key($connection, $queueKey, $context['next_class'], $tailClasses);
 

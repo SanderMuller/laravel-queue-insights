@@ -26,6 +26,14 @@ use Predis\ClientInterface;
 final class RedisPipeline
 {
     /**
+     * The closure receives either a `\Predis\Pipeline\Pipeline` (predis
+     * driver) or a `\Redis` instance in MULTI mode (phpredis); both expose
+     * the same redis-verb surface via `__call`. The `@param` is annotated
+     * as `Closure(\Predis\ClientInterface)` so PHPStan can resolve the
+     * `@method hgetall/lrange/...` docblocks Predis ships — call sites
+     * type the closure parameter as `mixed` so PHP doesn't enforce the
+     * Predis-only contract at runtime when phpredis is the active driver.
+     *
      * @param  Closure(ClientInterface): void  $callback
      * @return list<mixed>
      */

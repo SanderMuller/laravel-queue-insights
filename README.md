@@ -182,10 +182,10 @@ There are two layers. **Global scope** (queue + class) is set by clicking a row 
 
 #### Global scope
 
-| Axis  | Set by                                                | Cleared by                                          | Query-string key |
-|-------|-------------------------------------------------------|-----------------------------------------------------|------------------|
-| Class | clicking a class row on the **Classes** tab           | clicking the same row again, or the chip's `×`      | `ck`             |
-| Queue | clicking the connection/queue cell on the **Queues** tab | clicking the same row again, or the chip's `×`      | `qk`             |
+| Axis  | Set by                                                   | Cleared by                                     | Query-string key |
+|-------|----------------------------------------------------------|------------------------------------------------|------------------|
+| Class | clicking a class row on the **Classes** tab              | clicking the same row again, or the chip's `×` | `ck`             |
+| Queue | clicking the connection/queue cell on the **Queues** tab | clicking the same row again, or the chip's `×` | `qk`             |
 
 Active scope renders as an inline `Filtering by queue=… · class=…` strip above the tab bar with a per-chip clear button. URL-shareable so a paste into chat preserves the operator's view.
 
@@ -598,15 +598,15 @@ Mirrors Horizon's `horizon.silenced` knob: list job-class FQCNs whose **failures
 
 Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `qi:classes`) are preserved — silencing is a read-side filter only, so removing a class from the list immediately re-surfaces its history without any backfill. The class rows table keeps showing throughput / p95 / max for silenced classes with a muted `silenced` badge so you can still triage them.
 
-| Surface | Behaviour under silencing |
-|---|---|
-| Failed list (Failed tab) | Hidden by default. The "Show silenced" checkbox on the failed-pane filter form reveals them; URL-shareable as `?fs=1`. |
-| Headline `failed_past_hour` + throughput sparkline failed series | Silenced classes excluded. Processed series stays exact. |
-| `failure_rate` alert detector | Returns null for silenced classes — no event, no notification, no cooldown burned. |
-| `slow_p95` alert detector | Unchanged — silencing is a failure-noise filter, not a perf filter. Exclude noisy classes from `class_threshold_ms` if you want their perf alerts muted too. |
-| Class rows table | Row stays, marked with a muted `silenced` badge inline next to the FQCN. Operators still see throughput / p95 / max for silenced classes. |
-| Modal-by-uuid + chain-lineage click-through + batch-detail items | NOT filtered. Silencing is a list-level filter; uuid-addressed lookups always resolve so a batched member or chain parent stays clickable. |
-| `qi:failed:{class}:{bucket}` Redis counters + `qi:classes` zset | Still written by the listeners. Silencing is reversible without losing history. |
+| Surface                                                          | Behaviour under silencing                                                                                                                                    |
+|------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Failed list (Failed tab)                                         | Hidden by default. The "Show silenced" checkbox on the failed-pane filter form reveals them; URL-shareable as `?fs=1`.                                       |
+| Headline `failed_past_hour` + throughput sparkline failed series | Silenced classes excluded. Processed series stays exact.                                                                                                     |
+| `failure_rate` alert detector                                    | Returns null for silenced classes — no event, no notification, no cooldown burned.                                                                           |
+| `slow_p95` alert detector                                        | Unchanged — silencing is a failure-noise filter, not a perf filter. Exclude noisy classes from `class_threshold_ms` if you want their perf alerts muted too. |
+| Class rows table                                                 | Row stays, marked with a muted `silenced` badge inline next to the FQCN. Operators still see throughput / p95 / max for silenced classes.                    |
+| Modal-by-uuid + chain-lineage click-through + batch-detail items | NOT filtered. Silencing is a list-level filter; uuid-addressed lookups always resolve so a batched member or chain parent stays clickable.                   |
+| `qi:failed:{class}:{bucket}` Redis counters + `qi:classes` zset  | Still written by the listeners. Silencing is reversible without losing history.                                                                              |
 
 The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes for retry. Toggle "Show silenced" first if you want them in the bulk set.
 
@@ -634,24 +634,24 @@ scrape_configs:
 
 ### Metric catalogue
 
-| Metric | Type | Labels | Notes |
-|---|---|---|---|
-| `queue_insights_queue_depth` | gauge | `connection`, `queue` | Mirrors snapshot loop output. Pair with `queue_insights_snapshot_alive`. |
-| `queue_insights_inflight_jobs` | gauge | `connection`, `queue` | `ZCARD inflight-zset`. |
-| `queue_insights_pending_jobs` | gauge | `connection`, `queue` | Runnable now (`available_at <= now`). |
-| `queue_insights_delayed_jobs` | gauge | `connection`, `queue` | Not yet runnable (`available_at > now`). |
-| `queue_insights_oldest_pending_age_seconds` | gauge | `connection`, `queue` | 0 when empty. |
-| `queue_insights_oldest_inflight_age_seconds` | gauge | `connection`, `queue` | 0 when empty. |
-| `queue_insights_jobs_processed_total` | counter | `class`, `connection` | True monotonic INCR — safe for `rate()` / `increase()`. |
-| `queue_insights_jobs_failed_total` | counter | `class`, `connection` | Same. |
-| `queue_insights_job_duration_count_total` | counter | `class`, `connection` | Mean = `rate(sum) / rate(count)` Prometheus-side. |
-| `queue_insights_job_duration_sum_seconds_total` | counter | `class`, `connection` | Seconds (HINCRBY `sum_ms` ÷ 1000). |
-| `queue_insights_job_duration_max_seconds` | gauge | `class`, `connection` | Lifetime max. Use `max_over_time()` for windowed maxima. |
-| `queue_insights_alert_active` | gauge | `rule`, `connection`, `queue`, `severity` (+ `class` for class-scoped rules) | Always 1 when present; absent series = no alert. Use `OR on() vector(0)` Grafana-side to render gaps as 0. |
-| `queue_insights_snapshot_alive` | gauge | `connection`, `queue` | 1/0. **Use this in alerts**, not `_age_seconds`. |
-| `queue_insights_snapshot_age_seconds` | gauge | `connection`, `queue` | **Omitted** when the snapshot key is absent (so alerts can use `absent(...)` cleanly instead of clamping to 0). |
-| `queue_insights_snapshot_errors_total` | counter | `connection`, `queue` | Monotonic INCR — paired with the existing 10-min `snapshot:error:*` boolean. |
-| `queue_insights_exporter_collect_duration_seconds` | gauge | (none) | Wall-clock seconds of the previous collect cycle. |
+| Metric                                             | Type    | Labels                                                                       | Notes                                                                                                           |
+|----------------------------------------------------|---------|------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------|
+| `queue_insights_queue_depth`                       | gauge   | `connection`, `queue`                                                        | Mirrors snapshot loop output. Pair with `queue_insights_snapshot_alive`.                                        |
+| `queue_insights_inflight_jobs`                     | gauge   | `connection`, `queue`                                                        | `ZCARD inflight-zset`.                                                                                          |
+| `queue_insights_pending_jobs`                      | gauge   | `connection`, `queue`                                                        | Runnable now (`available_at <= now`).                                                                           |
+| `queue_insights_delayed_jobs`                      | gauge   | `connection`, `queue`                                                        | Not yet runnable (`available_at > now`).                                                                        |
+| `queue_insights_oldest_pending_age_seconds`        | gauge   | `connection`, `queue`                                                        | 0 when empty.                                                                                                   |
+| `queue_insights_oldest_inflight_age_seconds`       | gauge   | `connection`, `queue`                                                        | 0 when empty.                                                                                                   |
+| `queue_insights_jobs_processed_total`              | counter | `class`, `connection`                                                        | True monotonic INCR — safe for `rate()` / `increase()`.                                                         |
+| `queue_insights_jobs_failed_total`                 | counter | `class`, `connection`                                                        | Same.                                                                                                           |
+| `queue_insights_job_duration_count_total`          | counter | `class`, `connection`                                                        | Mean = `rate(sum) / rate(count)` Prometheus-side.                                                               |
+| `queue_insights_job_duration_sum_seconds_total`    | counter | `class`, `connection`                                                        | Seconds (HINCRBY `sum_ms` ÷ 1000).                                                                              |
+| `queue_insights_job_duration_max_seconds`          | gauge   | `class`, `connection`                                                        | Lifetime max. Use `max_over_time()` for windowed maxima.                                                        |
+| `queue_insights_alert_active`                      | gauge   | `rule`, `connection`, `queue`, `severity` (+ `class` for class-scoped rules) | Always 1 when present; absent series = no alert. Use `OR on() vector(0)` Grafana-side to render gaps as 0.      |
+| `queue_insights_snapshot_alive`                    | gauge   | `connection`, `queue`                                                        | 1/0. **Use this in alerts**, not `_age_seconds`.                                                                |
+| `queue_insights_snapshot_age_seconds`              | gauge   | `connection`, `queue`                                                        | **Omitted** when the snapshot key is absent (so alerts can use `absent(...)` cleanly instead of clamping to 0). |
+| `queue_insights_snapshot_errors_total`             | counter | `connection`, `queue`                                                        | Monotonic INCR — paired with the existing 10-min `snapshot:error:*` boolean.                                    |
+| `queue_insights_exporter_collect_duration_seconds` | gauge   | (none)                                                                       | Wall-clock seconds of the previous collect cycle.                                                               |
 
 Per-class metrics (`*_processed_total`, `*_failed_total`, duration aggregates) are **opt-in by class** to bound cardinality. Default `class_filter.mode = allow_list` with empty `classes` → no per-class metrics emitted. Three modes:
 
@@ -680,16 +680,16 @@ Each metric family has its own toggle under `prometheus.metrics.*` (default-on) 
 
 When `scheduler.enabled = true` AND each per-family toggle below is set, the exporter emits scheduler-side families. **Default OFF** — adoption is opt-in per family (mirrors the per-class queue metrics stance).
 
-| Metric | Type | Labels | Notes |
-|---|---|---|---|
-| `queue_insights_scheduled_task_runs_total` | counter | `task`, `status` | Status: `success` (= `total_runs - total_failed`), `failed`, `skipped`. Hung + missed are separate families below. |
-| `queue_insights_scheduled_task_runtime_sum_seconds_total` | counter | `task` | Lifetime runtime sum, seconds. Pair with `queue_insights_scheduled_task_runs_total` for mean: `rate(sum) / rate(runs_total{status=~"success\|failed"})`. Sample omitted until the first finished run. |
-| `queue_insights_scheduled_task_last_run_timestamp` | gauge | `task`, `status` | Unix ts (seconds) of last run per status. Page on `time() - queue_insights_scheduled_task_last_run_timestamp{status="success"} > N`. Sample omitted when no run of that status exists. |
-| `queue_insights_scheduled_task_hung_total` | counter | `task` | Detections from `HungTaskReconciler`. |
-| `queue_insights_scheduled_task_missed_total` | counter | `task` | Detections from `MissedRunReconciler`. |
-| `queue_insights_scheduled_task_in_flight` | gauge | `task` | 1 when the task is mid-run (Started without Finished/Failed). Sample omitted when not running. |
-| `queue_insights_scheduled_snapshot_age_seconds` | gauge | (none) | Seconds since the schedule snapshot was last rewritten on app boot. **Omitted when never written** (alerts use `absent(...)` cleanly). |
-| `queue_insights_scheduled_sweeper_age_seconds` | gauge | (none) | Seconds since `MissedRunReconciler` last completed a tick. Alert on `> 2 × sweeper.sweep_seconds`. |
+| Metric                                                    | Type    | Labels           | Notes                                                                                                                                                                                                 |
+|-----------------------------------------------------------|---------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `queue_insights_scheduled_task_runs_total`                | counter | `task`, `status` | Status: `success` (= `total_runs - total_failed`), `failed`, `skipped`. Hung + missed are separate families below.                                                                                    |
+| `queue_insights_scheduled_task_runtime_sum_seconds_total` | counter | `task`           | Lifetime runtime sum, seconds. Pair with `queue_insights_scheduled_task_runs_total` for mean: `rate(sum) / rate(runs_total{status=~"success\|failed"})`. Sample omitted until the first finished run. |
+| `queue_insights_scheduled_task_last_run_timestamp`        | gauge   | `task`, `status` | Unix ts (seconds) of last run per status. Page on `time() - queue_insights_scheduled_task_last_run_timestamp{status="success"} > N`. Sample omitted when no run of that status exists.                |
+| `queue_insights_scheduled_task_hung_total`                | counter | `task`           | Detections from `HungTaskReconciler`.                                                                                                                                                                 |
+| `queue_insights_scheduled_task_missed_total`              | counter | `task`           | Detections from `MissedRunReconciler`.                                                                                                                                                                |
+| `queue_insights_scheduled_task_in_flight`                 | gauge   | `task`           | 1 when the task is mid-run (Started without Finished/Failed). Sample omitted when not running.                                                                                                        |
+| `queue_insights_scheduled_snapshot_age_seconds`           | gauge   | (none)           | Seconds since the schedule snapshot was last rewritten on app boot. **Omitted when never written** (alerts use `absent(...)` cleanly).                                                                |
+| `queue_insights_scheduled_sweeper_age_seconds`            | gauge   | (none)           | Seconds since `MissedRunReconciler` last completed a tick. Alert on `> 2 × sweeper.sweep_seconds`.                                                                                                    |
 
 Toggle each family independently:
 
