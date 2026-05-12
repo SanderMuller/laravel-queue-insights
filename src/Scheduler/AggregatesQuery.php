@@ -263,7 +263,7 @@ final class AggregatesQuery
 
         $bars = [];
         $tasksPerHour = count($keys);
-        foreach ($buckets as $hourIdx => $bucket) {
+        foreach (array_keys($buckets) as $hourIdx) {
             $success = 0;
             $failed = 0;
             $base = $hourIdx * $tasksPerHour;
