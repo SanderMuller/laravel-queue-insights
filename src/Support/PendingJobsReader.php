@@ -322,17 +322,34 @@ final class PendingJobsReader
      */
     public static function hydrate(array $uuids): array
     {
-        $out = [];
+        $valid = [];
         foreach ($uuids as $uuid) {
-            if (! is_string($uuid)) {
+            if (! is_string($uuid) || $uuid === '') {
                 continue;
             }
 
-            if ($uuid === '') {
-                continue;
-            }
+            $valid[] = $uuid;
+        }
 
-            $row = self::readHash($uuid);
+        if ($valid === []) {
+            return [];
+        }
+
+        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+
+        // Pipeline the per-uuid HGETALL fan-out. Previously this method
+        // issued one HGETALL per uuid sequentially (50 + 50 + 50 = 150 RTT
+        // per warm dashboard render with seeded pending/delayed/inflight
+        // tables). On non-loopback Redis each RTT is the dominant cost.
+        $results = RedisPipeline::run($redis, static function ($client) use ($valid): void {
+            foreach ($valid as $uuid) {
+                $client->hgetall(KeyPrefix::make("pending:{$uuid}"));
+            }
+        });
+
+        $out = [];
+        foreach ($valid as $i => $uuid) {
+            $row = self::parseHash($uuid, $results[$i] ?? null);
             if ($row !== null) {
                 $out[] = $row;
             }
@@ -348,6 +365,16 @@ final class PendingJobsReader
     {
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
         $hash = $redis->command('hgetall', [KeyPrefix::make("pending:{$uuid}")]);
+
+        return self::parseHash($uuid, $hash);
+    }
+
+    /**
+     * @param  mixed  $hash
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int}|null
+     */
+    private static function parseHash(string $uuid, $hash): ?array
+    {
         if (! is_array($hash) || $hash === []) {
             return null;
         }
