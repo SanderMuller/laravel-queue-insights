@@ -139,7 +139,7 @@
                                 class="cursor-pointer hover:bg-gray-50/60 dark:hover:bg-gray-800/60"
                                 x-bind:class="open === {{ $i }} ? 'bg-gray-50 dark:bg-gray-800' : ''">
                                 <td class="py-2 pl-5">
-                                    <svg class="size-4 text-gray-400 dark:text-gray-400 transition" x-bind:class="open === {{ $i }} ? 'rotate-90' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/></svg>
+                                    <x-queue-insights::icon-chevron-right class="size-4 text-gray-400 dark:text-gray-400 transition" x-bind:class="open === {{ $i }} ? 'rotate-90' : ''"/>
                                 </td>
                                 <td class="py-2 pr-4">
                                     <span @class([

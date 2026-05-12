@@ -158,9 +158,7 @@
                             wire:click="closeFailed"
                             aria-label="Back to batch"
                             class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                        <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
-                        </svg>
+                        <x-queue-insights::icon-chevron-left class="size-3.5"/>
                         <span>Back to batch</span>
                     </button>
                 @endif
@@ -171,9 +169,7 @@
                         x-on:click="view = (view === 'chain-detail') ? 'chain' : 'job'"
                         aria-label="Back"
                         class="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-900 dark:hover:text-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                    <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
-                    </svg>
+                    <x-queue-insights::icon-chevron-left class="size-3.5"/>
                     <span>Back</span>
                 </button>
                 <span x-show="view === 'job'" class="inline-flex size-6 items-center justify-center rounded-md bg-red-50 dark:bg-red-900/40 text-red-600 dark:text-red-400 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
@@ -409,9 +405,7 @@
                                         @endif
                                     </div>
                                 </div>
-                                <svg class="mt-1 size-3 shrink-0 text-gray-400 dark:text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                    <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                                </svg>
+                                <x-queue-insights::icon-chevron-right class="mt-1 size-3 shrink-0 text-gray-400 dark:text-gray-400"/>
                             </button>
                         </li>
                     @endforeach

@@ -55,9 +55,7 @@
                     wire:click="{{ $gotoMethod }}({{ $prev }})"
                     @disabled($paginator->onFirstPage())
                     class="inline-flex items-center gap-1 rounded-md bg-white dark:bg-gray-900 px-2 py-1 font-medium text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fill-rule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02Z" clip-rule="evenodd"/>
-                </svg>
+                <x-queue-insights::icon-chevron-left class="size-3"/>
                 Prev
             </button>
             <span class="px-2 text-gray-500 dark:text-gray-300 tabular-nums">
@@ -68,9 +66,7 @@
                     @disabled(! $paginator->hasMorePages())
                     class="inline-flex items-center gap-1 rounded-md bg-white dark:bg-gray-900 px-2 py-1 font-medium text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
                 Next
-                <svg class="size-3" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                    <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                </svg>
+                <x-queue-insights::icon-chevron-right class="size-3"/>
             </button>
         </div>
     @endif

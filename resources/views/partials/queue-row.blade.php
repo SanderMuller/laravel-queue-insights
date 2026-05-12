@@ -85,9 +85,7 @@
                         wire:click.stop="toggleQueueInspector(@js($q['inspector_key']))"
                         class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-700 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
                         aria-label="{{ $q['inspector_open'] ? 'Collapse pending inspector' : 'Expand pending inspector' }}">
-                    <svg class="size-3 transition-transform {{ $q['inspector_open'] ? 'rotate-90' : '' }}" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                    </svg>
+                    <x-queue-insights::icon-chevron-right class="size-3 transition-transform {{ $q['inspector_open'] ? 'rotate-90' : '' }}"/>
                     <span class="tabular-nums">{{ number_format($q['tracked_count']) }} queued</span>
                     @if($gapBadge)
                         <span class="ml-1 rounded bg-red-50 dark:bg-red-900/40 px-1 py-px font-medium text-red-700 dark:text-red-300">+{{ number_format($gap) }} gap</span>

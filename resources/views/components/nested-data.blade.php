@@ -58,9 +58,7 @@
                             <button type="button"
                                     @click="expanded = ! expanded"
                                     class="inline-flex items-center gap-1.5 rounded bg-gray-950/5 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20">
-                                <svg class="size-2.5 transition" x-bind:class="expanded ? 'rotate-90' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                    <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clip-rule="evenodd"/>
-                                </svg>
+                                <x-queue-insights::icon-chevron-right class="size-2.5 transition" x-bind:class="expanded ? 'rotate-90' : ''"/>
                                 <span>{{ $containerSummary }}</span>
                             </button>
                             {{-- `<template x-if>` (not `x-show`) so collapsed
