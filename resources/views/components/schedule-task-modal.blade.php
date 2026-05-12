@@ -158,13 +158,13 @@
             @php
                 $attentionReasons = [];
                 if (($stats['failed'] ?? 0) > 0) {
-                    $attentionReasons[] = ['icon' => '✗', 'label' => 'failed', 'count' => $stats['failed'], 'tone' => 'red'];
+                    $attentionReasons[] = ['kind' => 'failed', 'count' => $stats['failed']];
                 }
                 if (($stats['hung'] ?? 0) > 0) {
-                    $attentionReasons[] = ['icon' => '⏳', 'label' => 'hung', 'count' => $stats['hung'], 'tone' => 'amber'];
+                    $attentionReasons[] = ['kind' => 'hung', 'count' => $stats['hung']];
                 }
                 if (($stats['missed'] ?? 0) > 0) {
-                    $attentionReasons[] = ['icon' => '⏰', 'label' => 'missed', 'count' => $stats['missed'], 'tone' => 'amber'];
+                    $attentionReasons[] = ['kind' => 'missed', 'count' => $stats['missed']];
                 }
             @endphp
             @if($attentionReasons !== [])
@@ -172,10 +172,29 @@
                     <p class="text-[10px] font-medium uppercase tracking-wider text-red-700 dark:text-red-300">Needs attention</p>
                     <ul role="list" class="mt-2 flex flex-col gap-1 text-sm text-red-900 dark:text-red-200">
                         @foreach($attentionReasons as $reason)
-                            <li class="flex items-baseline gap-2 tabular-nums">
-                                <span class="text-base leading-none" aria-hidden="true">{{ $reason['icon'] }}</span>
+                            <li class="flex items-center gap-2 tabular-nums">
+                                @switch($reason['kind'])
+                                    @case('failed')
+                                        <svg class="size-4 shrink-0 text-red-600 dark:text-red-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.78-9.22a.75.75 0 0 0-1.06-1.06L10 10.44 7.28 7.72a.75.75 0 0 0-1.06 1.06L8.94 11.5 6.22 14.22a.75.75 0 1 0 1.06 1.06L10 12.56l2.72 2.72a.75.75 0 1 0 1.06-1.06L11.06 11.5l2.72-2.72Z" clip-rule="evenodd"/>
+                                        </svg>
+                                        @break
+                                    @case('hung')
+                                        {{-- hourglass / spinner-ish glyph (clock with a single hand) --}}
+                                        <svg class="size-4 shrink-0 text-amber-600 dark:text-amber-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM9.25 5.5a.75.75 0 0 1 1.5 0v4.69l3.03 3.03a.75.75 0 1 1-1.06 1.06L9.47 10.78a.75.75 0 0 1-.22-.53V5.5Z" clip-rule="evenodd"/>
+                                        </svg>
+                                        @break
+                                    @case('missed')
+                                        {{-- triangle warning — distinct from "hung" so the two are visually
+                                            scannable side-by-side without reading the label. --}}
+                                        <svg class="size-4 shrink-0 text-amber-600 dark:text-amber-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 6a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 6Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/>
+                                        </svg>
+                                        @break
+                                @endswitch
                                 <span class="font-semibold">{{ number_format($reason['count']) }}</span>
-                                <span>{{ Str::plural('run', $reason['count']) }} {{ $reason['label'] }} in the past 24h</span>
+                                <span>{{ Str::plural('run', $reason['count']) }} {{ $reason['kind'] }} in the past 24h</span>
                             </li>
                         @endforeach
                     </ul>

@@ -111,3 +111,49 @@ it('fails closed when queue is empty', function (): void {
     expect($exit)->toBe(2)
         ->and(Artisan::output())->toContain('cannot be empty');
 });
+
+it('fails closed on whitespace-only queue without crashing on CanonicalQueueKey::from', function (): void {
+    $exit = Artisan::call('queue-insights:purge-pending', [
+        'connection' => 'sqs',
+        'queue' => "  \t\n  ",
+    ]);
+
+    expect($exit)->toBe(2)
+        ->and(Artisan::output())->toContain('Invalid queue value');
+});
+
+it('handles orphan zset members whose per-uuid hash has TTL-d out', function (): void {
+    // Common state during a TTL-driven self-heal: the per-uuid hash
+    // expired but the zset member outlived it (zset TTL refreshes on
+    // every write, individual hashes have their own per-uuid TTL clock).
+    // The cleanup command must drop the zset without crashing on
+    // HGET-returns-null, and must not over-count "hashes deleted".
+    Redis::connection('default')->command('zadd', ['qmtest:pending-zset:sqs:default', 1000, 'uuid-no-hash']);
+    // Deliberately do NOT seed the pending:uuid-no-hash hash.
+
+    $exit = Artisan::call('queue-insights:purge-pending', [
+        'connection' => 'sqs',
+        'queue' => 'default',
+        '--force' => true,
+    ]);
+
+    expect($exit)->toBe(0)
+        ->and(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(0);
+    expect(Artisan::output())->toContain('Purged 1 zset member + 0 matching');
+});
+
+it('canonicalises an SQS URL passed as the queue argument', function (): void {
+    // Producer wrote pending entries under the canonical form (`my-q`)
+    // even if operators think of the queue as the full SQS URL — the
+    // command should accept either shape and key on the canonical form.
+    seedOrphanPending('sqs', 'my-q', 2);
+
+    $exit = Artisan::call('queue-insights:purge-pending', [
+        'connection' => 'sqs',
+        'queue' => 'https://sqs.eu-west-1.amazonaws.com/123/my-q',
+        '--force' => true,
+    ]);
+
+    expect($exit)->toBe(0)
+        ->and(R::int('exists', 'qmtest:pending-zset:sqs:my-q'))->toBe(0);
+});

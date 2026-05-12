@@ -5,6 +5,7 @@ namespace SanderMuller\QueueInsights\Console;
 use Illuminate\Console\Command;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Redis;
+use InvalidArgumentException;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
@@ -32,7 +33,7 @@ final class QueueInsightsPurgePendingCommand extends Command
         {queue : Queue value as recorded on the orphan zset (e.g. `default`)}
         {--force : Actually delete. Without this flag the command is a dry-run.}';
 
-    protected $description = 'Purge a pending-tracking zset + matching per-uuid hashes for a single (connection, queue) pair. Use for post-upgrade orphan cleanup.';
+    protected $description = 'Purge a pending-tracking zset + matching per-uuid hashes for a single (connection, queue) pair. Intended for pre-0.16 orphan cleanup ONLY — destroys every entry on the target zset.';
 
     public function handle(): int
     {
@@ -51,7 +52,13 @@ final class QueueInsightsPurgePendingCommand extends Command
             return self::INVALID;
         }
 
-        $canonical = CanonicalQueueKey::from($queueRaw);
+        try {
+            $canonical = CanonicalQueueKey::from($queueRaw);
+        } catch (InvalidArgumentException $e) {
+            $this->error("Invalid queue value [{$queueRaw}]: {$e->getMessage()}");
+
+            return self::INVALID;
+        }
         $zsetKey = KeyPrefix::make("pending-zset:{$connection}:{$canonical}");
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
@@ -64,6 +71,7 @@ final class QueueInsightsPurgePendingCommand extends Command
             return self::SUCCESS;
         }
 
+        // ZRANGE 0 4 returns at most 5 entries — no further slicing needed.
         $sample = $redis->command('zrange', [$zsetKey, 0, 4]);
         $uuids = is_array($sample) ? array_values(array_filter(
             $sample,
@@ -73,12 +81,19 @@ final class QueueInsightsPurgePendingCommand extends Command
         $this->line("zset    : {$zsetKey}");
         $this->line("members : {$count}");
         if ($uuids !== []) {
-            $this->line('sample  : ' . implode(', ', array_slice($uuids, 0, 5)) . ($count > count($uuids) ? ', …' : ''));
+            $this->line('sample  : ' . implode(', ', $uuids) . ($count > count($uuids) ? ', …' : ''));
         }
 
         $force = (bool) $this->option('force');
         if (! $force) {
             $this->newLine();
+            $this->warn(sprintf(
+                'About to destroy %d pending entr%s on %s. This command is intended for the pre-0.16 orphan-cleanup case ONLY. If %s the live queue for this connection (not an orphan key), --force will shred legitimate in-flight pending tracking. Verify before re-running.',
+                $count,
+                $count === 1 ? 'y' : 'ies',
+                $zsetKey,
+                $count === 1 ? 'this entry belongs to' : 'these entries belong to',
+            ));
             $this->line('<fg=yellow>Dry-run.</> Re-run with --force to actually delete.');
 
             return self::SUCCESS;
