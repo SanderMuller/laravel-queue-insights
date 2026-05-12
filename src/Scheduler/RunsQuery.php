@@ -52,7 +52,35 @@ final class RunsQuery
      */
     public function countRuns(array $filters): int
     {
+        if ($this->filtersAreEmpty($filters)) {
+            $card = Redis::connection(Config::string('redis_connection', 'default'))
+                ->command('zcard', [KeyPrefix::make('sched:runs:all')]);
+
+            return is_numeric($card) ? min(2000, (int) $card) : 0;
+        }
+
         return count($this->collectMatchingRows($filters, 2000));
+    }
+
+    /**
+     * @param  RunFilters  $filters
+     */
+    private function filtersAreEmpty(array $filters): bool
+    {
+        foreach (['task', 'status', 'host'] as $name) {
+            $value = $filters[$name] ?? null;
+            if (is_string($value) && $value !== '') {
+                return false;
+            }
+        }
+
+        foreach (['from_ms', 'to_ms'] as $name) {
+            if (is_int($filters[$name] ?? null)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
