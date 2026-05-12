@@ -2,13 +2,10 @@
 
 namespace SanderMuller\QueueInsights\Scheduler;
 
-use Closure;
-use Illuminate\Redis\Connections\Connection;
-use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Redis;
-use Predis\ClientInterface;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisPipeline;
 
 /**
  * Recent-runs index reader, extracted from `ScheduleReader` to keep
@@ -37,6 +34,15 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 final class RunsQuery
 {
     /**
+     * Hard cap on candidates pulled from `qi:sched:runs:all` for any
+     * single read. The dashboard pages through this window — deeper
+     * history is not surfaced and `countRuns` saturates at this number.
+     * Bounded so a runaway zset can't fan out into a megabyte-scale
+     * `hgetall` pipeline.
+     */
+    private const MAX_CANDIDATES = 2000;
+
+    /**
      * @param  RunFilters  $filters
      * @return list<RunRow>
      */
@@ -45,13 +51,22 @@ final class RunsQuery
         $perPage = max(1, $perPage);
         $page = max(1, $page);
 
-        $rows = $this->collectMatchingRows($filters, min(2000, $perPage * $page * 5));
+        $rows = $this->collectMatchingRows($filters, min(self::MAX_CANDIDATES, $perPage * $page * 5));
         $offset = ($page - 1) * $perPage;
 
         return array_slice($rows, $offset, $perPage);
     }
 
     /**
+     * Empty-filter path returns `ZCARD` (clamped to {@see MAX_CANDIDATES})
+     * — one round-trip instead of the 2k-candidate `collectMatchingRows`
+     * walk. NOTE: ZCARD counts every zset member regardless of whether
+     * the per-run hash still exists. If the run-hash TTL expires before
+     * the zset member is swept, this returns a slightly inflated total
+     * vs. the row-walking path (operator may see "1-10 of 250" while the
+     * page renders fewer rows). Bounded by sweep cadence + hash TTL
+     * matching; acceptable trade-off for the round-trip saved.
+     *
      * @param  RunFilters  $filters
      */
     public function countRuns(array $filters): int
@@ -60,10 +75,10 @@ final class RunsQuery
             $card = Redis::connection(Config::string('redis_connection', 'default'))
                 ->command('zcard', [KeyPrefix::make('sched:runs:all')]);
 
-            return is_numeric($card) ? min(2000, (int) $card) : 0;
+            return is_numeric($card) ? min(self::MAX_CANDIDATES, (int) $card) : 0;
         }
 
-        return count($this->collectMatchingRows($filters, 2000));
+        return count($this->collectMatchingRows($filters, self::MAX_CANDIDATES));
     }
 
     /**
@@ -126,7 +141,7 @@ final class RunsQuery
 
         // Single pipeline for the N per-run HGETALL fan-out. ZREVRANGE
         // result order is preserved in the pipeline response.
-        $hashes = $this->pipeline($redis, static function ($pipe) use ($pairs): void {
+        $hashes = RedisPipeline::run($redis, static function ($pipe) use ($pairs): void {
             foreach ($pairs as [$taskKey, $runId]) {
                 $pipe->hgetall(KeyPrefix::make("sched:run:{$taskKey}:{$runId}"));
             }
@@ -152,24 +167,6 @@ final class RunsQuery
         }
 
         return $rows;
-    }
-
-    /**
-     * Connection wrapper that returns a pipeline result as a numerically
-     * indexed list. Branches on driver: phpredis exposes a typed
-     * `pipeline(callable)` method on its Connection class; predis only
-     * exposes it via the magic `__call → command('pipeline', …)` path.
-     *
-     * @param Closure(ClientInterface):void $callback
-     * @return list<mixed>
-     */
-    private function pipeline(Connection $redis, Closure $callback): array
-    {
-        $results = $redis instanceof PhpRedisConnection
-            ? $redis->pipeline($callback)
-            : $redis->command('pipeline', [$callback]);
-
-        return is_array($results) ? array_values($results) : [];
     }
 
     /**

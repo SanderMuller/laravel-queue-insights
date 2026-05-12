@@ -2,14 +2,12 @@
 
 namespace SanderMuller\QueueInsights\Scheduler;
 
-use Closure;
 use Illuminate\Redis\Connections\Connection;
-use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
-use Predis\ClientInterface;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisPipeline;
 
 /**
  * Hourly-aggregate / sparkline / headline-stats reader, extracted from
@@ -300,7 +298,7 @@ final class AggregatesQuery
      */
     private function pipelineStatsFanOut(array $keys, array $buckets): array
     {
-        return $this->pipeline(static function ($pipe) use ($keys, $buckets): void {
+        return RedisPipeline::run($this->redis(), static function ($pipe) use ($keys, $buckets): void {
             foreach ($keys as $taskKey) {
                 foreach ($buckets as $bucket) {
                     $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
@@ -322,35 +320,13 @@ final class AggregatesQuery
      */
     private function pipelineSparklineFanOut(array $keys, array $buckets): array
     {
-        return $this->pipeline(static function ($pipe) use ($buckets, $keys): void {
+        return RedisPipeline::run($this->redis(), static function ($pipe) use ($buckets, $keys): void {
             foreach ($buckets as $bucket) {
                 foreach ($keys as $taskKey) {
                     $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
                 }
             }
         });
-    }
-
-    /**
-     * Connection wrapper that returns the pipeline result as a numerically
-     * indexed list. Branches on driver: phpredis exposes a typed
-     * `pipeline(callable)` method on its Connection class; predis only
-     * exposes it via the magic `__call → command('pipeline', …)` path.
-     * Same closure shape works on both at runtime — the inner proxy is
-     * either a phpredis Redis MULTI handle or a `\Predis\Pipeline\Pipeline`,
-     * each accepting `hgetall` / `lrange` / etc. via `__call`.
-     *
-     * @param Closure(ClientInterface):void $callback
-     * @return list<mixed>
-     */
-    private function pipeline(Closure $callback): array
-    {
-        $conn = $this->redis();
-        $results = $conn instanceof PhpRedisConnection
-            ? $conn->pipeline($callback)
-            : $conn->command('pipeline', [$callback]);
-
-        return is_array($results) ? array_values($results) : [];
     }
 
     /**

@@ -94,7 +94,14 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
 
     $prefix = 'qmrace:';
     $orderKey = $prefix . 'sched:tasks:order';
+    $tasksKey = $prefix . 'sched:tasks';
     $taskCount = 12;
+    // Two auto-registered package tasks (`queue-insights:snapshot` and
+    // `queue-insights:schedule:sweep`) land in the snapshot when
+    // `scheduler.enabled = true`. Their task_keys are identical across
+    // workers (same command, same cron).
+    $autoTaskCount = 2;
+    $expectedTotal = $taskCount + $autoTaskCount;
     $workerCount = 4;
     $iterations = 4;
 
@@ -141,6 +148,7 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
 
         $unique = array_values(array_unique($order));
 
+        // No duplicates.
         expect($order)
             ->toHaveCount(count($unique), sprintf(
                 'iter %d: order list had %d entries, %d unique — duplicates present',
@@ -148,7 +156,43 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
                 count($order),
                 count($unique),
             ))
-            ->and(count($order))
-            ->toBeGreaterThanOrEqual($taskCount);
+            // Exact count locks atomic single-writer semantics: if any
+            // worker's writes leaked into another's snapshot, total
+            // would exceed the per-worker task count. With the Lua
+            // rewrite, only the last writer's snapshot survives so we
+            // see exactly fixture + auto-registered entries.
+            ->and($order)
+            ->toHaveCount($expectedTotal, sprintf(
+                'iter %d: expected exactly %d entries (one winning worker), got %d — possible mix from multiple writers',
+                $iter,
+                $expectedTotal,
+                count($order),
+            ));
+
+        // Single-winner check — each fixture command embeds the
+        // worker salt (`echo race-iter{N}-w{W}-{i}`), so every
+        // non-auto-registered task in the final snapshot must share
+        // the same `iter{N}-w{W}` prefix. A mixed final state from
+        // multiple workers would surface as more than one salt.
+        $salts = [];
+        foreach ($order as $key) {
+            $json = R::str('hget', $tasksKey, $key);
+            if ($json === null || $json === '') {
+                continue;
+            }
+            $decoded = json_decode($json, true);
+            $command = is_array($decoded) && is_string($decoded['command'] ?? null) ? $decoded['command'] : '';
+            if (preg_match('/race-(iter\d+-w\d+)-/', $command, $m) === 1) {
+                $salts[$m[1]] = true;
+            }
+        }
+
+        expect(array_keys($salts))
+            ->toHaveCount(1, sprintf(
+                'iter %d: fixture tasks came from %d different salts %s — atomic rewrite was not respected',
+                $iter,
+                count($salts),
+                (string) json_encode(array_keys($salts)),
+            ));
     }
 });

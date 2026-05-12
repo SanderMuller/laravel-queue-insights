@@ -86,10 +86,15 @@ final class ScheduleReader
         // Pass fields as a single array — both predis (variadic-normalised)
         // and phpredis (strict `hMget(key, array)`) accept that shape; the
         // variadic spread form blows up on phpredis ('expects exactly 2').
-        $values = $redis->command('hmget', [KeyPrefix::make('sched:tasks'), $keys]);
-        if (! is_array($values)) {
+        // phpredis returns an associative array keyed by field; Predis
+        // returns a positional list. `array_values` normalises both into
+        // the input-field order so the positional access below works for
+        // both client drivers — same pattern as `QueueInsights::classMetrics`.
+        $raw = $redis->command('hmget', [KeyPrefix::make('sched:tasks'), $keys]);
+        if (! is_array($raw)) {
             return [];
         }
+        $values = array_values($raw);
 
         $rows = [];
         foreach ($keys as $idx => $key) {
