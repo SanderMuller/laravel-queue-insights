@@ -29,37 +29,50 @@ jobs:
     timeout-minutes: 10
     strategy:
       fail-fast: false
+      # Stratified by coverage purpose rather than a full cross-product —
+      # the 24-cell cross-product re-proved the same thing across middle
+      # cells, regressed when packagist throttled parallel composer-update
+      # passes, and routinely tipped one of the slow cells over the
+      # per-cell `timeout-minutes` ceiling. Explicit-include list below
+      # keeps the load-bearing combos (floor / ceiling / mid Laravel /
+      # both drivers on the edges / LW3 backport) and drops everything
+      # the middle cells were just duplicating.
       matrix:
-        php: ['8.3', '8.4']
-        laravel: ['11.*', '12.*', '13.*']
-        stability: [prefer-lowest, prefer-stable]
-        redis-client: [predis, phpredis]
-        # Empty default for `livewire-pin` keeps the cross-product on natural
-        # resolver behaviour (prefer-lowest → Livewire 3.0; prefer-stable →
-        # Livewire 4.x latest). The non-empty value on the explicit include
-        # cell below means it does NOT match any cross-product cell (per
-        # GitHub Actions matrix-include semantics, all matrix keys must
-        # match for an include to merge), so it becomes an additional job.
-        livewire-pin: ['']
         include:
-          - laravel: '11.*'
-            testbench: '9.*'
-          - laravel: '12.*'
-            testbench: '10.*'
-          - laravel: '13.*'
-            testbench: '11.*'
-          # Explicit "Livewire 3 latest" cell. The cross-product gives us:
-          #   - prefer-lowest → Livewire 3.0    (v3 oldest)
-          #   - prefer-stable → Livewire 4.x    (v4 latest)
-          # The missing leg is v3-latest (operators on Livewire 3.7+ who
-          # haven't upgraded yet). This pin forces composer to install a
-          # ^3.0 release with prefer-stable, covering that path.
-          - php: '8.4'
-            laravel: '12.*'
-            testbench: '10.*'
-            stability: prefer-stable
-            redis-client: predis
-            livewire-pin: '^3.0'
+          # Floor — lowest supported combo. Both drivers because the
+          # predis/phpredis shim divergence is most likely to bite on the
+          # constraint floor.
+          - { php: '8.3', laravel: '11.*', testbench: '9.*',  stability: prefer-lowest, redis-client: predis,   livewire-pin: '' }
+          - { php: '8.3', laravel: '11.*', testbench: '9.*',  stability: prefer-lowest, redis-client: phpredis, livewire-pin: '' }
+
+          # Ceiling — highest supported combo. Both drivers, same reason.
+          - { php: '8.4', laravel: '13.*', testbench: '11.*', stability: prefer-stable, redis-client: predis,   livewire-pin: '' }
+          - { php: '8.4', laravel: '13.*', testbench: '11.*', stability: prefer-stable, redis-client: phpredis, livewire-pin: '' }
+
+          # Mid Laravel on PHP-ceiling × predis — covers the most common
+          # current-production combo.
+          - { php: '8.4', laravel: '12.*', testbench: '10.*', stability: prefer-stable, redis-client: predis,   livewire-pin: '' }
+
+          # PHP-axis sanity: PHP 8.3 against the highest Laravel +
+          # prefer-stable — catches PHP-version-only regressions that the
+          # floor cell (which is also prefer-lowest) would mask.
+          - { php: '8.3', laravel: '13.*', testbench: '11.*', stability: prefer-stable, redis-client: predis,   livewire-pin: '' }
+
+          # Stability-axis sanity: prefer-lowest at the ceiling — catches
+          # version-range mismatches the prefer-stable cells miss
+          # (constraints that resolve OK at floor and ceiling separately
+          # but conflict when one moves while the other stays put).
+          - { php: '8.4', laravel: '13.*', testbench: '11.*', stability: prefer-lowest, redis-client: predis,   livewire-pin: '' }
+
+          # Mid Laravel × phpredis — keeps driver-shim coverage on the
+          # middle Laravel without re-running the cross-product.
+          - { php: '8.4', laravel: '12.*', testbench: '10.*', stability: prefer-stable, redis-client: phpredis, livewire-pin: '' }
+
+          # Livewire 3 backport — the natural cross-product resolves to
+          # Livewire 3.0 (prefer-lowest) and Livewire 4.x (prefer-stable);
+          # this pin covers the v3-latest leg (operators on Livewire 3.7+
+          # who haven't upgraded to v4 yet).
+          - { php: '8.4', laravel: '12.*', testbench: '10.*', stability: prefer-stable, redis-client: predis,   livewire-pin: '^3.0' }
 
     name: P${{ matrix.php }} - L${{ matrix.laravel }} - ${{ matrix.stability }} - ${{ matrix.redis-client }}${{ matrix.livewire-pin && format(' - LW{0}', matrix.livewire-pin) || '' }}
 
