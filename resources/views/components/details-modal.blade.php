@@ -267,11 +267,7 @@
                         </div>
                     @elseif($hasStatusEncodingError)
                         <div class="flex gap-3 rounded-lg bg-red-50 dark:bg-red-900/40 p-3 text-sm text-red-900 dark:text-red-200 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
-                            <svg class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                <path fill-rule="evenodd"
-                                      d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"
-                                      clip-rule="evenodd"/>
-                            </svg>
+                            <x-queue-insights::icon-error-circle class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400"/>
                             <div class="min-w-0">
                                 <p class="font-medium">Payload encoding failed</p>
                                 <p class="mt-1 text-xs text-red-800 dark:text-red-200">Sanitizer could not JSON-encode the payload for this job.</p>
@@ -279,11 +275,7 @@
                         </div>
                     @elseif($hasStatusSizeOverflow)
                         <div class="flex gap-3 rounded-lg bg-red-50 dark:bg-red-900/40 p-3 text-sm text-red-900 dark:text-red-200 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
-                            <svg class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                <path fill-rule="evenodd"
-                                      d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"
-                                      clip-rule="evenodd"/>
-                            </svg>
+                            <x-queue-insights::icon-error-circle class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400"/>
                             <div class="min-w-0">
                                 <p class="font-medium">Payload exceeded size cap</p>
                                 @if($size = $payload['payload_size'] ?? null)
@@ -371,11 +363,7 @@
             {{-- Footer — tiered escalation hints. --}}
             @if($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Off)
                 <div class="mt-6 flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
-                    <svg class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fill-rule="evenodd"
-                              d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-3.75a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V7a.75.75 0 0 1 .75-.75ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                              clip-rule="evenodd"/>
-                    </svg>
+                    <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
                     <p>
                         Capture is off — only base metadata is stored. Set
                         <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">QUEUE_INSIGHTS_CAPTURE_PAYLOADS=metadata</code>
@@ -388,11 +376,7 @@
                 </div>
             @elseif($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Metadata)
                 <div class="mt-6 flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
-                    <svg class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fill-rule="evenodd"
-                              d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-3.75a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V7a.75.75 0 0 1 .75-.75ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                              clip-rule="evenodd"/>
-                    </svg>
+                    <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
                     <p>
                         Metadata-only capture — job config without a serialized command body. Set
                         <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">=full</code>

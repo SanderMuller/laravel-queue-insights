@@ -138,9 +138,7 @@
                     rule: snapshot is authoritative). --}}
                 @if($isClosure)
                     <div class="mt-3 flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
-                        <svg class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-8-3.75a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0V7a.75.75 0 0 1 .75-.75ZM10 15a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/>
-                        </svg>
+                        <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
                         <p>
                             Output capture not supported by Laravel for closure tasks. Log inside the closure with
                             <code class="rounded bg-white dark:bg-gray-900 px-1 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">Log::info(...)</code>

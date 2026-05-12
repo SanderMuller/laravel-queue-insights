@@ -173,11 +173,7 @@
                     <span>Back</span>
                 </button>
                 <span x-show="view === 'job'" class="inline-flex size-6 items-center justify-center rounded-md bg-red-50 dark:bg-red-900/40 text-red-600 dark:text-red-400 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
-                    <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                        <path fill-rule="evenodd"
-                              d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm-.75-11.25a.75.75 0 1 1 1.5 0v4a.75.75 0 1 1-1.5 0v-4Zm.75 8.25a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"
-                              clip-rule="evenodd"/>
-                    </svg>
+                    <x-queue-insights::icon-error-circle class="size-3.5"/>
                 </span>
                 <h3 id="qi-failed-modal-title" class="text-sm font-semibold text-gray-900 dark:text-gray-100">
                     <span x-show="view === 'job'">Failed job</span>
