@@ -119,7 +119,10 @@ final class PendingJobsReader
 
         $effective = min($limit, 200);
 
-        $candidates = [];
+        // Canonicalise the (connection, queue) tuples up front so the
+        // pipelined Redis fan-out only sees valid pairs. Invalid entries are
+        // skipped silently — boot-time ConfigValidator catches them earlier.
+        $resolved = [];
         foreach ($configuredQueues as $entry) {
             try {
                 $canonical = CanonicalQueueKey::from($entry['queue']);
@@ -127,10 +130,41 @@ final class PendingJobsReader
                 continue;
             }
 
-            $scores = $inFlight
-                ? self::uuidsWithScoresFromKey(KeyPrefix::make("inflight-zset:{$entry['connection']}:{$canonical}"), $min, $max, $effective)
-                : self::uuidsWithScores($entry['connection'], $canonical, $min, $max, $effective);
-            foreach ($scores as $uuid => $score) {
+            $resolved[] = [
+                'connection' => $entry['connection'],
+                'queue' => $entry['queue'],
+                'canonical' => $canonical,
+            ];
+        }
+
+        if ($resolved === []) {
+            return [];
+        }
+
+        // Pipeline the per-queue ZRANGEBYSCORE-WITHSCORES fan-out into one
+        // Redis round-trip — previously this loop fired N sequential
+        // ZRANGEBYSCOREs (one per configured queue) per category, and the
+        // dashboard renders all three categories (pending / delayed /
+        // in-flight) per poll. On non-loopback Redis each RTT is the
+        // dominant cost.
+        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $keyPrefix = $inFlight ? 'inflight-zset' : 'pending-zset';
+
+        $results = RedisPipeline::run($redis, static function ($client) use ($resolved, $keyPrefix, $min, $max, $effective): void {
+            foreach ($resolved as $pair) {
+                $client->zrangebyscore(
+                    KeyPrefix::make("{$keyPrefix}:{$pair['connection']}:{$pair['canonical']}"),
+                    $min,
+                    $max,
+                    ['LIMIT' => [0, $effective], 'WITHSCORES' => true],
+                );
+            }
+        });
+
+        $candidates = [];
+        foreach ($resolved as $i => $pair) {
+            $raw = $results[$i] ?? [];
+            foreach (self::normaliseScores($raw) as $uuid => $score) {
                 $candidates[] = [
                     'uuid' => $uuid,
                     // The zset score is `available_at` for pending/delayed and
@@ -140,8 +174,8 @@ final class PendingJobsReader
                     // not pickup time, for in-flight rows — would push stuck
                     // jobs down the list behind newer executions).
                     '__sort' => $score,
-                    'connection' => $entry['connection'],
-                    'queue' => $entry['queue'],
+                    'connection' => $pair['connection'],
+                    'queue' => $pair['queue'],
                 ];
             }
         }
@@ -289,21 +323,26 @@ final class PendingJobsReader
             ['LIMIT' => [0, $effectiveLimit], 'WITHSCORES' => true],
         ]);
 
+        return self::normaliseScores($result);
+    }
+
+    /**
+     * Decode the `member => score` shape produced by a WITHSCORES-flagged
+     * ZRANGEBYSCORE. Shared between the single-key reader and the pipelined
+     * cross-queue aggregator so both branches stay consistent if one driver
+     * tweaks the return shape.
+     *
+     * @return array<string, int>
+     */
+    private static function normaliseScores(mixed $result): array
+    {
         if (! is_array($result)) {
             return [];
         }
 
         $out = [];
         foreach ($result as $uuid => $score) {
-            if (! is_string($uuid)) {
-                continue;
-            }
-
-            if ($uuid === '') {
-                continue;
-            }
-
-            if (! is_numeric($score)) {
+            if (! is_string($uuid) || $uuid === '' || ! is_numeric($score)) {
                 continue;
             }
 
