@@ -96,13 +96,11 @@ final class RunsQuery
             return [];
         }
 
-        $rows = [];
+        // Pre-split member ids so the pipeline closure stays a plain list of
+        // HGETALL calls — keeps result-index alignment trivial.
+        $pairs = [];
         foreach ($members as $member) {
-            if (! is_string($member)) {
-                continue;
-            }
-
-            if ($member === '') {
+            if (! is_string($member) || $member === '') {
                 continue;
             }
 
@@ -111,13 +109,25 @@ final class RunsQuery
                 continue;
             }
 
-            [$taskKey, $runId] = $parts;
-            $hash = $redis->command('hgetall', [KeyPrefix::make("sched:run:{$taskKey}:{$runId}")]);
-            if (! is_array($hash)) {
-                continue;
-            }
+            $pairs[] = $parts;
+        }
 
-            if ($hash === []) {
+        if ($pairs === []) {
+            return [];
+        }
+
+        // Single pipeline for the N per-run HGETALL fan-out. ZREVRANGE
+        // result order is preserved in the pipeline response.
+        $hashes = $redis->pipeline(static function ($pipe) use ($pairs): void {
+            foreach ($pairs as [$taskKey, $runId]) {
+                $pipe->hgetall(KeyPrefix::make("sched:run:{$taskKey}:{$runId}"));
+            }
+        });
+
+        $rows = [];
+        foreach ($pairs as $idx => [$taskKey, $runId]) {
+            $hash = $hashes[$idx] ?? null;
+            if (! is_array($hash) || $hash === []) {
                 continue;
             }
 
