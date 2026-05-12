@@ -59,6 +59,17 @@ return [
         'completed_stream_max' => 10000,
         'per_class_stream_max' => 1000,
         'per_connection_stream_max' => 5000,
+
+        /*
+         | Per-class duration sample list cap. Drives slow_p95 detector
+         | accuracy + p95 column on the Classes tab — 200 samples gives
+         | reliable percentile reads while keeping Redis memory bounded
+         | (each list holds at most this many int-as-string entries per
+         | class, and the per-connection variant is capped to the same
+         | value). Previously hardcoded at 500; reduce here to trim
+         | per-class Redis memory by ~60 % without affecting p95 fidelity.
+         */
+        'duration_samples_cap' => 200,
     ],
 
     'schedule' => [

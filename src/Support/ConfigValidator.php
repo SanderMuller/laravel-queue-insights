@@ -205,6 +205,7 @@ final class ConfigValidator
             'completed_stream_max',
             'per_class_stream_max',
             'per_connection_stream_max',
+            'duration_samples_cap',
         ];
 
         foreach ($positiveInts as $key) {

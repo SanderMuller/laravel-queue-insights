@@ -118,17 +118,21 @@ final class RecordJobQueued
             ? $data['batchId']
             : '';
 
-        foreach ([
+        $fields = [
             'connection' => $connection,
             'queue' => $queueKey,
             'class' => $displayName,
             'queued_at' => (string) $queuedAt,
             'available_at' => (string) $availableAt,
-            // Empty string when the job isn't part of a batch — keeps the field
-            // shape stable so `PendingJobsReader::readHash` can read it
-            // unconditionally without an HEXISTS round-trip.
-            'batch_id' => $batchId,
-        ] as $field => $value) {
+        ];
+        // Only store batch_id when the job is part of a batch — most jobs
+        // are not, and the empty placeholder cost ~30 B per hash × every
+        // pending row. PendingJobsReader::parseHash treats absent fields
+        // the same as empty strings, so the read contract is unchanged.
+        if ($batchId !== '') {
+            $fields['batch_id'] = $batchId;
+        }
+        foreach ($fields as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
         }
 

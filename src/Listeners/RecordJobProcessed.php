@@ -387,6 +387,8 @@ final readonly class RecordJobProcessed
 
     private function writeDurationMetrics(RedisConnection $redis, string $class, string $connectionName, int $durationMs): void
     {
+        $samplesCap = max(1, Config::int('retention.duration_samples_cap', 200));
+
         if ($connectionName === '') {
             $aggDuration = KeyPrefix::classKey('duration', $class);
             $redis->command('hincrby', [$aggDuration, 'count', 1]);
@@ -396,7 +398,7 @@ final readonly class RecordJobProcessed
 
             $aggSamples = KeyPrefix::classKey('duration:samples', $class);
             $redis->command('rpush', [$aggSamples, (string) $durationMs]);
-            $redis->command('ltrim', [$aggSamples, -500, -1]);
+            $redis->command('ltrim', [$aggSamples, -$samplesCap, -1]);
             $redis->command('expire', [$aggSamples, 2592000]);
 
             return;
@@ -412,9 +414,11 @@ final readonly class RecordJobProcessed
             (string) 2592000,
         );
 
-        // Per-connection list capped at the same 500 as the aggregate so a
+        // Per-connection list capped at the same value as the aggregate so a
         // high-volume connection can't crowd out a quiet one in the scoped
-        // percentile read.
+        // percentile read. Cap is driven by `retention.duration_samples_cap`
+        // (default 200) — large enough for stable p95 reads, small enough to
+        // keep per-class memory bounded under high-throughput tenants.
         RedisEval::exec(
             $redis,
             LuaScripts::samplesPair(),
@@ -422,7 +426,7 @@ final readonly class RecordJobProcessed
             KeyPrefix::classKey('duration:samples', $class),
             KeyPrefix::classKey('duration:samples', $class, $connectionName),
             (string) $durationMs,
-            '500',
+            (string) $samplesCap,
             (string) 2592000,
         );
     }
