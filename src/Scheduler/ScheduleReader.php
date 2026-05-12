@@ -64,9 +64,11 @@ final class ScheduleReader
             if (! is_string($key)) {
                 continue;
             }
+
             if ($key === '') {
                 continue;
             }
+
             if (isset($seen[$key])) {
                 continue;
             }
@@ -95,6 +97,7 @@ final class ScheduleReader
             if (! is_string($json)) {
                 continue;
             }
+
             if ($json === '') {
                 continue;
             }

@@ -7,6 +7,7 @@ use Illuminate\Redis\Connections\Connection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
+use Predis\ClientInterface;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 
@@ -339,7 +340,7 @@ final class AggregatesQuery
      * either a phpredis Redis MULTI handle or a `\Predis\Pipeline\Pipeline`,
      * each accepting `hgetall` / `lrange` / etc. via `__call`.
      *
-     * @param  Closure(\Predis\ClientInterface): void  $callback
+     * @param Closure(ClientInterface):void $callback
      * @return list<mixed>
      */
     private function pipeline(Closure $callback): array

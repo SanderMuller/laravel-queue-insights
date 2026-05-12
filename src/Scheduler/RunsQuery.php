@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Illuminate\Support\Facades\Redis;
+use Predis\ClientInterface;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 
@@ -106,9 +107,11 @@ final class RunsQuery
             if (! is_string($member)) {
                 continue;
             }
+
             if ($member === '') {
                 continue;
             }
+
             $parts = explode(':', $member, 2);
             if (count($parts) !== 2) {
                 continue;
@@ -135,6 +138,7 @@ final class RunsQuery
             if (! is_array($hash)) {
                 continue;
             }
+
             if ($hash === []) {
                 continue;
             }
@@ -156,7 +160,7 @@ final class RunsQuery
      * `pipeline(callable)` method on its Connection class; predis only
      * exposes it via the magic `__call → command('pipeline', …)` path.
      *
-     * @param  Closure(\Predis\ClientInterface): void  $callback
+     * @param Closure(ClientInterface):void $callback
      * @return list<mixed>
      */
     private function pipeline(Connection $redis, Closure $callback): array
