@@ -6,15 +6,11 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Redis;
 
 /**
- * Per-queue wait-time percentile reader. Lifted out of `QueueInsights`
- * to keep that class under PHPStan's cognitive-complexity ceiling — the
- * percentile + sample-collection path on its own added ~5-6 points of
- * cyclomatic weight.
- *
- * The data layout (written by `RecordJobProcessing`) is:
- *   - `wait:{connection}:{queue}` ZSET: member = uuid, score = insertion ts.
+ * Per-queue wait-time percentile reader. Data layout (written by
+ * `RecordJobProcessing`):
+ *   - `wait:{connection}:{queue}` ZSET — member = uuid, score = insertion ts.
  *     Rank-trim to 1000 keeps the most recent (codex review).
- *   - `wait:{uuid}` string: ms wait, 7d TTL. MGET joins the ZSET back
+ *   - `wait:{uuid}` string — ms wait, 7d TTL. MGET joins the ZSET back
  *     to its samples for percentile compute.
  */
 final class WaitTimeMetrics

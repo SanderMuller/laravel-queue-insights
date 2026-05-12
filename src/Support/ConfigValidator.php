@@ -222,11 +222,6 @@ final class ConfigValidator
     }
 
     /**
-     * Validate the alerts block. Type-checks the cooldown, every per-rule
-     * shape, every threshold entry, and channel feature toggles. Delegates
-     * to `AlertsConfigValidator` so this class stays under PHPStan's
-     * cognitive-complexity ceiling.
-     *
      * @param  array<array-key, mixed>  $alerts
      */
     public static function validateAlerts(array $alerts): void
@@ -234,12 +229,6 @@ final class ConfigValidator
         AlertsConfigValidator::validate($alerts);
     }
 
-    /**
-     * Validate the chain_lineage block. Type-checks the toggle, the redis
-     * connection override (when set), and the two TTLs.
-     *
-     * @param  array<array-key, mixed>  $chainLineage
-     */
     /**
      * Type-check `capture.payloads` so a typo at boot ("metadta") fails
      * with a clear error rather than silently degrading to the default.
@@ -284,11 +273,6 @@ final class ConfigValidator
     }
 
     /**
-     * Validate the prometheus block. Delegates to
-     * {@see PrometheusConfigValidator} so this class stays under
-     * PHPStan's cognitive-complexity ceiling (mirrors the
-     * `validateAlerts → AlertsConfigValidator` pattern).
-     *
      * @param  array<array-key, mixed>  $prometheus
      */
     public static function validatePrometheus(array $prometheus): void
@@ -336,11 +320,6 @@ final class ConfigValidator
     }
 
     /**
-     * Validate the scheduler block. Type-checks the toggle, the capture
-     * mode, retention/hung/sweeper integers, and the heartbeat URL shape.
-     * Hard exception on misconfiguration matches the rest of the validator
-     * surface.
-     *
      * @param  array<array-key, mixed>  $scheduler
      */
     public static function validateScheduler(array $scheduler): void

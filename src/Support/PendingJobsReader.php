@@ -6,14 +6,7 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use InvalidArgumentException;
 
-/**
- * Reads from the pending-tracking Redis storage written by `RecordJobQueued`.
- *
- * Lives in `Support/` (not on `QueueInsights`) so the per-queue zset / hash
- * reads can grow more sophisticated (pipelining, race-condition signals,
- * tracking-gap reconciliation) without inflating the service-layer cognitive
- * complexity budget.
- */
+/** Reads pending-tracking Redis storage written by `RecordJobQueued`. */
 final class PendingJobsReader
 {
     /**

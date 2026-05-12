@@ -12,13 +12,8 @@ use SanderMuller\QueueInsights\QueueInsights;
 use Throwable;
 
 /**
- * Reads from the batch-tracking Redis storage written by `RecordJobQueued`,
- * joined to Laravel's authoritative `Bus::findBatch()` for live counts.
- *
- * Lives in `Support/` (not on `QueueInsights`) so the per-batch index +
- * uuid-list reads can grow more sophisticated (pipelining, mget joins for
- * uuid → display-row lookups) without inflating the service-layer cognitive
- * complexity budget — same pattern as `PendingJobsReader`.
+ * Reads batch-tracking Redis storage written by `RecordJobQueued`, joined
+ * to Laravel's authoritative `Bus::findBatch()` for live counts.
  */
 final class BatchReader
 {

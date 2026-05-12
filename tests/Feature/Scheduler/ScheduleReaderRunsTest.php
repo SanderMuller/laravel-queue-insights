@@ -7,6 +7,7 @@ use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
 use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
@@ -53,6 +54,47 @@ it('returns recent runs in newest-first order with row projection', function ():
         ->and($rows[0]['status'])->toBe('success')
         ->and($reader->countRuns())
         ->toBe(1);
+});
+
+it('omits output / exception / skip_reason / is_background on the list path', function (): void {
+    $task = buildScheduleEvent();
+    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
+    $task->exitCode = 0;
+    (new RecordScheduledTaskFinished(new RunStore(), new OutputCapturer()))
+        ->handle(new ScheduledTaskFinished($task, runtime: 0.5));
+
+    // Stamp the four large/unused fields directly on the per-run hash so we
+    // can verify the list path drops them regardless of what's stored. The
+    // modal hydration path (`runDetail` / `runOutput`) is the documented
+    // contract for fetching them.
+    $reader = new ScheduleReader();
+    $rows = $reader->recentRuns();
+    $runId = $rows[0]['run_id'];
+    $taskKey = $rows[0]['task_key'];
+    $runHashKey = 'qmtest:sched:run:' . $taskKey . ':' . $runId;
+    $r = Redis::connection('default');
+    $r->command('hset', [$runHashKey, 'output', "captured stdout\n"]);
+    $r->command('hset', [$runHashKey, 'exception', '{"class":"RuntimeException","message":"boom"}']);
+    $r->command('hset', [$runHashKey, 'skip_reason', 'maintenance mode']);
+    $r->command('hset', [$runHashKey, 'is_background', '1']);
+
+    $rows = $reader->recentRuns();
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['output'])->toBeNull()
+        ->and($rows[0]['exception'])->toBeNull()
+        ->and($rows[0]['skip_reason'])->toBeNull()
+        ->and($rows[0]['is_background'])->toBeFalse();
+
+    // runDetail (the modal hydrator) still surfaces the full payload.
+    $detail = $reader->runDetail($taskKey, $runId);
+    expect($detail)->not->toBeNull();
+    if ($detail === null) {
+        return;
+    }
+
+    expect($detail['has_output'])->toBeTrue()
+        ->and($detail['exception'])->toBeArray()
+        ->and($reader->runOutput($taskKey, $runId))->toBe("captured stdout\n");
 });
 
 it('filters by status', function (): void {

@@ -30,13 +30,14 @@ final class RecordJobProcessing
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
             $connection = (string) $event->connectionName;
-            $queueKey = CanonicalQueueKey::fromOrDefault((string) $event->job->getQueue(), $connection);
+            $queueRaw = (string) $event->job->getQueue();
+            $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
             $now = microtime(true);
 
             // Chain-claim ticket runs before child-fire so the child's
             // JobQueued listener can RPOP it (Phase 0 ordering proof).
-            $this->pushChainClaim($event, $uuid, $connection, $queueKey);
+            $this->pushChainClaim($event, $uuid, $connection, $queueRaw, $queueKey);
 
             // Copy `qi:lineage:{uuid}` to the pending hash so the in-flight
             // modal renders `↰ From {uuid}` before the durable stream row
@@ -184,7 +185,7 @@ final class RecordJobProcessing
      *   - the payload is encrypted (extractChainContext returns null)
      *   - the parent has no chained tail (last link / non-chain dispatch)
      */
-    private function pushChainClaim(JobProcessing $event, string $uuid, string $defaultConnection, string $defaultQueueKey): void
+    private function pushChainClaim(JobProcessing $event, string $uuid, string $defaultConnection, string $defaultQueueRaw, string $defaultQueueKey): void
     {
         if (! Config::bool('chain_lineage.enabled', true)) {
             return;
@@ -225,7 +226,7 @@ final class RecordJobProcessing
                 $queueKey = $defaultQueueKey;
             } else {
                 $connection = $chainConnection ?? $defaultConnection;
-                $queueRaw = $chainQueue ?? (string) $event->job->getQueue();
+                $queueRaw = $chainQueue ?? $defaultQueueRaw;
                 $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
             }
 

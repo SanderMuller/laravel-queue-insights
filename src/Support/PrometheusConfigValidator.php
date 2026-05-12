@@ -6,14 +6,7 @@ use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Prometheus\ClassFilter;
 use SanderMuller\QueueInsights\Prometheus\Scheduler\TaskFilter;
 
-/**
- * Prometheus-block validator. Extracted from `ConfigValidator` to keep
- * that class under PHPStan's cognitive-complexity ceiling — six top-
- * level keys plus the nested `class_filter` and `metrics` blocks were
- * pushing the parent class above the 80-class / 20-method limits.
- *
- * @internal
- */
+/** @internal */
 final class PrometheusConfigValidator
 {
     /**

@@ -7,16 +7,10 @@ use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 
 /**
- * Alerts-block validator. Extracted from `ConfigValidator` to keep that
- * class under PHPStan's cognitive-complexity ceiling — eight per-rule
- * shapes + three channel shapes + the legacy-thresholds branch were
- * pushing the parent class to 94 (limit 80).
- *
- * Logs (but does not throw) when the legacy top-level `alerts.thresholds`
- * key is in use, since `mergeConfigFrom` shallow merging means we must
- * keep honouring it for hosts that published config before the
- * `alerts.rules` migration. Legacy wins; the warning is the migration
- * nudge.
+ * Logs (does not throw) when the legacy top-level `alerts.thresholds` key
+ * is in use — `mergeConfigFrom`'s shallow merge means hosts that published
+ * config before the `alerts.rules` migration still need it honoured.
+ * Legacy wins; the warning is the migration nudge.
  *
  * @internal
  */

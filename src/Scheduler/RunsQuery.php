@@ -43,6 +43,26 @@ final class RunsQuery
     private const int MAX_CANDIDATES = 2000;
 
     /**
+     * Fields the list-path HMGET pulls per run. Restricted to what the
+     * run-row blade + filter pass actually consume — `output` /
+     * `exception` (variable-size blobs) and `skip_reason` /
+     * `is_background` / `recovered_from_hung` (not rendered on the list)
+     * are omitted so the pipelined response stays small.
+     *
+     * `started_at` is positional element 0 — `mapHmgetReply` uses it as
+     * the orphan-detection sentinel because `RunStore::start` always
+     * writes it on a real run.
+     */
+    private const LIST_FIELDS = [
+        'started_at',
+        'finished_at',
+        'runtime_ms',
+        'exit_code',
+        'status',
+        'host_id',
+    ];
+
+    /**
      * @param  RunFilters  $filters
      * @return list<RunRow>
      */
@@ -169,26 +189,12 @@ final class RunsQuery
     }
 
     /**
-     * Field list the dashboard list path needs. `output` + `exception` blob
-     * are deliberately omitted — they can each grow to several KiB per run
-     * and would explode the pipelined HMGET response for a 2k-candidate
-     * page.
-     */
-    private const LIST_FIELDS = [
-        'started_at',
-        'finished_at',
-        'runtime_ms',
-        'exit_code',
-        'status',
-        'skip_reason',
-        'host_id',
-        'is_background',
-    ];
-
-    /**
-     * Normalise the HMGET reply to a `field => value` assoc array.
-     * phpredis returns it that way already; predis returns a positional list
-     * aligned with the requested fields.
+     * Normalise the HMGET reply to a `field => value` assoc array, or
+     * null when the per-run hash is missing/orphan. `started_at` is the
+     * orphan sentinel: `RunStore::start` always writes it on a real run,
+     * so its absence means the zset member outlived its backing hash
+     * (worker grabbed and finished the job between our ZRANGE and HMGET,
+     * or the per-run hash TTL'd out).
      *
      * @return array<string, mixed>|null
      */
@@ -199,17 +205,16 @@ final class RunsQuery
         }
 
         $values = array_values($reply);
-        $any = false;
-        $out = [];
-        foreach (self::LIST_FIELDS as $idx => $field) {
-            $value = $values[$idx] ?? null;
-            if ($value !== null && $value !== false) {
-                $any = true;
-            }
-            $out[$field] = $value;
+        if (($values[0] ?? null) === null || ($values[0] ?? null) === false) {
+            return null;
         }
 
-        return $any ? $out : null;
+        $out = [];
+        foreach (self::LIST_FIELDS as $idx => $field) {
+            $out[$field] = $values[$idx] ?? null;
+        }
+
+        return $out;
     }
 
     /**
@@ -226,12 +231,13 @@ final class RunsQuery
             'runtime_ms' => HashFields::nullableInt($hash, 'runtime_ms'),
             'exit_code' => HashFields::nullableInt($hash, 'exit_code'),
             'status' => HashFields::string($hash, 'status', 'starting'),
-            'skip_reason' => HashFields::nullableString($hash['skip_reason'] ?? null),
             'host_id' => HashFields::string($hash, 'host_id', 'unknown'),
-            'is_background' => HashFields::bool01($hash, 'is_background'),
-            // `exception` + `output` are list-path-omitted to keep the
-            // pipelined HMGET response small; the modal fetches them via
-            // `ScheduleReader::runDetail` / `runOutput` on demand.
+            // List-path-omitted fields: `skip_reason`, `is_background`,
+            // `exception`, `output`. The blade doesn't render any of them
+            // and `exception` / `output` can each grow to several KiB.
+            // Modal hydrates via `ScheduleReader::runDetail` / `runOutput`.
+            'skip_reason' => null,
+            'is_background' => false,
             'exception' => null,
             'output' => null,
         ];

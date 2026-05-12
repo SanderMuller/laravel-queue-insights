@@ -6,13 +6,8 @@ use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 
 /**
- * Extracted from `ConfigValidator` (mirrors the
- * `validateAlerts → AlertsConfigValidator` pattern) so the parent
- * class stays under PHPStan's cognitive-complexity ceiling.
- *
- * Hard exception on every misconfiguration shape — silent
- * default-fallback would hide typos that decide whether scheduler
- * observability runs at all.
+ * Hard exception on every misconfiguration shape — silent default-fallback
+ * would hide typos that decide whether scheduler observability runs.
  */
 final class SchedulerConfigValidator
 {

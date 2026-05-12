@@ -27,11 +27,11 @@ Hosts whose configured default is already `'default'` need no action.
 redis-cli DEL '{prefix}pending-zset:sqs:default'
 ```
 
-### `ScheduleReader::recentRuns()` no longer hydrates `output` / `exception`
+### `ScheduleReader::recentRuns()` list path now omits `output` / `exception` / `skip_reason` / `is_background`
 
-The list path returns `null` for the per-row `output` and `exception` slots. The drilldown modal hydrates both via `ScheduleReader::runDetail()` / `runOutput()`.
+The list path returns `null` (or `false` for `is_background`) for these four per-row slots — none are rendered by the run-row blade and `output` / `exception` can each grow to several KiB. The drilldown modal hydrates the full row via `ScheduleReader::runDetail()` / `runOutput()`.
 
-**Action.** Hosts consuming `RunsQuery` / `recentRuns()` from their own code and reading `$row['output']` / `$row['exception']` must switch to `runDetail($taskKey, $runId)`.
+**Action.** Hosts consuming `RunsQuery` / `recentRuns()` from their own code and reading any of `$row['output']`, `$row['exception']`, `$row['skip_reason']`, `$row['is_background']` must switch to `runDetail($taskKey, $runId)`.
 
 ## Upgrading from 0.14 to 0.15
 

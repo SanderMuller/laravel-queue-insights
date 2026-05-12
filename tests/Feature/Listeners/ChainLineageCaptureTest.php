@@ -389,6 +389,52 @@ it('pushChainClaim canonicalises queue under chain_connection when chain_queue i
         ->and(R::int('exists', $wrongKey))->toBe(0);
 });
 
+/**
+ * Mirror of the chain_connection-override test: when chain context
+ * sets `chain_queue` but leaves `chain_connection` null (the
+ * `Bus::chain(...)->onQueue('q')` shape), the claim key must use
+ * the outer event's connection paired with the override queue.
+ */
+it('pushChainClaim uses outer connection + chain_queue override when chain_connection is null', function (): void {
+    config()->set('queue.connections.outer_conn', ['driver' => 'sync', 'queue' => 'outer_default']);
+
+    $parent = new ChainParentJob();
+    $parent->chainQueue = 'explicit_chain_queue';
+    $parent->chained = [serialize(new ChainChildJob())];
+    $serialized = serialize($parent);
+
+    $payload = [
+        'uuid' => 'parent-chainq-uuid',
+        'displayName' => ChainParentJob::class,
+        'data' => ['commandName' => ChainParentJob::class, 'command' => $serialized],
+    ];
+
+    /** @var Job&MockInterface $job */
+    $job = Mockery::mock(Job::class);
+    $job->shouldReceive('uuid')->andReturn('parent-chainq-uuid');
+    $job->shouldReceive('getQueue')->andReturn('parent_queue');
+    $job->shouldReceive('payload')->andReturn($payload);
+    $job->shouldReceive('attempts')->andReturn(1);
+
+    (new RecordJobProcessing())->handle(new JobProcessing(connectionName: 'outer_conn', job: $job));
+
+    $expectedKey = ChainLineageClaim::key(
+        'outer_conn',
+        'explicit_chain_queue',
+        ChainChildJob::class,
+        [],
+    );
+    $wrongKey = ChainLineageClaim::key(
+        'outer_conn',
+        'parent_queue',
+        ChainChildJob::class,
+        [],
+    );
+
+    expect(R::int('exists', $expectedKey))->toBe(1)
+        ->and(R::int('exists', $wrongKey))->toBe(0);
+});
+
 it('claim key is built from the next link class + tail fingerprint', function (): void {
     // Pure unit test on ChainLineageClaim — no I/O.
     $key = ChainLineageClaim::key('database', 'default', 'App\\Jobs\\Next', ['App\\Jobs\\After']);

@@ -4,12 +4,7 @@ namespace SanderMuller\QueueInsights\Support;
 
 use Illuminate\Support\Facades\Redis;
 
-/**
- * Enriches the dashboard's `Recent completed` and `Recent failed` row
- * shapes with payload-derived fields. Lives in `Support/` so the per-row
- * payload decoding + batch-id reverse-lookup don't inflate the
- * `QueueInsightsDashboard` cognitive complexity budget.
- */
+/** Enriches Recent completed / Recent failed rows with payload-derived fields. */
 final class RowEnricher
 {
     /**

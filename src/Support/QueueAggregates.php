@@ -2,18 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
-/**
- * Display-derivation helpers for the dashboard view layer. Centralises
- * the per-render aggregations that the Livewire component (and the
- * workbench preview) feed into the view contract — total depth /
- * in-flight, at-risk vs healthy partition, deepest-N ordering, and the
- * Overview-card preview lists.
- *
- * Lifted out of `dashboard.blade.php`'s 47-line `@php` block so the
- * derivations are unit-testable and the view becomes a thin shell.
- *
- * @internal
- */
+/** @internal */
 final class QueueAggregates
 {
     /**

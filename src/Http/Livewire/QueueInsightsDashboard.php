@@ -188,20 +188,16 @@ final class QueueInsightsDashboard extends Component
      */
     public ?string $scopeConnection = null;
 
-    /**
-     * Belt-and-suspenders clamp for the per-page props on every request.
-     * `#[Url]` re-hydrates the props from the query string on each request
-     * (not just initial mount), and `updated()` only fires on `set()` /
-     * `wire:model` updates — neither path runs through here. Without this
-     * hook a hostile `?cpp=999999` deep-link would leave the dropdown's
-     * `wire:model` value out of sync with the slice the paginator
-     * actually rendered (DashboardData::build() clamps the slice via
-     * `resolvePerPage()` regardless, but the dropdown would show blank
-     * until the user clicked something). `boot()` runs after hydration
-     * but before render, so the clamp lands before the view sees it.
-     */
     private RetryAction $retryAction;
 
+    /**
+     * Belt-and-suspenders clamp for the per-page props on every request.
+     * `#[Url]` re-hydrates props from the query string on every request,
+     * but `updated()` only fires on `set()` / `wire:model` updates — so a
+     * hostile `?cpp=999999` deep-link skips that hook. Clamping in `boot()`
+     * (runs post-hydration, pre-render) keeps the dropdown in sync with
+     * the slice DashboardData renders.
+     */
     public function boot(RetryAction $retryAction): void
     {
         $this->retryAction = $retryAction;
@@ -378,30 +374,20 @@ final class QueueInsightsDashboard extends Component
      */
     public array $chainBackStack = [];
 
-    /**
-     * Resolve a uuid to whichever surface it currently lives on (completed
-     * stream, failed_jobs row, or pending hash) and dispatch to the matching
-     * `open*` action. Drives the chain-lineage `↰ From` click-through.
-     *
-     * Pushes the modal the user was in onto `chainBackStack` so the parent
-     * modal can render a "Back" button that returns the user to the child
-     * — mirrors the "Back to batch" pattern but generalised across the
-     * three item modal types.
-     *
-     * Aged-out parents (no surface match) fall through to a flash banner
-     * instead of silently navigating nowhere.
-     */
-    /**
-     * Listener for the schedule panel's correlated-job click-through.
-     * Forwards to `openByUuid` so the resolution + chain-back stack
-     * behaviour is identical to the queue-side click paths.
-     */
+    /** Schedule-panel listener — forwards to `openByUuid` for identical behaviour. */
     #[On('qi-open-job-by-uuid')]
     public function openJobByUuidFromSchedule(string $uuid): void
     {
         $this->openByUuid($uuid);
     }
 
+    /**
+     * Resolve a uuid to whichever surface it currently lives on (completed
+     * stream, failed_jobs row, or pending hash) and open the matching modal.
+     * Drives the chain-lineage `↰ From` click-through; pushes the current
+     * modal onto `chainBackStack` so the parent modal renders a Back button.
+     * Aged-out parents flash a banner instead of silently navigating.
+     */
     public function openByUuid(string $uuid, ?string $fromClass = null): void
     {
         $target = UuidResolver::resolve($uuid);
