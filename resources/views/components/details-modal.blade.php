@@ -261,11 +261,7 @@
                 <section data-section="job-config" class="mb-6">
                     @if($hasStatusNote)
                         <div class="flex gap-3 rounded-lg bg-amber-50 dark:bg-amber-900/40 p-3 text-sm text-amber-900 dark:text-amber-200 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
-                            <svg class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-                                <path fill-rule="evenodd"
-                                      d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 6a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 6Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
-                                      clip-rule="evenodd"/>
-                            </svg>
+                            <x-queue-insights::icon-warning-triangle class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"/>
                             <div class="min-w-0">
                                 <p class="font-medium">Payload not persisted</p>
                                 @if($reason = $payload['payload_reason'] ?? null)
