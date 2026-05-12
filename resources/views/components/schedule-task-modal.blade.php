@@ -32,6 +32,7 @@
     use Cron\CronExpression;
     use Illuminate\Support\Facades\Date;
     use Illuminate\Support\Str;
+    use SanderMuller\QueueInsights\Scheduler\AggregatesQuery;
 
     $taskKey = is_string($task['task_key'] ?? null) ? $task['task_key'] : '';
     $description = is_string($task['description'] ?? null) && $task['description'] !== ''
@@ -151,22 +152,7 @@
                 @endif
             </section>
 
-            {{-- Needs-attention banner — surfaces WHICH 24h-window
-                 condition put this task on the needs-attention list.
-                 Mirrors the panel's classification rule
-                 (`failed > 0 || hung > 0 || missed > 0`). --}}
-            @php
-                $attentionReasons = [];
-                if (($stats['failed'] ?? 0) > 0) {
-                    $attentionReasons[] = ['kind' => 'failed', 'count' => $stats['failed']];
-                }
-                if (($stats['hung'] ?? 0) > 0) {
-                    $attentionReasons[] = ['kind' => 'hung', 'count' => $stats['hung']];
-                }
-                if (($stats['missed'] ?? 0) > 0) {
-                    $attentionReasons[] = ['kind' => 'missed', 'count' => $stats['missed']];
-                }
-            @endphp
+            @php $attentionReasons = AggregatesQuery::attentionReasons($stats); @endphp
             @if($attentionReasons !== [])
                 <section data-section="schedule-task-attention" class="mb-6 rounded-xl bg-red-50 dark:bg-red-900/30 p-4 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
                     <p class="text-[10px] font-medium uppercase tracking-wider text-red-700 dark:text-red-300">Needs attention</p>
@@ -180,14 +166,11 @@
                                         </svg>
                                         @break
                                     @case('hung')
-                                        {{-- hourglass / spinner-ish glyph (clock with a single hand) --}}
                                         <svg class="size-4 shrink-0 text-amber-600 dark:text-amber-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                             <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16ZM9.25 5.5a.75.75 0 0 1 1.5 0v4.69l3.03 3.03a.75.75 0 1 1-1.06 1.06L9.47 10.78a.75.75 0 0 1-.22-.53V5.5Z" clip-rule="evenodd"/>
                                         </svg>
                                         @break
                                     @case('missed')
-                                        {{-- triangle warning — distinct from "hung" so the two are visually
-                                            scannable side-by-side without reading the label. --}}
                                         <svg class="size-4 shrink-0 text-amber-600 dark:text-amber-300" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                             <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 6a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 6Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/>
                                         </svg>

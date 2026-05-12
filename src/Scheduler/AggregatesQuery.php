@@ -125,6 +125,31 @@ final class AggregatesQuery
     }
 
     /**
+     * Per-task attention reasons — single source for the rule that drives
+     * both the panel's needs-attention/healthy split and the modal banner.
+     * Returns an ordered list (failed → hung → missed) so the modal renders
+     * the most-severe condition first. Empty list ⇔ task is healthy.
+     *
+     * @param  array{failed: int, hung: int, missed: int}  $stats
+     * @return list<array{kind: string, count: int}>
+     */
+    public static function attentionReasons(array $stats): array
+    {
+        $reasons = [];
+        if ($stats['failed'] > 0) {
+            $reasons[] = ['kind' => 'failed', 'count' => $stats['failed']];
+        }
+        if ($stats['hung'] > 0) {
+            $reasons[] = ['kind' => 'hung', 'count' => $stats['hung']];
+        }
+        if ($stats['missed'] > 0) {
+            $reasons[] = ['kind' => 'missed', 'count' => $stats['missed']];
+        }
+
+        return $reasons;
+    }
+
+    /**
      * Known limitation (codex-flagged, deferred): the pipelined fan-out
      * here concatenates every numeric sample list (24 buckets × N tasks,
      * each capped at 500 by `RunStore::APPROX_DURATION_SAMPLES`) into one

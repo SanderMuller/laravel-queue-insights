@@ -217,10 +217,7 @@ final class ScheduleInsightsPanel extends Component
         $needsAttention = [];
         $healthy = [];
         foreach ($tasksWithStats as $row) {
-            $hasIssue = $row['stats']['failed'] > 0
-                || $row['stats']['hung'] > 0
-                || $row['stats']['missed'] > 0;
-            if ($hasIssue) {
+            if (AggregatesQuery::attentionReasons($row['stats']) !== []) {
                 $needsAttention[] = $row;
             } else {
                 $healthy[] = $row;

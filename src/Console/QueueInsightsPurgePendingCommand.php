@@ -5,10 +5,12 @@ namespace SanderMuller\QueueInsights\Console;
 use Illuminate\Console\Command;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Redis;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisPipeline;
 use Throwable;
 
 /**
@@ -29,6 +31,9 @@ use Throwable;
  */
 final class QueueInsightsPurgePendingCommand extends Command
 {
+    /** Hash reads + deletes are pipelined in chunks of this size. */
+    private const int PIPELINE_CHUNK = 500;
+
     protected $signature = 'queue-insights:purge-pending
         {connection : Queue connection name (must be configured under `queue.connections.*`)}
         {queue : Queue value as recorded on the orphan zset (e.g. `default`)}
@@ -109,16 +114,16 @@ final class QueueInsightsPurgePendingCommand extends Command
             return self::SUCCESS;
         }
 
-        return $this->forcePurge($redis, $zsetKey, $canonical);
+        return $this->forcePurge($redis, $zsetKey, $canonical, $count);
     }
 
     private function printDryRunWarning(int $count, string $zsetKey): void
     {
         $this->newLine();
         $this->warn(sprintf(
-            'About to destroy %d pending entr%s on %s. This command is intended for the pre-0.16 orphan-cleanup case ONLY. If %s the live queue for this connection (not an orphan key), --force will shred legitimate in-flight pending tracking. Verify before re-running.',
+            'About to destroy %d pending %s on %s. This command is intended for the pre-0.16 orphan-cleanup case ONLY. If %s the live queue for this connection (not an orphan key), --force will shred legitimate in-flight pending tracking. Verify before re-running.',
             $count,
-            $count === 1 ? 'y' : 'ies',
+            Str::plural('entry', $count),
             $zsetKey,
             $count === 1 ? 'this entry belongs to' : 'these entries belong to',
         ));
@@ -135,7 +140,7 @@ final class QueueInsightsPurgePendingCommand extends Command
      * silently nuked by the old path. Now they land on the new zset
      * that we never touch.
      */
-    private function forcePurge(RedisConnection $redis, string $zsetKey, string $canonical): int
+    private function forcePurge(RedisConnection $redis, string $zsetKey, string $canonical, int $count): int
     {
         $tempKey = $zsetKey . ':purging-' . bin2hex(random_bytes(4));
         try {
@@ -147,18 +152,16 @@ final class QueueInsightsPurgePendingCommand extends Command
         }
 
         $hashesDeleted = $this->deleteMatchingHashes($redis, $tempKey, $canonical);
-        $snapshotCard = $redis->command('zcard', [$tempKey]);
-        $snapshotCount = is_numeric($snapshotCard) ? (int) $snapshotCard : 0;
         $zsetDelReply = $redis->command('del', [$tempKey]);
         $zsetDeleted = is_numeric($zsetDelReply) ? (int) $zsetDelReply : 0;
 
         $this->newLine();
         $this->info(sprintf(
-            'Purged %d zset member%s + %d matching pending:{uuid} hash%s.',
-            $snapshotCount,
-            $snapshotCount === 1 ? '' : 's',
+            'Purged %d zset %s + %d matching pending:{uuid} %s.',
+            $count,
+            Str::plural('member', $count),
             $hashesDeleted,
-            $hashesDeleted === 1 ? '' : 'es',
+            Str::plural('hash', $hashesDeleted),
         ));
         $this->line(sprintf('snapshot key deleted: %s', $zsetDeleted === 1 ? 'yes' : 'no (already gone)'));
 
@@ -166,18 +169,13 @@ final class QueueInsightsPurgePendingCommand extends Command
     }
 
     /**
-     * Walk the zset's members and delete the per-uuid hash for each one
-     * whose `queue` field matches the target queue. Skips hashes that
-     * are missing (already TTL'd) or whose `queue` field points at a
-     * different queue (defensive — orphan zset shouldn't contain
-     * cross-queue uuids, but the field-match guard makes this command
-     * safe to re-run after a snapshots-config flip).
+     * Only hashes whose stored `queue` field matches `$canonicalQueue` are
+     * deleted — defensive against partial re-runs after a snapshots-config
+     * flip, where the orphan zset MAY no longer be one-to-one with hashes.
      *
-     * `ZRANGE 0 -1` returns every member in one shot; the zset is bounded
-     * by `pending.max_per_queue` (default 10 000), so the worst-case read
-     * is a single ~250 KB Redis reply. Avoids ZSCAN whose reply shape
-     * diverges between predis (flat `[member, score, ...]`) and phpredis
-     * (assoc `[member => score]`).
+     * ZRANGE 0 -1 over ZSCAN: predis returns a flat `[member, score, …]`
+     * list while phpredis returns an assoc `[member => score]` map for
+     * ZSCAN; ZRANGE returns positional members under both drivers.
      */
     private function deleteMatchingHashes(RedisConnection $redis, string $zsetKey, string $canonicalQueue): int
     {
@@ -186,20 +184,66 @@ final class QueueInsightsPurgePendingCommand extends Command
             return 0;
         }
 
+        $uuids = array_values(array_filter(
+            $members,
+            static fn (mixed $u): bool => is_string($u) && $u !== '',
+        ));
+        if ($uuids === []) {
+            return 0;
+        }
+
+        $toDelete = $this->matchingUuids($redis, $uuids, $canonicalQueue);
+
+        return $toDelete === [] ? 0 : $this->pipelinedDelete($redis, $toDelete);
+    }
+
+    /**
+     * Pipelined `HGET pending:{uuid} queue` over each chunk; returns only
+     * the uuids whose stored queue matches `$canonicalQueue`.
+     *
+     * @param  list<string>  $uuids
+     * @return list<string>
+     */
+    private function matchingUuids(RedisConnection $redis, array $uuids, string $canonicalQueue): array
+    {
+        $matches = [];
+        foreach (array_chunk($uuids, self::PIPELINE_CHUNK) as $chunk) {
+            $replies = RedisPipeline::run($redis, static function (mixed $pipe) use ($chunk): void {
+                foreach ($chunk as $uuid) {
+                    $pipe->hget(KeyPrefix::make("pending:{$uuid}"), 'queue');
+                }
+            });
+            foreach ($chunk as $i => $uuid) {
+                $stored = $replies[$i] ?? null;
+                if (is_string($stored) && $stored === $canonicalQueue) {
+                    $matches[] = $uuid;
+                }
+            }
+        }
+
+        return $matches;
+    }
+
+    /**
+     * Pipelined `DEL pending:{uuid}` over each chunk; returns the total
+     * number of hashes Redis reported as actually deleted.
+     *
+     * @param  list<string>  $uuids
+     */
+    private function pipelinedDelete(RedisConnection $redis, array $uuids): int
+    {
         $deleted = 0;
-        foreach ($members as $uuid) {
-            if (! is_string($uuid) || $uuid === '') {
-                continue;
+        foreach (array_chunk($uuids, self::PIPELINE_CHUNK) as $chunk) {
+            $replies = RedisPipeline::run($redis, static function (mixed $pipe) use ($chunk): void {
+                foreach ($chunk as $uuid) {
+                    $pipe->del(KeyPrefix::make("pending:{$uuid}"));
+                }
+            });
+            foreach ($replies as $reply) {
+                if (is_numeric($reply)) {
+                    $deleted += (int) $reply;
+                }
             }
-
-            $hashKey = KeyPrefix::make("pending:{$uuid}");
-            $storedQueue = $redis->command('hget', [$hashKey, 'queue']);
-            if (! is_string($storedQueue) || $storedQueue !== $canonicalQueue) {
-                continue;
-            }
-
-            $delReply = $redis->command('del', [$hashKey]);
-            $deleted += is_numeric($delReply) ? (int) $delReply : 0;
         }
 
         return $deleted;
