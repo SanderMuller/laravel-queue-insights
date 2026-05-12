@@ -109,14 +109,79 @@ final class AggregatesQuery
      */
     public function computeStatsForTasks(array $tasks): array
     {
-        $out = [];
+        $keys = [];
         foreach ($tasks as $task) {
             $key = is_string($task['task_key'] ?? null) ? $task['task_key'] : null;
-            if ($key === null) {
-                continue;
+            if ($key !== null) {
+                $keys[] = $key;
+            }
+        }
+
+        if ($keys === []) {
+            return [];
+        }
+
+        $now = Date::now()->getTimestamp();
+        $buckets = [];
+        for ($i = 0; $i < 24; ++$i) {
+            $buckets[] = Date::createFromTimestamp($now - ($i * 3600))->format('YmdH');
+        }
+
+        // Single pipeline for the entire per-task fan-out: 49 commands per
+        // task collapse into one round-trip across all tasks.
+        $results = $this->redis()->pipeline(static function ($pipe) use ($keys, $buckets): void {
+            foreach ($keys as $taskKey) {
+                foreach ($buckets as $bucket) {
+                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
+                    $pipe->lrange(KeyPrefix::make("sched:samples:{$taskKey}:{$bucket}"), 0, -1);
+                }
+                $pipe->hgetall(KeyPrefix::make("sched:counters:{$taskKey}"));
+            }
+        });
+
+        $bucketsPerTask = count($buckets);
+        $stride = ($bucketsPerTask * 2) + 1;
+        $out = [];
+        foreach ($keys as $idx => $taskKey) {
+            $base = $idx * $stride;
+            $runs = 0;
+            $failed = 0;
+            $samples = [];
+
+            for ($b = 0; $b < $bucketsPerTask; ++$b) {
+                $aggHash = $results[$base + ($b * 2)] ?? null;
+                if (is_array($aggHash) && $aggHash !== []) {
+                    $s = HashFields::int($aggHash, 'success_count');
+                    $f = HashFields::int($aggHash, 'failed_count');
+                    $runs += $s + $f;
+                    $failed += $f;
+                }
+
+                $list = $results[$base + ($b * 2) + 1] ?? null;
+                if (is_array($list)) {
+                    foreach ($list as $entry) {
+                        if (is_numeric($entry)) {
+                            $samples[] = (int) $entry;
+                        }
+                    }
+                }
             }
 
-            $out[] = ['task_key' => $key, 'stats' => $this->taskWindowStats($key)];
+            $countersHash = $results[$base + ($bucketsPerTask * 2)] ?? null;
+            $countersHash = is_array($countersHash) ? $countersHash : [];
+
+            $out[] = [
+                'task_key' => $taskKey,
+                'stats' => [
+                    'runs' => $runs,
+                    'failed' => $failed,
+                    'skipped' => HashFields::int($countersHash, 'total_skipped'),
+                    'hung' => HashFields::int($countersHash, 'total_hung'),
+                    'missed' => HashFields::int($countersHash, 'total_missed'),
+                    'last_run_at_ms' => HashFields::nullableInt($countersHash, 'last_run_at'),
+                    'p95_ms' => $this->p95FromSamples($samples),
+                ],
+            ];
         }
 
         return $out;

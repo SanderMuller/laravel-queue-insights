@@ -202,14 +202,22 @@ final class ScheduleInsightsPanel extends Component
         ];
 
         $tasks = $reader->tasks();
-        // Single per-task stats walk feeds both the headline tiles and
-        // the needs-attention/healthy split — previously each task ran
-        // through `taskWindowStats` twice per render.
+        // Batched per-task stats fan-out — one pipeline collapses the
+        // 49 commands/task into a single Redis round-trip for all tasks.
+        $statsByKey = [];
+        foreach ($aggregates->computeStatsForTasks($tasks) as $row) {
+            $statsByKey[$row['task_key']] = $row['stats'];
+        }
         $tasksWithStats = [];
         foreach ($tasks as $task) {
-            $stats = $aggregates->taskWindowStats($task['task_key']);
-            $counters = $reader->counters($task['task_key']);
-            $tasksWithStats[] = $task + ['stats' => $stats, 'counters' => $counters];
+            $key = $task['task_key'];
+            $tasksWithStats[] = $task + [
+                'stats' => $statsByKey[$key] ?? [
+                    'runs' => 0, 'failed' => 0, 'skipped' => 0, 'hung' => 0,
+                    'missed' => 0, 'last_run_at_ms' => null, 'p95_ms' => null,
+                ],
+                'counters' => $reader->counters($key),
+            ];
         }
 
         $needsAttention = [];

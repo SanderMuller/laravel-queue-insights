@@ -155,7 +155,7 @@
                 </div>
             @else
                 @if($needsAttention !== [])
-                    <h4 class="mt-4 text-xs font-semibold tracking-wide text-red-700 dark:text-red-300">Needs attention</h4>
+                    <h4 class="mt-4 text-xs font-semibold tracking-wide text-red-700 dark:text-red-300">Needs attention <span class="tabular-nums text-red-700/70 dark:text-red-300/70">({{ count($needsAttention) }})</span></h4>
                     <ul role="list" class="mt-2 divide-y divide-gray-950/5 dark:divide-white/10">
                         @foreach($needsAttention as $row)
                             @php $runsTotal = max(1, (int) ($row['stats']['runs'] ?? 0)); @endphp
@@ -176,7 +176,7 @@
                 @endif
 
                 @if($healthy !== [])
-                    <h4 class="mt-4 text-xs font-semibold tracking-wide text-emerald-700 dark:text-emerald-300">Healthy</h4>
+                    <h4 class="mt-4 text-xs font-semibold tracking-wide text-emerald-700 dark:text-emerald-300">Healthy <span class="tabular-nums text-emerald-700/70 dark:text-emerald-300/70">({{ count($healthy) }})</span></h4>
                     <ul role="list" class="mt-2 divide-y divide-gray-950/5 dark:divide-white/10">
                         @foreach($healthy as $row)
                             <li>
