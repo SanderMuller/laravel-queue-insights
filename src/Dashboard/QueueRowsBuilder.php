@@ -9,14 +9,7 @@ use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 
-/**
- * Builds the per-queue row set for the Queues pane. One row per
- * configured snapshot, decorated with live depth/in-flight/delayed
- * counts, last-snapshot timestamp, staleness flag, wait-time
- * percentiles, and pending-inspector fields.
- *
- * @internal
- */
+/** @internal */
 final readonly class QueueRowsBuilder
 {
     public function __construct(

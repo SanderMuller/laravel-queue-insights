@@ -26,14 +26,7 @@ use SanderMuller\QueueInsights\Support\UuidResolver;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
-/**
- * Builds the full view-data array the dashboard component passes to its
- * Blade template. Composes every other builder + resolver in this
- * namespace so the Livewire component's `render()` method stays a
- * one-liner.
- *
- * @internal
- */
+/** @internal */
 final readonly class DashboardData
 {
     /**
@@ -628,20 +621,9 @@ final readonly class DashboardData
     }
 
     /**
-     * Hydrate the selected completed-modal row with wait_ms, batch_id, and
-     * backward-chain lineage. Extracted from `build()` to keep its
-     * cognitive complexity under PHPStan's 20-point ceiling.
-     *
-     * @param  array<string, mixed>  $selectedPayload
-     * @return array<string, mixed>
-     */
-    /**
      * Resolve the failed-job modal's selected row. First search the visible
-     * `$recentFailed` list (cheap, in-memory). When that misses — typical for
-     * silenced rows clicked from the Silenced tab, since FailedJobFilters'
-     * default exclusion strips them at the SQL layer — fall back to a single
-     * direct lookup by id and re-enrich. Custom failed-job providers or a
-     * missing `failed_jobs` table fall through to null.
+     * `$recentFailed` list; on miss (typical for silenced rows that the SQL
+     * exclusion strips), fall back to a direct lookup by id and re-enrich.
      *
      * @param  list<array<array-key, mixed>>  $recentFailed
      * @return array<array-key, mixed>|null

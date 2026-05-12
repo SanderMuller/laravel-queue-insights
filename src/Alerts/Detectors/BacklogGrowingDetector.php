@@ -11,21 +11,10 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 
 /**
- * Fires when the per-queue depth slope (least-squares regression over the
- * recent samples written by `QueueInsightsSnapshotCommand::writeDepthSample`)
- * exceeds `min_slope_per_minute`. Catches the "depth is growing faster than
- * the workers can drain" failure mode that a fixed-threshold `depth` rule
- * misses (operator picks a threshold for the steady-state and gets paged
- * after the queue has already been backed up for an hour).
- *
- * Storage is the `samples:depth:{c}:{q}` zset:
- *   - member: `"{ts}:{depth}"`
- *   - score:  ts (unix seconds)
- *   - capped at the most-recent 30 samples by the writer
- *
- * Skips when fewer than `min_samples` data points are available so a freshly
- * deployed app or a recently-cleared queue doesn't fire on the first sample
- * crossing the slope threshold.
+ * Catches the "depth is growing faster than workers can drain" failure mode
+ * that a fixed-threshold `depth` rule misses. Skips when fewer than
+ * `min_samples` data points are available so freshly cleared queues don't
+ * fire on the first slope crossing. See `internal/specs/alerting.md` §6.
  */
 final class BacklogGrowingDetector
 {
@@ -120,8 +109,6 @@ final class BacklogGrowingDetector
     }
 
     /**
-     * Least-squares slope (depth-per-second) for a [(ts, depth), …] series.
-     *
      * @param  list<array{0: int, 1: int}>  $samples
      */
     private function leastSquaresSlope(array $samples): float

@@ -32,8 +32,6 @@ final class RecordJobProcessing
             $connection = (string) $event->connectionName;
             $queueKey = CanonicalQueueKey::fromOrDefault((string) $event->job->getQueue(), $connection);
 
-            // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
-            // `SET key val EX ttl` has divergent arg shapes across drivers.
             $now = microtime(true);
 
             // Chain-claim ticket runs before child-fire so the child's
@@ -213,10 +211,13 @@ final class RecordJobProcessing
             }
 
             // Chain-context can override the outer connection/queue (e.g.
-            // `Bus::chain(...)->onConnection('foo')`). When it doesn't —
-            // the common default-Bus::chain case where SerializesModels
-            // strips the null override — fall through to the caller's
-            // already-canonicalised values to skip a second config walk.
+            // `Bus::chain(...)->onConnection('foo')`). When both overrides
+            // are null — the default-Bus::chain case where SerializesModels
+            // strips them — reuse the caller's already-canonicalised values
+            // to skip a config walk. Any override drops us back to the full
+            // resolution so the chain-claim key matches what the child's
+            // `RecordJobQueued::resolveChainLineage` will compute on the
+            // overridden connection (its config-default queue, if any).
             $chainConnection = $context['chain_connection'];
             $chainQueue = $context['chain_queue'];
             if ($chainConnection === null && $chainQueue === null) {
@@ -224,9 +225,8 @@ final class RecordJobProcessing
                 $queueKey = $defaultQueueKey;
             } else {
                 $connection = $chainConnection ?? $defaultConnection;
-                $queueKey = $chainQueue !== null
-                    ? CanonicalQueueKey::fromOrDefault($chainQueue, $connection)
-                    : $defaultQueueKey;
+                $queueRaw = $chainQueue ?? (string) $event->job->getQueue();
+                $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
             }
 
             $key = ChainLineageClaim::key($connection, $queueKey, $context['next_class'], $tailClasses);

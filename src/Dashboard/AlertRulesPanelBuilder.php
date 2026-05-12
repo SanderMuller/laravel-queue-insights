@@ -143,9 +143,7 @@ final readonly class AlertRulesPanelBuilder
     }
 
     /**
-     * Pre-flatten the (internal) `Issue` value object into a blade-friendly
-     * row so the panel's contract doesn't leak `Issue` itself into the
-     * dashboard surface.
+     * Keeps the internal `Issue` shape out of the dashboard surface.
      *
      * @return array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}
      */

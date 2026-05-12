@@ -4,14 +4,7 @@ namespace SanderMuller\QueueInsights\Dashboard;
 
 use SanderMuller\QueueInsights\Support\Config;
 
-/**
- * Builds the option lists shown in the filter dropdowns. Connection
- * and queue come from the configured snapshots (the package's source
- * of truth for what's tracked); class comes from the 24h class roster
- * passed in by the caller.
- *
- * @internal
- */
+/** @internal */
 final readonly class FilterOptionsBuilder
 {
     /**

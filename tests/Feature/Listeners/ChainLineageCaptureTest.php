@@ -334,6 +334,61 @@ it('SQS-style queue URL on JobQueued matches the worker-side logical name on Job
     expect($store->popClaim($popKey))->toBe('parent-uuid-sqs');
 });
 
+/**
+ * Regression for the simplify pass's `pushChainClaim` short-circuit
+ * branch: when chain-context overrides the connection but not the queue
+ * AND the outer parent's `getQueue()` is empty, the chain-claim key must
+ * be canonicalised under the *chain's* connection-default queue (the
+ * config Laravel uses to dispatch the child), NOT the outer event's
+ * connection-default. Reusing the outer-canonicalised `$queueKey` would
+ * key the parent push under the wrong queue and silently miss the child's
+ * RPOP — same failure mode as the SQS pending-orphan bug.
+ */
+it('pushChainClaim canonicalises queue under chain_connection when chain_queue is null', function (): void {
+    config()->set('queue.connections.outer_conn', ['driver' => 'sync', 'queue' => 'outer_default']);
+    config()->set('queue.connections.chain_dest', ['driver' => 'sync', 'queue' => 'chain_default']);
+
+    $parent = new ChainParentJob();
+    $parent->chainConnection = 'chain_dest';
+    $parent->chained = [serialize(new ChainChildJob())];
+    $serialized = serialize($parent);
+
+    $payload = [
+        'uuid' => 'parent-bug-uuid',
+        'displayName' => ChainParentJob::class,
+        'data' => ['commandName' => ChainParentJob::class, 'command' => $serialized],
+    ];
+
+    /** @var Job&MockInterface $job */
+    $job = Mockery::mock(Job::class);
+    $job->shouldReceive('uuid')->andReturn('parent-bug-uuid');
+    // Outer parent ran on `outer_conn` and was dispatched without an explicit
+    // ->onQueue(), so getQueue() surfaces an empty queue. Triggers the
+    // fromOrDefault-on-outer path that would set $defaultQueueKey to
+    // outer_conn's `outer_default` — the wrong key for the chain claim.
+    $job->shouldReceive('getQueue')->andReturn('');
+    $job->shouldReceive('payload')->andReturn($payload);
+    $job->shouldReceive('attempts')->andReturn(1);
+
+    (new RecordJobProcessing())->handle(new JobProcessing(connectionName: 'outer_conn', job: $job));
+
+    $expectedKey = ChainLineageClaim::key(
+        'chain_dest',
+        'chain_default',
+        ChainChildJob::class,
+        [],
+    );
+    $wrongKey = ChainLineageClaim::key(
+        'chain_dest',
+        'outer_default',
+        ChainChildJob::class,
+        [],
+    );
+
+    expect(R::int('exists', $expectedKey))->toBe(1)
+        ->and(R::int('exists', $wrongKey))->toBe(0);
+});
+
 it('claim key is built from the next link class + tail fingerprint', function (): void {
     // Pure unit test on ChainLineageClaim — no I/O.
     $key = ChainLineageClaim::key('database', 'default', 'App\\Jobs\\Next', ['App\\Jobs\\After']);

@@ -47,9 +47,7 @@ final class DepthDetector
         );
     }
 
-    /**
-     * Detect using a pre-known depth (snapshot command path — avoids the live:depth round trip).
-     */
+    /** Snapshot-command path — avoids the live:depth round trip. */
     public function detectWithDepth(string $connection, string $canonicalQueue, int $depth): ?Issue
     {
         if (! $this->ruleEnabled()) {

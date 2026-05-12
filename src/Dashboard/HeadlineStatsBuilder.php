@@ -3,8 +3,8 @@
 namespace SanderMuller\QueueInsights\Dashboard;
 
 /**
- * Headline stats inspired by Horizon. All values are derived from data
- * already loaded for the dashboard — no extra round-trips to Redis.
+ * Headline stats — derived from data already loaded for the dashboard,
+ * no extra Redis round-trips.
  *
  * @internal
  */

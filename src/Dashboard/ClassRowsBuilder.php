@@ -5,13 +5,7 @@ namespace SanderMuller\QueueInsights\Dashboard;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
 
-/**
- * Builds the per-class row set the dashboard renders in the class
- * picker / filter options. One row per known class, decorated with
- * 24h aggregate metrics from `QueueInsights::classMetrics`.
- *
- * @internal
- */
+/** @internal */
 final readonly class ClassRowsBuilder
 {
     public function __construct(

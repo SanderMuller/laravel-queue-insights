@@ -47,10 +47,7 @@ final readonly class IssueDispatcher
         private Container $container,
     ) {}
 
-    /**
-     * Dispatch any active issues for one (connection, queue) pair using a
-     * pre-known depth value (snapshot-command path).
-     */
+    /** Snapshot-command path — uses the pre-known depth value. */
     public function dispatchForSnapshot(string $connection, string $canonicalQueue, int $depth): void
     {
         if (! Config::bool('alerts.enabled', false)) {
@@ -62,9 +59,6 @@ final readonly class IssueDispatcher
         }
     }
 
-    /**
-     * Run detectAll() and dispatch each issue that clears the cooldown gate.
-     */
     public function run(): void
     {
         if (! Config::bool('alerts.enabled', false)) {
@@ -137,9 +131,6 @@ final readonly class IssueDispatcher
         ));
     }
 
-    /**
-     * Scheduler entry — task hung past its expected finish.
-     */
     public function dispatchScheduledTaskHung(string $taskKey, string $runId, ?Event $task, int $startedAtMs, int $elapsedSeconds): void
     {
         if (! Config::bool('scheduler.alerts.enabled', false)) {
@@ -175,9 +166,6 @@ final readonly class IssueDispatcher
         ));
     }
 
-    /**
-     * Scheduler entry — expected fire didn't run.
-     */
     public function dispatchScheduledTaskMissed(string $taskKey, Event $task, int $expectedAtMs): void
     {
         if (! Config::bool('scheduler.alerts.enabled', false)) {
@@ -424,9 +412,7 @@ final readonly class IssueDispatcher
     }
 
     /**
-     * Mixed-tolerant int extractor for `Issue::$context` reads. PHPStan's
-     * strict-rules pass disallows `(int) $mixed` casts; this narrow helper
-     * keeps the match expression readable while satisfying the type checker.
+     * Mixed-tolerant int extractor — PHPStan strict-rules disallows `(int) $mixed`.
      *
      * @param  array<string, mixed>  $ctx
      */

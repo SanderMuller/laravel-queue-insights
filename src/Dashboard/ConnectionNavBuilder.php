@@ -6,14 +6,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 
-/**
- * Builds the connection-nav tab strip rendered above the headline cards.
- * Reads the configured snapshot connections, filters them through the
- * optional `viewQueueInsightsConnection` Gate, and emits a tab list ready
- * for the Blade partial.
- *
- * @internal
- */
+/** @internal */
 final readonly class ConnectionNavBuilder
 {
     /**
