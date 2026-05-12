@@ -52,23 +52,31 @@ final class ScheduleReader
             return [];
         }
 
-        $tasksKey = KeyPrefix::make('sched:tasks');
-        $rows = [];
+        $keys = [];
         foreach ($orderRaw as $key) {
-            if (! is_string($key)) {
-                continue;
+            if (is_string($key) && $key !== '') {
+                $keys[] = $key;
             }
+        }
 
-            if ($key === '') {
-                continue;
-            }
+        if ($keys === []) {
+            return [];
+        }
 
-            $json = $redis->command('hget', [$tasksKey, $key]);
-            if (! is_string($json)) {
-                continue;
-            }
+        // Single HMGET pulls every task summary from the `sched:tasks` hash
+        // in one round-trip, replacing N serial HGETs.
+        // Pass fields as a single array — both predis (variadic-normalised)
+        // and phpredis (strict `hMget(key, array)`) accept that shape; the
+        // variadic spread form blows up on phpredis ('expects exactly 2').
+        $values = $redis->command('hmget', [KeyPrefix::make('sched:tasks'), $keys]);
+        if (! is_array($values)) {
+            return [];
+        }
 
-            if ($json === '') {
+        $rows = [];
+        foreach ($keys as $idx => $key) {
+            $json = $values[$idx] ?? null;
+            if (! is_string($json) || $json === '') {
                 continue;
             }
 
