@@ -31,6 +31,7 @@
 @php
     use Cron\CronExpression;
     use Illuminate\Support\Facades\Date;
+    use Illuminate\Support\Str;
 
     $taskKey = is_string($task['task_key'] ?? null) ? $task['task_key'] : '';
     $description = is_string($task['description'] ?? null) && $task['description'] !== ''
@@ -149,6 +150,40 @@
                     </div>
                 @endif
             </section>
+
+            {{-- Needs-attention banner — surfaces WHICH 24h-window
+                 condition put this task on the needs-attention list.
+                 Mirrors the panel's classification rule
+                 (`failed > 0 || hung > 0 || missed > 0`). --}}
+            @php
+                $attentionReasons = [];
+                if (($stats['failed'] ?? 0) > 0) {
+                    $attentionReasons[] = ['icon' => '✗', 'label' => 'failed', 'count' => $stats['failed'], 'tone' => 'red'];
+                }
+                if (($stats['hung'] ?? 0) > 0) {
+                    $attentionReasons[] = ['icon' => '⏳', 'label' => 'hung', 'count' => $stats['hung'], 'tone' => 'amber'];
+                }
+                if (($stats['missed'] ?? 0) > 0) {
+                    $attentionReasons[] = ['icon' => '⏰', 'label' => 'missed', 'count' => $stats['missed'], 'tone' => 'amber'];
+                }
+            @endphp
+            @if($attentionReasons !== [])
+                <section data-section="schedule-task-attention" class="mb-6 rounded-xl bg-red-50 dark:bg-red-900/30 p-4 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
+                    <p class="text-[10px] font-medium uppercase tracking-wider text-red-700 dark:text-red-300">Needs attention</p>
+                    <ul role="list" class="mt-2 flex flex-col gap-1 text-sm text-red-900 dark:text-red-200">
+                        @foreach($attentionReasons as $reason)
+                            <li class="flex items-baseline gap-2 tabular-nums">
+                                <span class="text-base leading-none" aria-hidden="true">{{ $reason['icon'] }}</span>
+                                <span class="font-semibold">{{ number_format($reason['count']) }}</span>
+                                <span>{{ Str::plural('run', $reason['count']) }} {{ $reason['label'] }} in the past 24h</span>
+                            </li>
+                        @endforeach
+                    </ul>
+                    <p class="mt-2 text-[11px] leading-5 text-red-700/80 dark:text-red-300/80">
+                        Click a row in <strong>Recent runs</strong> below to open the per-run drilldown — exception block (failed), skip reason (missed), or runtime details (hung).
+                    </p>
+                </section>
+            @endif
 
             {{-- Window stats grid --}}
             <section data-section="schedule-task-stats" class="mb-6">

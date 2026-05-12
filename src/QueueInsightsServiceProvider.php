@@ -30,6 +30,7 @@ use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
 use SanderMuller\QueueInsights\Console\DefaultWorkerOutputStreams;
 use SanderMuller\QueueInsights\Console\DefaultWorkerProcessFactory;
 use SanderMuller\QueueInsights\Console\QueueInsightsPrometheusPushCommand;
+use SanderMuller\QueueInsights\Console\QueueInsightsPurgePendingCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsScheduleListCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsScheduleSweepCommand;
 use SanderMuller\QueueInsights\Console\QueueInsightsSnapshotCommand;
@@ -235,6 +236,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 QueueInsightsPrometheusPushCommand::class,
                 QueueInsightsScheduleListCommand::class,
                 QueueInsightsScheduleSweepCommand::class,
+                QueueInsightsPurgePendingCommand::class,
             ]);
         }
 

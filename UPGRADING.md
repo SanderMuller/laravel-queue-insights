@@ -24,6 +24,13 @@ Hosts whose configured default is already `'default'` need no action.
 **Cutover window.** Pre-0.16 entries on `pending-zset:{conn}:default` age out via `pending.ttl_seconds` (24 h). Until they do, `oldest_pending` may keep firing if `snapshots` still references the old literal `default`. Either update `snapshots` (recommended) or drop the orphans once after upgrade:
 
 ```bash
+# Shipped helper (since 0.16.1) — dry-runs by default; --force to delete.
+# Refuses unconfigured connections; only DELs per-uuid hashes whose stored
+# queue field matches the target (bystander pending entries are never touched).
+php artisan queue-insights:purge-pending sqs default              # dry-run, prints what it would touch
+php artisan queue-insights:purge-pending sqs default --force      # actually purge
+
+# Or raw redis-cli (older versions / one-off):
 redis-cli DEL '{prefix}pending-zset:sqs:default'
 ```
 
