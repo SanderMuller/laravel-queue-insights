@@ -17,7 +17,7 @@ it('returns a numerically-indexed list in queue order for the active driver', fu
     R::conn()->command('set', ['b', '2']);
     R::conn()->command('set', ['c', '3']);
 
-    $results = RedisPipeline::run(R::conn(), static function ($pipe): void {
+    $results = RedisPipeline::run(R::conn(), static function (mixed $pipe): void {
         $pipe->get('a');
         $pipe->get('b');
         $pipe->get('c');
@@ -36,7 +36,7 @@ it('preserves hash-shaped replies in the same indexed slot', function (): void {
     R::conn()->command('hset', ['h:1', 'b', '20']);
     R::conn()->command('hset', ['h:2', 'x', '100']);
 
-    $results = RedisPipeline::run(R::conn(), static function ($pipe): void {
+    $results = RedisPipeline::run(R::conn(), static function (mixed $pipe): void {
         $pipe->hgetall('h:1');
         $pipe->hgetall('h:2');
     });
@@ -56,5 +56,6 @@ it('returns an empty list when no commands are queued', function (): void {
         // intentionally empty
     });
 
-    expect($results)->toBe([]);
+    expect($results)
+        ->toBeEmpty();
 });

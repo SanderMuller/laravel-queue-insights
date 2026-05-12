@@ -94,6 +94,7 @@ final class ScheduleReader
         if (! is_array($raw)) {
             return [];
         }
+
         $values = array_values($raw);
 
         $rows = [];

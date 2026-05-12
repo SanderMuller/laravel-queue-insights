@@ -45,7 +45,7 @@ final readonly class RecordJobFailed
 
             $connectionName = (string) $event->connectionName;
             $queueRaw = (string) $event->job->getQueue();
-            $queueKey = CanonicalQueueKey::from($queueRaw === '' ? 'default' : $queueRaw);
+            $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connectionName);
 
             $class = $this->resolveJobClass->from($event->job, $connectionName, $queueKey);
 

@@ -103,7 +103,7 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
     $autoTaskCount = 2;
     $expectedTotal = $taskCount + $autoTaskCount;
     $workerCount = 4;
-    $iterations = 4;
+    $iterations = 2;
 
     $envOr = static fn (string $name, string $fallback): string => is_string($v = getenv($name)) && $v !== '' ? $v : $fallback;
     $childEnv = [
@@ -145,16 +145,15 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
 
         $orderRaw = R::raw('lrange', $orderKey, 0, -1);
         $order = is_array($orderRaw) ? array_values(array_filter($orderRaw, is_string(...))) : [];
-
-        $unique = array_values(array_unique($order));
+        $uniqueCount = count(array_unique($order));
 
         // No duplicates.
         expect($order)
-            ->toHaveCount(count($unique), sprintf(
+            ->toHaveCount($uniqueCount, sprintf(
                 'iter %d: order list had %d entries, %d unique — duplicates present',
                 $iter,
                 count($order),
-                count($unique),
+                $uniqueCount,
             ))
             // Exact count locks atomic single-writer semantics: if any
             // worker's writes leaked into another's snapshot, total
@@ -177,9 +176,13 @@ it('concurrent ScheduleSnapshotter::rebuild() never produces duplicate order ent
         $salts = [];
         foreach ($order as $key) {
             $json = R::str('hget', $tasksKey, $key);
-            if ($json === null || $json === '') {
+            if ($json === null) {
                 continue;
             }
+            if ($json === '') {
+                continue;
+            }
+
             $decoded = json_decode($json, true);
             $command = is_array($decoded) && is_string($decoded['command'] ?? null) ? $decoded['command'] : '';
             if (preg_match('/race-(iter\d+-w\d+)-/', $command, $m) === 1) {

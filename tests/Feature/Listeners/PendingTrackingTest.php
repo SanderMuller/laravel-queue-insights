@@ -302,3 +302,48 @@ it('RecordJobFailed skips failed-runtime:{uuid} when start:{uuid} is absent', fu
 
     expect(R::int('exists', 'qmtest:failed-runtime:' . $uuid))->toBe(0);
 });
+
+/**
+ * Vapor/SQS regression: dispatcher calls `dispatch(...)` without an explicit
+ * `->onQueue()`, so the SQS driver receives `$queue = null` at push time and
+ * routes to its configured default (`SQS_QUEUE=staging_default` in Vapor).
+ * The JobQueued event still carries an empty `$event->queue`, while the
+ * worker-side popped Job exposes the real queue name on `getQueue()`. Before
+ * the fix the listener stored `pending-zset:sqs:default` while the cleanup
+ * path deleted `pending-zset:sqs:staging_default` — the pending entry never
+ * cleared and `oldest_pending` tripped on long-completed jobs.
+ *
+ * Reproduces the divergence + asserts the fix keeps both writers on the
+ * configured-default zset.
+ */
+it('aligns producer and worker zset keys when JobQueued carries an empty queue (Vapor/SQS)', function (): void {
+    config()->set('queue.connections.sqs.queue', 'staging_default');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69VAPR';
+
+    // Producer side — dispatcher omitted ->onQueue(), $event->queue is ''.
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'sqs', ''));
+
+    expect(R::int('exists', 'qmtest:pending-zset:sqs:staging_default'))->toBe(1)
+        ->and(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(0)
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'queue'))->toBe('staging_default');
+
+    // Worker side — popped job reports the real queue. Cleanup must delete
+    // the same zset key the producer wrote.
+    $event = new JobProcessed(connectionName: 'sqs', job: makePendingJobMock($uuid, 'staging_default'));
+    resolve(RecordJobProcessed::class)->handle($event);
+
+    expect(R::int('zcard', 'qmtest:pending-zset:sqs:staging_default'))->toBe(0)
+        ->and(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0);
+});
+
+it('producer falls back to the literal "default" when no connection default is configured', function (): void {
+    config()->set('queue.connections.weird', []);
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69WIRD';
+
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'weird', ''));
+
+    expect(R::int('exists', 'qmtest:pending-zset:weird:default'))->toBe(1)
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'queue'))->toBe('default');
+});

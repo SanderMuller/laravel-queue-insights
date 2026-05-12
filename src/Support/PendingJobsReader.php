@@ -388,7 +388,7 @@ final class PendingJobsReader
 
     private static function zsetKey(string $connection, string $queue): string
     {
-        $canonical = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
+        $canonical = CanonicalQueueKey::fromOrDefault($queue, $connection);
 
         return KeyPrefix::make("pending-zset:{$connection}:{$canonical}");
     }

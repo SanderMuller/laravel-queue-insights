@@ -44,3 +44,37 @@ it('rejects whitespace-only input', function (): void {
 it('rejects input that normalizes to an empty key via trailing slash', function (): void {
     CanonicalQueueKey::from('https://sqs.example/acct/');
 })->throws(InvalidArgumentException::class);
+
+it('fromOrDefault resolves the connection-configured queue when input is empty', function (): void {
+    config()->set('queue.connections.sqs.queue', 'staging_default');
+
+    expect(CanonicalQueueKey::fromOrDefault('', 'sqs'))->toBe('staging_default');
+});
+
+it('fromOrDefault canonicalises an SQS URL stored as the connection default', function (): void {
+    config()->set('queue.connections.sqs.queue', 'https://sqs.eu-west-1.amazonaws.com/123/staging-q');
+
+    expect(CanonicalQueueKey::fromOrDefault('', 'sqs'))->toBe('staging-q');
+});
+
+it('fromOrDefault falls back to the literal "default" when no connection default is configured', function (): void {
+    config()->set('queue.connections.weird', []);
+
+    expect(CanonicalQueueKey::fromOrDefault('', 'weird'))->toBe('default');
+});
+
+it('fromOrDefault falls back to the literal "default" when connection name is empty', function (): void {
+    expect(CanonicalQueueKey::fromOrDefault('', ''))->toBe('default');
+});
+
+it('fromOrDefault delegates to from() when input is non-empty', function (): void {
+    config()->set('queue.connections.sqs.queue', 'should-not-be-used');
+
+    expect(CanonicalQueueKey::fromOrDefault('explicit-queue', 'sqs'))->toBe('explicit-queue');
+});
+
+it('fromOrDefault treats whitespace-only input as empty', function (): void {
+    config()->set('queue.connections.sqs.queue', 'staging_default');
+
+    expect(CanonicalQueueKey::fromOrDefault("\t  \n", 'sqs'))->toBe('staging_default');
+});

@@ -30,7 +30,11 @@ final class RecordJobProcessing
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
             $connection = (string) $event->connectionName;
-            $queue = (string) ($event->job->getQueue() ?? 'default');
+            // Worker normally surfaces the real queue (popped job carries it),
+            // but `getQueue()` can be null on driver edges — resolve via the
+            // connection's configured default so the key matches the
+            // producer-side write in RecordJobQueued.
+            $queue = (string) ($event->job->getQueue() ?? '');
 
             // Use SETEX (key, ttl, value) — same 3-arg signature on phpredis and Predis.
             // `SET key val EX ttl` has divergent arg shapes across drivers.
@@ -106,7 +110,7 @@ final class RecordJobProcessing
             // queue URL (SQS) is written under the same key the dashboard
             // reads it under (WaitTimeMetrics is called with the canonical
             // queue from QueueRowsBuilder). Mirrors markInFlight() above.
-            $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
+            $queueKey = CanonicalQueueKey::fromOrDefault($queue, $connection);
             $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
 
             $redis->command('zadd', [$waitKey, $now, $uuid]);
@@ -149,7 +153,7 @@ final class RecordJobProcessing
         // CanonicalQueueKey on the cleanup side mirrors the writer in
         // RecordJobQueued, so the zset key matches even when the producer
         // saw a queue URL (SQS) and the worker reports the plain name.
-        $queueKey = $queue === '' ? 'default' : CanonicalQueueKey::from($queue);
+        $queueKey = CanonicalQueueKey::fromOrDefault($queue, $connection);
 
         RedisEval::exec(
             $redis,
@@ -235,13 +239,16 @@ final class RecordJobProcessing
             $connection = $context['chain_connection']
                 ?? (string) $event->connectionName;
             $queueRaw = $context['chain_queue']
-                ?? (string) ($event->job->getQueue() ?? 'default');
+                ?? (string) ($event->job->getQueue() ?? '');
 
             // Canonicalize the queue value before composing the key so SQS
             // (where producers stamp queue URLs and workers report logical
             // names) and other URL-vs-name divergences land on the same
-            // key shape on both push and pop sides.
-            $queueKey = $queueRaw === '' ? 'default' : CanonicalQueueKey::from($queueRaw);
+            // key shape on both push and pop sides. `fromOrDefault` resolves
+            // the connection's configured default when the chain context /
+            // popped job carry an empty queue (Vapor with non-'default'
+            // SQS_QUEUE) — matches the producer side in RecordJobQueued.
+            $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
             $key = ChainLineageClaim::key($connection, $queueKey, $context['next_class'], $tailClasses);
 

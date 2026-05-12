@@ -298,7 +298,7 @@ final class AggregatesQuery
      */
     private function pipelineStatsFanOut(array $keys, array $buckets): array
     {
-        return RedisPipeline::run($this->redis(), static function ($pipe) use ($keys, $buckets): void {
+        return RedisPipeline::run($this->redis(), static function (mixed $pipe) use ($keys, $buckets): void {
             foreach ($keys as $taskKey) {
                 foreach ($buckets as $bucket) {
                     $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
@@ -320,7 +320,7 @@ final class AggregatesQuery
      */
     private function pipelineSparklineFanOut(array $keys, array $buckets): array
     {
-        return RedisPipeline::run($this->redis(), static function ($pipe) use ($buckets, $keys): void {
+        return RedisPipeline::run($this->redis(), static function (mixed $pipe) use ($buckets, $keys): void {
             foreach ($buckets as $bucket) {
                 foreach ($keys as $taskKey) {
                     $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));

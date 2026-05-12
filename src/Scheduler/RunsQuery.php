@@ -40,7 +40,7 @@ final class RunsQuery
      * Bounded so a runaway zset can't fan out into a megabyte-scale
      * `hgetall` pipeline.
      */
-    private const MAX_CANDIDATES = 2000;
+    private const int MAX_CANDIDATES = 2000;
 
     /**
      * @param  RunFilters  $filters
@@ -141,7 +141,7 @@ final class RunsQuery
 
         // Single pipeline for the N per-run HGETALL fan-out. ZREVRANGE
         // result order is preserved in the pipeline response.
-        $hashes = RedisPipeline::run($redis, static function ($pipe) use ($pairs): void {
+        $hashes = RedisPipeline::run($redis, static function (mixed $pipe) use ($pairs): void {
             foreach ($pairs as [$taskKey, $runId]) {
                 $pipe->hgetall(KeyPrefix::make("sched:run:{$taskKey}:{$runId}"));
             }

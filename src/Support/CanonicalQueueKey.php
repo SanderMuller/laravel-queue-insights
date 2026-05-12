@@ -29,4 +29,41 @@ final class CanonicalQueueKey
 
         return $normalized;
     }
+
+    /**
+     * Canonicalise the queue value, falling back to the connection's
+     * configured default queue (`queue.connections.{$connection}.queue`)
+     * when `$input` is empty.
+     *
+     * Empty `$input` is the JobQueued shape Laravel emits when a job is
+     * dispatched without an explicit `->onQueue()` — the driver routes
+     * to its `$this->default` at push time, but the event still carries
+     * `null` / empty for `$event->queue`. Without this lookup the listener
+     * would write to `pending-zset:{conn}:default` while the worker (which
+     * reads the real queue off the popped job) writes to
+     * `pending-zset:{conn}:{configured-default}` — keys diverge and the
+     * pending entry never clears, tripping oldest_pending alerts on
+     * long-completed jobs (Vapor / SQS hit this when `SQS_QUEUE` is set
+     * to anything other than the literal string 'default').
+     *
+     * Last-resort fallback is the literal `'default'` for environments
+     * where the connection isn't configured or `$connection` is empty.
+     */
+    public static function fromOrDefault(string $input, string $connection): string
+    {
+        $trimmed = trim($input);
+        if ($trimmed !== '') {
+            return self::from($trimmed);
+        }
+
+        $configured = $connection !== ''
+            ? config("queue.connections.{$connection}.queue")
+            : null;
+
+        $resolved = is_string($configured) && trim($configured) !== ''
+            ? trim($configured)
+            : 'default';
+
+        return self::from($resolved);
+    }
 }

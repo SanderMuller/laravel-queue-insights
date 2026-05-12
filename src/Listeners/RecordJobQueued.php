@@ -105,8 +105,12 @@ final class RecordJobQueued
         // URLs vs plain names) so the zset key written here matches the
         // cleanup zset key read in RecordJobProcessing / Processed / Failed,
         // where the queue arrives as `$event->job->getQueue()` (a name, not
-        // a URL).
-        $queueKey = $queueRaw === '' ? 'default' : CanonicalQueueKey::from($queueRaw);
+        // a URL). `fromOrDefault` resolves the connection's configured
+        // default queue when JobQueued carries an empty value (Laravel
+        // doesn't fill it in when the caller omits `->onQueue()`); writing
+        // the literal 'default' here would orphan pending entries on hosts
+        // whose default queue is, e.g., 'staging_default' (Vapor / SQS).
+        $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
         $hashKey = KeyPrefix::make("pending:{$uuid}");
         $zsetKey = KeyPrefix::make("pending-zset:{$connection}:{$queueKey}");
@@ -317,7 +321,11 @@ final class RecordJobQueued
         // SQS producers stamp queue URLs on JobQueued while the worker
         // reports the logical name on JobProcessing. Without canonicalising
         // both sides, every chained SQS job would silently miss its claim.
-        $queueKey = $queueRaw === '' ? 'default' : CanonicalQueueKey::from($queueRaw);
+        // `fromOrDefault` also resolves the connection-default queue when
+        // the dispatcher didn't pass `->onQueue()` (Vapor/SQS hosts with
+        // a non-'default' `SQS_QUEUE` would otherwise key the claim under
+        // 'default' while the parent worker keyed it under the real name).
+        $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
         $store = new ChainLineageStore();
         $key = ChainLineageClaim::key($connection, $queueKey, $childClass, $tailClasses);
