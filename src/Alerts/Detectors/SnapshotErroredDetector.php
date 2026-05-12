@@ -22,20 +22,25 @@ final class SnapshotErroredDetector
 
     public function detect(string $connection, string $canonicalQueue): ?Issue
     {
-        if (! Config::bool('alerts.rules.snapshot_errored.enabled', true)) {
+        if (! $this->ruleEnabled()) {
             return null;
         }
 
-        $redis = $this->redis();
         $key = KeyPrefix::make("snapshot:error:{$connection}:{$canonicalQueue}");
+        $message = $this->redis()->command('get', [$key]);
 
-        $exists = $redis->command('exists', [$key]);
-        if (! is_numeric($exists) || (int) $exists === 0) {
+        return $this->evaluate($connection, $canonicalQueue, $message);
+    }
+
+    /**
+     * Build the Issue from a preloaded `snapshot:error:{c}:{q}` GET. Callers
+     * MUST gate on `ruleEnabled()` before enqueuing the read.
+     */
+    public function evaluate(string $connection, string $canonicalQueue, mixed $messageRaw): ?Issue
+    {
+        if (! is_string($messageRaw)) {
             return null;
         }
-
-        $message = $redis->command('get', [$key]);
-        $message = is_string($message) ? $message : '';
 
         return new Issue(
             rule: self::RULE,
@@ -44,12 +49,17 @@ final class SnapshotErroredDetector
             queue: $canonicalQueue,
             jobClass: null,
             title: 'Snapshot driver failed',
-            description: "Latest snapshot for {$connection}:{$canonicalQueue} failed: {$message}",
+            description: "Latest snapshot for {$connection}:{$canonicalQueue} failed: {$messageRaw}",
             context: [
-                'error_message' => $message,
+                'error_message' => $messageRaw,
             ],
             detectedAt: Date::now()->getTimestamp(),
         );
+    }
+
+    public function ruleEnabled(): bool
+    {
+        return Config::bool('alerts.rules.snapshot_errored.enabled', true);
     }
 
     private function severity(): AlertSeverity

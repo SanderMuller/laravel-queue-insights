@@ -40,8 +40,17 @@ final readonly class IssueDetector
     {
         $issues = [];
 
-        foreach ($this->queueScope() as [$connection, $canonicalQueue]) {
-            foreach ($this->detectQueueScoped($connection, $canonicalQueue, depth: null) as $issue) {
+        $pairs = $this->queueScope();
+        if ($pairs !== []) {
+            $batch = new IssueDetectorBatch(
+                $this->depthDetector,
+                $this->stalledDetector,
+                $this->oldestPendingDetector,
+                $this->stuckInFlightDetector,
+                $this->snapshotErroredDetector,
+                $this->backlogGrowingDetector,
+            );
+            foreach ($batch->run($pairs) as $issue) {
                 $issues[] = $issue;
             }
         }

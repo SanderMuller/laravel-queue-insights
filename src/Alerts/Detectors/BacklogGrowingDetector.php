@@ -22,14 +22,24 @@ final class BacklogGrowingDetector
 
     public function detect(string $connection, string $canonicalQueue): ?Issue
     {
-        if (! Config::bool('alerts.rules.backlog_growing.enabled', false)) {
+        if (! $this->ruleEnabled()) {
             return null;
         }
 
+        return $this->evaluate($connection, $canonicalQueue, $this->readSamples($connection, $canonicalQueue));
+    }
+
+    /**
+     * Build the Issue from preloaded sample pairs. Callers MUST gate on
+     * `ruleEnabled()` before enqueuing the read.
+     *
+     * @param  list<array{0: int, 1: int}>  $samples  list of [ts, depth] pairs sorted by ts ascending
+     */
+    public function evaluate(string $connection, string $canonicalQueue, array $samples): ?Issue
+    {
         $minSamples = max(2, Config::int('alerts.rules.backlog_growing.min_samples', 5));
         $minSlopePerMinute = $this->minSlopePerMinute();
 
-        $samples = $this->readSamples($connection, $canonicalQueue);
         if (count($samples) < $minSamples) {
             return null;
         }
@@ -70,14 +80,21 @@ final class BacklogGrowingDetector
         );
     }
 
-    /**
-     * @return list<array{0: int, 1: int}>  list of [ts, depth] pairs sorted by ts ascending
-     */
-    private function readSamples(string $connection, string $canonicalQueue): array
+    public function ruleEnabled(): bool
     {
-        $key = KeyPrefix::make("samples:depth:{$connection}:{$canonicalQueue}");
-        $rows = $this->redis()->command('zrange', [$key, 0, -1, ['WITHSCORES' => true]]);
+        return Config::bool('alerts.rules.backlog_growing.enabled', false);
+    }
 
+    /**
+     * Decode a `samples:depth:{c}:{q}` zset WITHSCORES result into the
+     * [ts, depth] tuples the evaluator expects. Public so the batched
+     * `IssueDetector::detectAll` path can pipeline the ZRANGE and feed the
+     * raw result back in.
+     *
+     * @return list<array{0: int, 1: int}>
+     */
+    public static function decodeSamples(mixed $rows): array
+    {
         if (! is_array($rows)) {
             return [];
         }
@@ -94,11 +111,7 @@ final class BacklogGrowingDetector
             }
 
             $depthRaw = substr($member, $colon + 1);
-            if (! is_numeric($depthRaw)) {
-                continue;
-            }
-
-            if (! is_numeric($score)) {
+            if (! is_numeric($depthRaw) || ! is_numeric($score)) {
                 continue;
             }
 
@@ -106,6 +119,17 @@ final class BacklogGrowingDetector
         }
 
         return $samples;
+    }
+
+    /**
+     * @return list<array{0: int, 1: int}>  list of [ts, depth] pairs sorted by ts ascending
+     */
+    private function readSamples(string $connection, string $canonicalQueue): array
+    {
+        $key = KeyPrefix::make("samples:depth:{$connection}:{$canonicalQueue}");
+        $rows = $this->redis()->command('zrange', [$key, 0, -1, ['WITHSCORES' => true]]);
+
+        return self::decodeSamples($rows);
     }
 
     /**

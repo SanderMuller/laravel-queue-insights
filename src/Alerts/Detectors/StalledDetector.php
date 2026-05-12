@@ -23,13 +23,9 @@ final class StalledDetector
 
     public function detect(string $connection, string $canonicalQueue): ?Issue
     {
-        if (! Config::bool('alerts.rules.stalled.enabled', true)) {
+        if (! $this->ruleEnabled()) {
             return null;
         }
-
-        $idleSeconds = Config::int('alerts.rules.stalled.idle_seconds', 120);
-        $minDepth = Config::int('alerts.rules.stalled.min_depth', 1);
-        $severity = $this->severity();
 
         $redis = $this->redis();
 
@@ -37,19 +33,8 @@ final class StalledDetector
             KeyPrefix::make("live:depth:{$connection}:{$canonicalQueue}"),
         ]);
 
-        // No live:depth key = snapshot command itself isn't running; let the
-        // dashboard-only snapshot_command_dead watchdog cover that case so we
-        // don't fire two alerts for the same root cause.
-        if (! is_string($depthRaw) && ! is_numeric($depthRaw)) {
-            return null;
-        }
-
-        $depth = (int) $depthRaw;
-        if ($depth < $minDepth) {
-            return null;
-        }
-
         $now = Date::now()->getTimestamp();
+        $idleSeconds = Config::int('alerts.rules.stalled.idle_seconds', 120);
         $threshold = $now - $idleSeconds;
 
         $recent = $redis->command('zcount', [
@@ -58,13 +43,39 @@ final class StalledDetector
             '+inf',
         ]);
 
+        return $this->evaluate($connection, $canonicalQueue, $depthRaw, $recent);
+    }
+
+    /**
+     * Build the Issue from preloaded `live:depth` GET + `wait` ZCOUNT
+     * results. Callers MUST gate on `ruleEnabled()` before pipelining the
+     * reads so disabled queues don't enqueue them.
+     */
+    public function evaluate(string $connection, string $canonicalQueue, mixed $depthRaw, mixed $recent): ?Issue
+    {
+        // No live:depth key = snapshot command itself isn't running; let the
+        // dashboard-only snapshot_command_dead watchdog cover that case so we
+        // don't fire two alerts for the same root cause.
+        if (! is_string($depthRaw) && ! is_numeric($depthRaw)) {
+            return null;
+        }
+
+        $depth = (int) $depthRaw;
+        $minDepth = Config::int('alerts.rules.stalled.min_depth', 1);
+        if ($depth < $minDepth) {
+            return null;
+        }
+
         if (is_int($recent) && $recent > 0) {
             return null;
         }
 
+        $idleSeconds = Config::int('alerts.rules.stalled.idle_seconds', 120);
+        $now = Date::now()->getTimestamp();
+
         return new Issue(
             rule: self::RULE,
-            severity: $severity,
+            severity: $this->severity(),
             connection: $connection,
             queue: $canonicalQueue,
             jobClass: null,
@@ -77,6 +88,16 @@ final class StalledDetector
             ],
             detectedAt: $now,
         );
+    }
+
+    public function ruleEnabled(): bool
+    {
+        return Config::bool('alerts.rules.stalled.enabled', true);
+    }
+
+    public function idleSeconds(): int
+    {
+        return Config::int('alerts.rules.stalled.idle_seconds', 120);
     }
 
     private function severity(): AlertSeverity

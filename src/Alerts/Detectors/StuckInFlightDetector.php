@@ -22,17 +22,11 @@ final class StuckInFlightDetector
 
     public function detect(string $connection, string $canonicalQueue): ?Issue
     {
-        if (! Config::bool('alerts.rules.stuck_inflight.enabled', true)) {
-            return null;
-        }
-
-        if (! Config::bool('pending.enabled', true)) {
+        if (! $this->ruleEnabled()) {
             return null;
         }
 
         $now = Date::now()->getTimestamp();
-        $thresholdSeconds = Config::int('alerts.rules.stuck_inflight.seconds', 300);
-
         $redis = $this->redis();
 
         $row = $redis->command('zrange', [
@@ -43,18 +37,34 @@ final class StuckInFlightDetector
         ]);
 
         $head = ZsetHead::firstMemberScore($row);
+
+        $jobClass = null;
+        if ($head !== null) {
+            $jobClass = $this->resolveClass($redis, $head[0]);
+        }
+
+        return $this->evaluate($connection, $canonicalQueue, $head, $jobClass, $now);
+    }
+
+    /**
+     * Build the Issue from a preloaded zset head + (optional) job class.
+     * Callers MUST gate on `ruleEnabled()` before enqueuing reads.
+     *
+     * @param  array{0: string, 1: float|int}|null  $head  [uuid, startedAt] or null when absent
+     */
+    public function evaluate(string $connection, string $canonicalQueue, ?array $head, ?string $jobClass, int $now): ?Issue
+    {
         if ($head === null) {
             return null;
         }
 
+        $thresholdSeconds = Config::int('alerts.rules.stuck_inflight.seconds', 300);
         [$uuid, $startedAtFloat] = $head;
         $startedAt = (int) $startedAtFloat;
         $age = $now - $startedAt;
         if ($age < $thresholdSeconds) {
             return null;
         }
-
-        $jobClass = $this->resolveClass($redis, $uuid);
 
         return new Issue(
             rule: self::RULE,
@@ -73,6 +83,17 @@ final class StuckInFlightDetector
             ],
             detectedAt: $now,
         );
+    }
+
+    public function ruleEnabled(): bool
+    {
+        return Config::bool('alerts.rules.stuck_inflight.enabled', true)
+            && Config::bool('pending.enabled', true);
+    }
+
+    public function thresholdSeconds(): int
+    {
+        return Config::int('alerts.rules.stuck_inflight.seconds', 300);
     }
 
     private function resolveClass(RedisConnection $redis, string $uuid): ?string

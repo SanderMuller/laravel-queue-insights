@@ -21,7 +21,20 @@ final class DepthDetector
             return null;
         }
 
-        $depth = $this->readDepth($connection, $canonicalQueue);
+        return $this->evaluate($connection, $canonicalQueue, $this->readDepth($connection, $canonicalQueue));
+    }
+
+    /**
+     * Build the Issue from a preloaded `live:depth` read. Lets the batched
+     * `IssueDetector::detectAll` path pipeline the GET fan-out across every
+     * configured queue and skip the per-detector Redis hop here.
+     *
+     * Callers MUST gate on `ruleEnabled()` before invoking — keeping that
+     * check separate lets the batch path skip enqueuing the read entirely
+     * when the rule is disabled.
+     */
+    public function evaluate(string $connection, string $canonicalQueue, ?int $depth): ?Issue
+    {
         if ($depth === null) {
             return null;
         }
@@ -75,7 +88,7 @@ final class DepthDetector
         );
     }
 
-    private function ruleEnabled(): bool
+    public function ruleEnabled(): bool
     {
         // Legacy config (alerts.thresholds at top level) implicitly enables the depth rule.
         if (Config::array('alerts.thresholds') !== []) {

@@ -25,17 +25,11 @@ final class OldestPendingDetector
 
     public function detect(string $connection, string $canonicalQueue): ?Issue
     {
-        if (! Config::bool('alerts.rules.oldest_pending.enabled', true)) {
-            return null;
-        }
-
-        if (! Config::bool('pending.enabled', true)) {
+        if (! $this->ruleEnabled()) {
             return null;
         }
 
         $now = Date::now()->getTimestamp();
-        $thresholdSeconds = Config::int('alerts.rules.oldest_pending.seconds', 600);
-
         $redis = $this->redis();
 
         // Pull the oldest available_at <= now uuid. Skips delayed jobs that
@@ -48,18 +42,34 @@ final class OldestPendingDetector
         ]);
 
         $head = ZsetHead::firstMemberScore($row);
+
+        $jobClass = null;
+        if ($head !== null) {
+            $jobClass = $this->resolveClass($redis, $head[0]);
+        }
+
+        return $this->evaluate($connection, $canonicalQueue, $head, $jobClass, $now);
+    }
+
+    /**
+     * Build the Issue from a preloaded zset head + (optional) job class.
+     * Callers MUST gate on `ruleEnabled()` before enqueuing reads.
+     *
+     * @param  array{0: string, 1: float|int}|null  $head  [uuid, availableAt] or null when absent
+     */
+    public function evaluate(string $connection, string $canonicalQueue, ?array $head, ?string $jobClass, int $now): ?Issue
+    {
         if ($head === null) {
             return null;
         }
 
+        $thresholdSeconds = Config::int('alerts.rules.oldest_pending.seconds', 600);
         [$uuid, $availableAtFloat] = $head;
         $availableAt = (int) $availableAtFloat;
         $age = $now - $availableAt;
         if ($age < $thresholdSeconds) {
             return null;
         }
-
-        $jobClass = $this->resolveClass($redis, $uuid);
 
         return new Issue(
             rule: self::RULE,
@@ -78,6 +88,17 @@ final class OldestPendingDetector
             ],
             detectedAt: $now,
         );
+    }
+
+    public function ruleEnabled(): bool
+    {
+        return Config::bool('alerts.rules.oldest_pending.enabled', true)
+            && Config::bool('pending.enabled', true);
+    }
+
+    public function thresholdSeconds(): int
+    {
+        return Config::int('alerts.rules.oldest_pending.seconds', 600);
     }
 
     private function resolveClass(RedisConnection $redis, string $uuid): ?string
