@@ -53,7 +53,7 @@ final readonly class IssueDetectorBatch
     public function run(array $pairs): array
     {
         $flags = $this->collectEnabledFlags();
-        if (! $flags['any']) {
+        if (! in_array(true, $flags, true)) {
             return [];
         }
 
@@ -73,31 +73,23 @@ final readonly class IssueDetectorBatch
     }
 
     /**
-     * @return array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}
+     * @return array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}
      */
     private function collectEnabledFlags(): array
     {
-        $depth = $this->depthDetector->ruleEnabled();
-        $stalled = $this->stalledDetector->ruleEnabled();
-        $oldest = $this->oldestPendingDetector->ruleEnabled();
-        $stuck = $this->stuckInFlightDetector->ruleEnabled();
-        $errored = $this->snapshotErroredDetector->ruleEnabled();
-        $backlog = $this->backlogGrowingDetector->ruleEnabled();
-
         return [
-            'depth' => $depth,
-            'stalled' => $stalled,
-            'oldest' => $oldest,
-            'stuck' => $stuck,
-            'errored' => $errored,
-            'backlog' => $backlog,
-            'any' => $depth || $stalled || $oldest || $stuck || $errored || $backlog,
+            'depth' => $this->depthDetector->ruleEnabled(),
+            'stalled' => $this->stalledDetector->ruleEnabled(),
+            'oldest' => $this->oldestPendingDetector->ruleEnabled(),
+            'stuck' => $this->stuckInFlightDetector->ruleEnabled(),
+            'errored' => $this->snapshotErroredDetector->ruleEnabled(),
+            'backlog' => $this->backlogGrowingDetector->ruleEnabled(),
         ];
     }
 
     /**
      * @param  list<array{0: string, 1: string}>  $pairs
-     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}  $flags
+     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return list<mixed>
      */
     private function runPhase1(RedisConnection $redis, array $pairs, array $flags, int $now, int $stalledThreshold): array
@@ -132,7 +124,7 @@ final readonly class IssueDetectorBatch
     }
 
     /**
-     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}  $flags
+     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      */
     private function stride(array $flags): int
     {
@@ -152,7 +144,7 @@ final readonly class IssueDetectorBatch
     /**
      * @param  list<array{0: string, 1: string}>  $pairs
      * @param  list<mixed>  $phase1
-     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}  $flags
+     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return array{0: array<int, array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}>, 1: list<array{idx: int, kind: 'oldest'|'stuck', uuid: string}>}
      */
     private function decodePhase1(array $pairs, array $phase1, int $stride, array $flags, int $now): array
@@ -174,7 +166,7 @@ final readonly class IssueDetectorBatch
 
     /**
      * @param  list<mixed>  $phase1
-     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}  $flags
+     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}
      */
     private function decodePairSlice(array $phase1, int $offset, array $flags): array
@@ -266,7 +258,7 @@ final readonly class IssueDetectorBatch
      * @param  list<array{0: string, 1: string}>  $pairs
      * @param  array<int, array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}>  $perPair
      * @param  array{oldest: array<int, ?string>, stuck: array<int, ?string>}  $classByPair
-     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}  $flags
+     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return list<Issue>
      */
     private function buildIssues(array $pairs, array $perPair, array $classByPair, array $flags, int $now): array
@@ -284,7 +276,7 @@ final readonly class IssueDetectorBatch
     /**
      * @param  array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}  $state
      * @param  array{oldest: array<int, ?string>, stuck: array<int, ?string>}  $classByPair
-     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool, any: bool}  $flags
+     * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return list<Issue>
      */
     private function evaluatePair(string $c, string $q, array $state, array $classByPair, array $flags, int $now, int $i): array
@@ -296,7 +288,7 @@ final readonly class IssueDetectorBatch
             $issues[] = $this->depthDetector->evaluate($c, $q, $depthInt);
         }
         if ($flags['stalled']) {
-            $issues[] = $this->stalledDetector->evaluate($c, $q, $state['depthRaw'], $state['recent']);
+            $issues[] = $this->stalledDetector->evaluate($c, $q, $state['depthRaw'], $state['recent'], $now);
         }
         if ($flags['oldest']) {
             $issues[] = $this->oldestPendingDetector->evaluate($c, $q, $state['oldestHead'], $classByPair['oldest'][$i] ?? null, $now);

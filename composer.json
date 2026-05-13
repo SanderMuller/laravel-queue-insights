@@ -43,7 +43,7 @@
         "predis/predis": "^2.2 || ^3.0",
         "rector/rector": "^2.4.1",
         "rector/type-perfect": "^2.1.2",
-        "sandermuller/package-boost": "^0.14.0",
+        "sandermuller/package-boost": "^0.15.0",
         "spaze/phpstan-disallowed-calls": "^4.10",
         "symplify/phpstan-extensions": "^12.0.2",
         "tomasvotruba/cognitive-complexity": "^1.1",

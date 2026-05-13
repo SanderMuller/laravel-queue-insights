@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use InvalidArgumentException;
@@ -9,6 +10,11 @@ use InvalidArgumentException;
 /** Reads pending-tracking Redis storage written by `RecordJobQueued`. */
 final class PendingJobsReader
 {
+    private static function connection(): RedisConnection
+    {
+        return Redis::connection(Config::string('redis_connection', 'default'));
+    }
+
     /**
      * Range over the pending-tracking zset and hydrate each uuid's hash.
      * Min/max use Redis ZRANGEBYSCORE syntax — `-inf`, `+inf`, or `(N` for
@@ -22,7 +28,7 @@ final class PendingJobsReader
             return [];
         }
 
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
         $key = self::zsetKey($connection, $queue);
         $effectiveLimit = min($limit, 1000);
 
@@ -147,7 +153,7 @@ final class PendingJobsReader
         // dashboard renders all three categories (pending / delayed /
         // in-flight) per poll. On non-loopback Redis each RTT is the
         // dominant cost.
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
         $keyPrefix = $inFlight ? 'inflight-zset' : 'pending-zset';
 
         $results = RedisPipeline::run($redis, static function (mixed $client) use ($resolved, $keyPrefix, $min, $max, $effective): void {
@@ -235,7 +241,7 @@ final class PendingJobsReader
             return null;
         }
 
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
         $hash = $redis->command('hgetall', [KeyPrefix::make("pending:{$uuid}")]);
         if (! is_array($hash) || $hash === []) {
             return null;
@@ -280,7 +286,7 @@ final class PendingJobsReader
 
     public static function trackedCount(string $connection, string $queue): int
     {
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
         $value = $redis->command('zcard', [self::zsetKey($connection, $queue)]);
 
         return is_numeric($value) ? (int) $value : 0;
@@ -313,7 +319,7 @@ final class PendingJobsReader
             return [];
         }
 
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
         $effectiveLimit = min($limit, 1000);
 
         $result = $redis->command('zrangebyscore', [
@@ -374,7 +380,7 @@ final class PendingJobsReader
             return [];
         }
 
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
 
         // Pipeline the per-uuid HGETALL fan-out. Previously this method
         // issued one HGETALL per uuid sequentially (50 + 50 + 50 = 150 RTT
@@ -402,7 +408,7 @@ final class PendingJobsReader
      */
     private static function readHash(string $uuid): ?array
     {
-        $redis = Redis::connection(Config::string('redis_connection', 'default'));
+        $redis = self::connection();
         $hash = $redis->command('hgetall', [KeyPrefix::make("pending:{$uuid}")]);
 
         return self::parseHash($uuid, $hash);

@@ -34,8 +34,7 @@ final class StalledDetector
         ]);
 
         $now = Date::now()->getTimestamp();
-        $idleSeconds = Config::int('alerts.rules.stalled.idle_seconds', 120);
-        $threshold = $now - $idleSeconds;
+        $threshold = $now - $this->idleSeconds();
 
         $recent = $redis->command('zcount', [
             KeyPrefix::make("wait:{$connection}:{$canonicalQueue}"),
@@ -43,7 +42,7 @@ final class StalledDetector
             '+inf',
         ]);
 
-        return $this->evaluate($connection, $canonicalQueue, $depthRaw, $recent);
+        return $this->evaluate($connection, $canonicalQueue, $depthRaw, $recent, $now);
     }
 
     /**
@@ -51,11 +50,10 @@ final class StalledDetector
      * results. Callers MUST gate on `ruleEnabled()` before pipelining the
      * reads so disabled queues don't enqueue them.
      */
-    public function evaluate(string $connection, string $canonicalQueue, mixed $depthRaw, mixed $recent): ?Issue
+    public function evaluate(string $connection, string $canonicalQueue, mixed $depthRaw, mixed $recent, int $now): ?Issue
     {
-        // No live:depth key = snapshot command itself isn't running; let the
-        // dashboard-only snapshot_command_dead watchdog cover that case so we
-        // don't fire two alerts for the same root cause.
+        // No live:depth key = snapshot command isn't running; the
+        // dashboard-only snapshot_command_dead watchdog covers that.
         if (! is_string($depthRaw) && ! is_numeric($depthRaw)) {
             return null;
         }
@@ -70,8 +68,7 @@ final class StalledDetector
             return null;
         }
 
-        $idleSeconds = Config::int('alerts.rules.stalled.idle_seconds', 120);
-        $now = Date::now()->getTimestamp();
+        $idleSeconds = $this->idleSeconds();
 
         return new Issue(
             rule: self::RULE,
