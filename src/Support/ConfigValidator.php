@@ -345,6 +345,7 @@ final class ConfigValidator
      *    a worker on C would write to C, leaving drift unfixed. Operators
      *    flatten the chain manually so intent is explicit.
      *  - mutual cycles (`A => B, B => A`) fall under the chain rule above
+     *  - neither key nor value may contain Redis glob metacharacters
      *
      * @param  array<array-key, mixed>  $aliases
      */
@@ -365,6 +366,14 @@ final class ConfigValidator
                     "queue-insights.connection_aliases['{$from}'] must be a non-empty string."
                 );
             }
+
+            // Reject Redis glob metacharacters in both key and value. The
+            // migration command's `KEYS pending-zset:{from}:*` pattern and
+            // runtime canonical zset keys both treat the alias as a literal
+            // segment — a glob meta in either would match / write to
+            // unrelated keys.
+            self::assertNoRedisGlobMeta($from, "queue-insights.connection_aliases key '{$from}'");
+            self::assertNoRedisGlobMeta($to, "queue-insights.connection_aliases['{$from}'] target '{$to}'");
         }
 
         // Pass 2: reject A => B when B is itself a non-identity key. Catches
@@ -444,6 +453,15 @@ final class ConfigValidator
         if (array_key_exists('enabled', $theme) && ! is_bool($theme['enabled'])) {
             throw new QueueInsightsConfigException(
                 'queue-insights.dashboard.theme.enabled must be a boolean.'
+            );
+        }
+    }
+
+    private static function assertNoRedisGlobMeta(string $value, string $path): void
+    {
+        if (preg_match('/[*?\[\]\\\\]/', $value) === 1) {
+            throw new QueueInsightsConfigException(
+                "{$path} must not contain Redis glob metacharacters (*, ?, [, ], \\)."
             );
         }
     }

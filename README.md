@@ -53,7 +53,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Retry badge** — pending, in-flight, and completed rows render an orange `retry N` chip with hover tooltip when the worker has picked the job up more than once. Backed by `attempts` stamped on the `pending:{uuid}` hash at `JobProcessing`.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
-- **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
+- **Alerting** — nine detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing, connection-drift) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
 - **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
 - **Horizon integration** — supervisor queue auto-discovery from `horizon.environments`, `horizon.silenced` merged into our suppression filter, operator-declared `connection_aliases` collapses dispatcher/worker connection drift onto a canonical key.
@@ -456,7 +456,7 @@ The default 120s covers `--timeout=60` + 20s SQS long-poll + headroom. The windo
 
 ## Alerting
 
-Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Eight detectors run every snapshot tick (≈ every minute) against live Redis state:
+Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Nine detectors run every snapshot tick (≈ every minute) against live Redis state:
 
 | Rule               | Scope     | Fires when                                                                                                                |
 |--------------------|-----------|---------------------------------------------------------------------------------------------------------------------------|
@@ -468,6 +468,7 @@ Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Eight detectors run every snaps
 | `slow_p95`         | per-class | per-class p95 duration ≥ `class_threshold_ms[$class]` (opt-in per class)                                                  |
 | `snapshot_errored` | per-queue | the snapshot driver threw on the most recent tick (auto-clears on next success / 10-min TTL)                              |
 | `backlog_growing`  | per-queue | least-squares depth slope over the recent samples ≥ `min_slope_per_minute` (opt-in, warms up after `min_samples` samples) |
+| `connection_drift` | global    | pending rows present under a Laravel queue connection that isn't the configured canonical for that queue (opt-in, default off — see [Connection aliasing](#connection-aliasing)) |
 
 A dashboard-only watchdog (`snapshot_command_dead`) renders a top-level red banner when `live:depth` keys are absent for every configured queue — i.e. the snapshot command itself has been silent for ≥ 90 s.
 
@@ -507,6 +508,7 @@ Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}
             'min_samples' => 5,
             'severity' => 'warning',
         ],
+        'connection_drift' => ['enabled' => false, 'severity' => 'warning'],
     ],
 
     'channels' => [

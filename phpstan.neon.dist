@@ -113,6 +113,7 @@ parameters:
                 - tests/Feature/AlertingBacklogGrowingTest.php
                 - tests/Feature/AlertingSchedulerTest.php
                 - tests/Feature/AlertingTest.php
+                - tests/Feature/Alerts/
                 - tests/Feature/Http/AlertsDashboardTest.php
                 - tests/Unit/Dashboard/
                 - tests/Unit/Prometheus/

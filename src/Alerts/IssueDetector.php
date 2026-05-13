@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Alerts;
 
 use SanderMuller\QueueInsights\Alerts\Detectors\BacklogGrowingDetector;
+use SanderMuller\QueueInsights\Alerts\Detectors\ConnectionDriftDetector;
 use SanderMuller\QueueInsights\Alerts\Detectors\DepthDetector;
 use SanderMuller\QueueInsights\Alerts\Detectors\FailureRateDetector;
 use SanderMuller\QueueInsights\Alerts\Detectors\OldestPendingDetector;
@@ -30,6 +31,7 @@ final readonly class IssueDetector
         private BacklogGrowingDetector $backlogGrowingDetector,
         private FailureRateDetector $failureRateDetector,
         private SlowP95Detector $slowP95Detector,
+        private ConnectionDriftDetector $connectionDriftDetector,
         private QueueInsights $queueInsights,
     ) {}
 
@@ -59,6 +61,13 @@ final readonly class IssueDetector
             foreach ($this->detectClassScoped($class) as $issue) {
                 $issues[] = $issue;
             }
+        }
+
+        // Global enumerator — opt-in, default off. Walks every configured
+        // queue × every host queue connection so it can't fit the per-pair
+        // batch; emits its own Issues directly.
+        foreach ($this->connectionDriftDetector->detect() as $issue) {
+            $issues[] = $issue;
         }
 
         return $issues;

@@ -506,6 +506,26 @@ it('rejects a mutual cycle A => B, B => A', function (): void {
     ]))->toThrow(QueueInsightsConfigException::class, 'transitive chain rejected');
 });
 
+it('rejects an alias key containing Redis glob metacharacters', function (): void {
+    // Pre-fix: the migration command builds `KEYS pending-zset:{from}:*`
+    // directly from the alias key. A `*`/`?`/`[]`/`\` in the key would match
+    // unrelated zsets and the subsequent ZADD/DEL would shred them.
+    expect(fn () => ConfigValidator::validateConnectionAliases(['redis-*' => 'redis-staging']))
+        ->toThrow(QueueInsightsConfigException::class, 'must not contain Redis glob metacharacters')
+        ->and(fn () => ConfigValidator::validateConnectionAliases(['redis-?' => 'redis-staging']))
+        ->toThrow(QueueInsightsConfigException::class, 'must not contain Redis glob metacharacters')
+        ->and(fn () => ConfigValidator::validateConnectionAliases(['redis-[abc]' => 'redis-staging']))
+        ->toThrow(QueueInsightsConfigException::class, 'must not contain Redis glob metacharacters');
+});
+
+it('rejects an alias value containing Redis glob metacharacters', function (): void {
+    // The value lands in the `pending-zset:{to}:{queue}` write key on the
+    // migration side and in canonical zset keys at runtime. Globs there
+    // would write to unusable wildcard-named keys.
+    expect(fn () => ConfigValidator::validateConnectionAliases(['redis' => 'redis-*']))
+        ->toThrow(QueueInsightsConfigException::class, 'must not contain Redis glob metacharacters');
+});
+
 it('rejects snapshots collision under post-alias canonical connections', function (): void {
     config()->set('queue-insights.connection_aliases', ['redis' => 'redis-staging']);
 

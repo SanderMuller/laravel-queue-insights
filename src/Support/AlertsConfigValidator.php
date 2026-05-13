@@ -81,6 +81,7 @@ final class AlertsConfigValidator
         self::validateSlowP95Rule($rules['slow_p95'] ?? null);
         self::validateSnapshotErroredRule($rules['snapshot_errored'] ?? null);
         self::validateBacklogGrowingRule($rules['backlog_growing'] ?? null);
+        self::validateConnectionDriftRule($rules['connection_drift'] ?? null);
     }
 
     /**
@@ -249,6 +250,20 @@ final class AlertsConfigValidator
 
         self::assertOptionalBool($rule, 'enabled', 'alerts.rules.snapshot_errored.enabled');
         self::assertOptionalSeverity($rule, 'severity', 'alerts.rules.snapshot_errored.severity');
+    }
+
+    private static function validateConnectionDriftRule(mixed $rule): void
+    {
+        if ($rule === null) {
+            return;
+        }
+
+        if (! is_array($rule)) {
+            throw new QueueInsightsConfigException('queue-insights.alerts.rules.connection_drift must be an array.');
+        }
+
+        self::assertOptionalBool($rule, 'enabled', 'alerts.rules.connection_drift.enabled');
+        self::assertOptionalSeverity($rule, 'severity', 'alerts.rules.connection_drift.severity');
     }
 
     private static function validateBacklogGrowingRule(mixed $rule): void

@@ -35,6 +35,7 @@ final readonly class AlertRulesPanelBuilder
         'slow_p95' => false,
         'snapshot_errored' => true,
         'backlog_growing' => false,
+        'connection_drift' => false,
     ];
 
     /**
@@ -74,7 +75,7 @@ final readonly class AlertRulesPanelBuilder
         $rules = Config::array('alerts.rules');
 
         $out = [];
-        foreach (['depth', 'stalled', 'oldest_pending', 'stuck_inflight', 'failure_rate', 'slow_p95', 'snapshot_errored', 'backlog_growing'] as $key) {
+        foreach (['depth', 'stalled', 'oldest_pending', 'stuck_inflight', 'failure_rate', 'slow_p95', 'snapshot_errored', 'backlog_growing', 'connection_drift'] as $key) {
             $candidate = $rules[$key] ?? null;
             /** @var array<string, mixed> $rule */
             $rule = is_array($candidate) ? $candidate : [];

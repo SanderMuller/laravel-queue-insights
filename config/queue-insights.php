@@ -245,6 +245,21 @@ return [
                 'min_samples' => 5,
                 'severity' => AlertSeverity::Warning->value,
             ],
+
+            /*
+             | Heuristic detector for dispatcher/worker connection drift —
+             | flags pending rows under a non-canonical Laravel queue
+             | connection when the host hasn't published a matching
+             | `connection_aliases` entry. Default off so two-DB-two-connection
+             | setups don't see surprise alerts; opt in if you suspect drift.
+             | When enabled, the detector walks `config('queue.connections')`
+             | and ZCARDs `pending-zset:{name}:{queue}` for every name that
+             | doesn't already resolve to the configured canonical.
+             */
+            'connection_drift' => [
+                'enabled' => false,
+                'severity' => AlertSeverity::Warning->value,
+            ],
         ],
 
         /*
