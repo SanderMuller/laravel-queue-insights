@@ -43,8 +43,12 @@ final class OldestPendingDetector
 
         $head = ZsetHead::firstMemberScore($row);
 
+        // Only resolve the job class when the head is going to cross the
+        // threshold — saves a per-tick HGET for queues whose oldest pending
+        // is still within the configured window. evaluate() short-circuits
+        // on the same age check so this stays an exact pre-flight.
         $jobClass = null;
-        if ($head !== null) {
+        if ($head !== null && $now - (int) $head[1] >= $this->thresholdSeconds()) {
             $jobClass = $this->resolveClass($redis, $head[0]);
         }
 

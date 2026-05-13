@@ -56,9 +56,21 @@ return [
         'history_hours' => 24,
         'processed_counters_days' => 7,
         'failed_counters_days' => 30,
-        'completed_stream_max' => 10000,
-        'per_class_stream_max' => 1000,
-        'per_connection_stream_max' => 5000,
+
+        /*
+         | Completed-stream MAXLEN caps. Each XADD on the corresponding
+         | stream trims to (approximately) this many entries via `MAXLEN ~`.
+         | The dashboard reads at most ~250 entries per stream per render
+         | (via XREVRANGE), so caps an order of magnitude above that give
+         | plenty of headroom for drill-down history while keeping Redis
+         | memory bounded. Each stream entry is ~150-600 B depending on
+         | optional payload capture, so the dominant memory contributor is
+         | the per-class stream × number of active classes — keep that
+         | one tight unless you actively need deep per-class history.
+         */
+        'completed_stream_max' => 2000,
+        'per_class_stream_max' => 500,
+        'per_connection_stream_max' => 1000,
 
         /*
          | Per-class duration sample list cap. Drives slow_p95 detector

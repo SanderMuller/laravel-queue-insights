@@ -38,8 +38,12 @@ final class StuckInFlightDetector
 
         $head = ZsetHead::firstMemberScore($row);
 
+        // Pre-flight the age check before issuing the per-uuid HGET — keeps
+        // the snapshot-command per-queue path free of an extra round-trip
+        // for in-flight rows still within the configured window. evaluate()
+        // re-checks the threshold so this stays an exact filter.
         $jobClass = null;
-        if ($head !== null) {
+        if ($head !== null && $now - (int) $head[1] >= $this->thresholdSeconds()) {
             $jobClass = $this->resolveClass($redis, $head[0]);
         }
 

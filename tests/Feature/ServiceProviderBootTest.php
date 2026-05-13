@@ -41,7 +41,7 @@ it('skips validation when the package is disabled', function (): void {
 it('registers the queue-insights config namespace', function (): void {
     expect(config('queue-insights'))->toBeArray()
         ->and(config('queue-insights.capture.payloads'))->toBe('off')
-        ->and(config('queue-insights.retention.completed_stream_max'))->toBe(10000);
+        ->and(config('queue-insights.retention.completed_stream_max'))->toBe(2000);
 });
 
 it('is not a deferred provider', function (): void {

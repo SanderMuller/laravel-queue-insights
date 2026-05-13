@@ -210,9 +210,9 @@ final readonly class RecordJobProcessed
             }
         }
 
-        $globalMax = Config::int('retention.completed_stream_max', 10000);
-        $perClassMax = Config::int('retention.per_class_stream_max', 1000);
-        $perConnMax = Config::int('retention.per_connection_stream_max', 5000);
+        $globalMax = Config::int('retention.completed_stream_max', 2000);
+        $perClassMax = Config::int('retention.per_class_stream_max', 500);
+        $perConnMax = Config::int('retention.per_connection_stream_max', 1000);
 
         $globalKey = KeyPrefix::make('completed');
         $perClassKey = KeyPrefix::make("completed:{$class}");
