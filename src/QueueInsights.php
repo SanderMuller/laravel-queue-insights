@@ -494,9 +494,9 @@ final class QueueInsights
             // post-filter has the widest possible window — otherwise a
             // class hot on a foreign connection drops scoped rows out of
             // the small `min($limit, 1000)` slice. Bounded by
-            // `retention.per_class_stream_max` (default 500).
+            // `retention.per_class_stream_max` (default 1000).
             $effectiveLimit = $hasConnection
-                ? Config::int('retention.per_class_stream_max', 500)
+                ? Config::int('retention.per_class_stream_max', 1000)
                 : min($limit, 1000);
 
             return [KeyPrefix::make("completed:{$class}"), $effectiveLimit];

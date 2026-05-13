@@ -210,9 +210,9 @@ final readonly class RecordJobProcessed
             }
         }
 
-        $globalMax = Config::int('retention.completed_stream_max', 2000);
-        $perClassMax = Config::int('retention.per_class_stream_max', 500);
-        $perConnMax = Config::int('retention.per_connection_stream_max', 1000);
+        $globalMax = Config::int('retention.completed_stream_max', 10000);
+        $perClassMax = Config::int('retention.per_class_stream_max', 1000);
+        $perConnMax = Config::int('retention.per_connection_stream_max', 5000);
 
         $globalKey = KeyPrefix::make('completed');
         $perClassKey = KeyPrefix::make("completed:{$class}");
@@ -387,7 +387,12 @@ final readonly class RecordJobProcessed
 
     private function writeDurationMetrics(RedisConnection $redis, string $class, string $connectionName, int $durationMs): void
     {
-        $samplesCap = max(1, Config::int('retention.duration_samples_cap', 200));
+        // Default kept at 500 so existing installs whose published
+        // `queue-insights.php` predates the new nested key don't silently
+        // shrink the slow_p95 input window on upgrade. Fresh installs get
+        // the same value from the package default — operators wanting the
+        // smaller cap (e.g. 200) opt in explicitly via config.
+        $samplesCap = max(1, Config::int('retention.duration_samples_cap', 500));
 
         if ($connectionName === '') {
             $aggDuration = KeyPrefix::classKey('duration', $class);

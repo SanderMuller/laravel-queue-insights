@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Date;
 
@@ -48,6 +49,21 @@ it('accepts unix timestamp ints', function (): void {
     $ts = Date::parse('2026-04-29T13:17:56+00:00')->getTimestamp();
 
     $html = Blade::render('<x-queue-insights::qi-time :at="$ts"/>', ['ts' => $ts]);
+
+    expect($html)
+        ->toContain('<time')
+        ->toContain('datetime="2026-04-29T13:17:56+00:00"');
+});
+
+it('emits UTC datetime for CarbonImmutable inputs in a non-UTC timezone', function (): void {
+    // Hosts that ship `Date::use(CarbonImmutable::class)` (a common
+    // production setup) hit `$at instanceof CarbonInterface` with an
+    // immutable carbon. The component must produce a UTC datetime
+    // attribute even though `CarbonImmutable::utc()` returns a fresh
+    // instance instead of mutating the receiver.
+    $at = CarbonImmutable::parse('2026-04-29T15:17:56+02:00');
+
+    $html = Blade::render('<x-queue-insights::qi-time :at="$at"/>', ['at' => $at]);
 
     expect($html)
         ->toContain('<time')

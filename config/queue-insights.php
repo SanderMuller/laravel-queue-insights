@@ -60,28 +60,27 @@ return [
         /*
          | Completed-stream MAXLEN caps. Each XADD on the corresponding
          | stream trims to (approximately) this many entries via `MAXLEN ~`.
-         | The dashboard reads at most ~250 entries per stream per render
-         | (via XREVRANGE), so caps an order of magnitude above that give
-         | plenty of headroom for drill-down history while keeping Redis
-         | memory bounded. Each stream entry is ~150-600 B depending on
-         | optional payload capture, so the dominant memory contributor is
-         | the per-class stream × number of active classes — keep that
-         | one tight unless you actively need deep per-class history.
+         | Lower these to reduce Redis memory at the cost of shallower
+         | drill-down history — the dashboard's per-class scoped reads
+         | bound their LRANGE at `per_class_stream_max` so trimming it
+         | proportionally shrinks the scoped recent-completed window.
+         | Defaults preserved from the pre-tunable behaviour; operators
+         | running into Redis memory pressure should tighten these
+         | explicitly rather than expect a silent default change.
          */
-        'completed_stream_max' => 2000,
-        'per_class_stream_max' => 500,
-        'per_connection_stream_max' => 1000,
+        'completed_stream_max' => 10000,
+        'per_class_stream_max' => 1000,
+        'per_connection_stream_max' => 5000,
 
         /*
          | Per-class duration sample list cap. Drives slow_p95 detector
-         | accuracy + p95 column on the Classes tab — 200 samples gives
-         | reliable percentile reads while keeping Redis memory bounded
-         | (each list holds at most this many int-as-string entries per
-         | class, and the per-connection variant is capped to the same
-         | value). Previously hardcoded at 500; reduce here to trim
-         | per-class Redis memory by ~60 % without affecting p95 fidelity.
+         | input + the p95 column on the Classes tab. The pre-tunable
+         | hardcoded value was 500 — keep that as the default so hosts
+         | upgrading without re-publishing this config see no change in
+         | p95 fidelity. Lower the cap (e.g. 200) to trim per-class Redis
+         | memory by ~60 % at a small loss in percentile stability.
          */
-        'duration_samples_cap' => 200,
+        'duration_samples_cap' => 500,
     ],
 
     'schedule' => [

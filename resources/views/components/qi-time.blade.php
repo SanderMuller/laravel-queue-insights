@@ -53,19 +53,24 @@
         $emptyText = trim(($prefix ? $prefix . ' ' : '') . $empty);
     } else {
         // diffForHumans compares underlying timestamps, so it is timezone-
-        // invariant — call BEFORE the UTC mutation below so the original
-        // local-TZ Carbon doesn't need a copy().
+        // invariant — call BEFORE the UTC conversion below so we work with
+        // the original-TZ Carbon for the relative path.
         $relative = match ($format) {
             'relative-short' => $carbon->diffForHumans(['short' => true]),
             'absolute', 'absolute-mono' => null,
             default => $carbon->diffForHumans(),
         };
         // datetime= MUST be UTC ISO so JS hydration parses unambiguously.
-        // Mutate in place: Carbon::copy() costs ~200μs per call and this
-        // component is invoked dozens of times per dashboard render.
-        $carbon->utc();
-        $isoUtc = $carbon->toIso8601String();
-        $absUtc = $carbon->format('M j, Y, g:i A');
+        // Capture utc()'s return value rather than relying on in-place
+        // mutation: Carbon::utc() mutates and returns $this (so $utcCarbon
+        // === $carbon, no copy), but CarbonImmutable::utc() leaves the
+        // receiver untouched and returns a fresh UTC instance — assigning
+        // the result keeps both branches correct. Skipping the explicit
+        // copy() still avoids the ~200μs per-call allocation on the Carbon
+        // path that dominates dashboard render time.
+        $utcCarbon = $carbon->utc();
+        $isoUtc = $utcCarbon->toIso8601String();
+        $absUtc = $utcCarbon->format('M j, Y, g:i A');
         // Server-side fallback for absolute formats renders in UTC with an
         // explicit `UTC` suffix — guarantees the no-JS path (and the brief
         // pre-hydration paint frame) is never ambiguously labelled in the
