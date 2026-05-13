@@ -4,6 +4,34 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.17.0 - 2026-05-13
+
+### Highlights
+
+- **Horizon supervisor queue auto-discovery.** When `laravel/horizon` is installed, every `horizon.environments` supervisor's `{connection, queue}` is unioned into the Queues panel + pending/in-flight aggregation. Resolution mirrors Horizon's own `ProvisioningPlan` (`Str::is` glob env keys + recursive merge with `horizon.defaults`). Static `snapshots[]` entries still win on collision. Default-on; opt out with `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=false`.
+- **`horizon.silenced` merge.** Classes silenced via Horizon — operator entries in `config/horizon.php`, or upstream packages writing at boot (`spatie/laravel-health` writes `Spatie\Health\Jobs\HealthQueueJob` when `silence_health_queue_job` is on) — are now suppressed across the Silenced tab, failure-rate detectors, notifications, and the failed-jobs SQL exclusion. Strictly additive; no operator action needed.
+- **`connection_aliases` fixes drift-induced pending invisibility.** When a job was dispatched on connection `A` but processed by a worker bound to connection `B` (both pointing at the same physical Redis DB), the package wrote `pending-zset:A:{queue}` and tried to clear `pending-zset:B:{queue}` — keys never met, rows orphaned, the dashboard panel scoped to the worker connection showed zero pending for a queue with depth. Publishing the alias map collapses both sides onto a canonical name:
+  ```php
+  'connection_aliases' => [
+      'redis' => 'redis-staging',
+      'redis-staging' => 'redis-staging',
+  ],
+  
+  ```
+  Affects every connection-keyed Redis key (pending / inflight / wait zsets, live + history + samples counters, per-class roster + duration / processed-total / failed-total / last_run, completed-stream) and the matching Prometheus `connection` labels. Validator rejects transitive chains and mutual cycles at boot; identity mappings are allowed. Legacy `?qk=`, `?qopen=`, and `/queue-insights/{connection}` URLs canonicalise transparently.
+
+### Breaking changes
+
+- Dashboard Queues panel surfaces Horizon supervisor queues by default. See [UPGRADING.md](UPGRADING.md#upgrading-from-016-to-017) for the opt-out.
+- `horizon.silenced` entries now suppressed in Queue Insights surfaces. See [UPGRADING.md](UPGRADING.md#upgrading-from-016-to-017).
+- Prometheus `connection` label switches to the canonical alias when `connection_aliases` is published — alert rules / Grafana panels referencing the pre-aliased name need a `relabel_configs` rule. See [UPGRADING.md](UPGRADING.md#upgrading-from-016-to-017) for the label inventory.
+
+### What's Changed
+
+* feat: Horizon integration wave — supervisor autodiscovery, silenced-job merge, connection_aliases (99f0256)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.16.1...0.17.0
+
 ## 0.16.1 - 2026-05-13
 
 A new pending-orphan cleanup command, a `qi-time` UTC bug for hosts on `CarbonImmutable`, and a perf wave that drops warm dashboard Redis round-trips by ~92 % on the seeded 8-queue bench.
@@ -151,6 +179,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -367,6 +396,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -481,6 +511,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -516,6 +547,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -644,6 +676,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
