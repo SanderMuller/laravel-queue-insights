@@ -111,7 +111,11 @@ final class BacklogGrowingDetector
             }
 
             $depthRaw = substr($member, $colon + 1);
-            if (! is_numeric($depthRaw) || ! is_numeric($score)) {
+            if (! is_numeric($depthRaw)) {
+                continue;
+            }
+
+            if (! is_numeric($score)) {
                 continue;
             }
 

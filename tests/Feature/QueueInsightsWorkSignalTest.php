@@ -18,9 +18,9 @@ beforeEach(function (): void {
  * Phase 3 — `validateWork` config typecheck.
  */
 it('validateWork accepts a positive int default', function (): void {
-    expect(fn () => ConfigValidator::validateWork([]))->not->toThrow(Throwable::class);
-    expect(fn () => ConfigValidator::validateWork(['shutdown_grace_seconds' => 1]))->not->toThrow(Throwable::class);
-    expect(fn () => ConfigValidator::validateWork(['shutdown_grace_seconds' => 120]))->not->toThrow(Throwable::class);
+    expect(fn () => ConfigValidator::validateWork([]))->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateWork(['shutdown_grace_seconds' => 1]))->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateWork(['shutdown_grace_seconds' => 120]))->not->toThrow(Throwable::class);
 });
 
 it('validateWork throws on a non-int shutdown_grace_seconds', function (): void {

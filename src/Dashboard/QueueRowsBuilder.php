@@ -52,6 +52,7 @@ final readonly class QueueRowsBuilder
         foreach ($configured as $i => $entry) {
             $pairs[] = ['connection' => $entry['connection'], 'queue' => $canonical[$i]];
         }
+
         $snapshots = $this->svc->queueRowSnapshots($pairs);
         $now = Date::now();
 

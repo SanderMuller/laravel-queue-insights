@@ -348,7 +348,15 @@ final class PendingJobsReader
 
         $out = [];
         foreach ($result as $uuid => $score) {
-            if (! is_string($uuid) || $uuid === '' || ! is_numeric($score)) {
+            if (! is_string($uuid)) {
+                continue;
+            }
+
+            if ($uuid === '') {
+                continue;
+            }
+
+            if (! is_numeric($score)) {
                 continue;
             }
 
@@ -369,7 +377,11 @@ final class PendingJobsReader
     {
         $valid = [];
         foreach ($uuids as $uuid) {
-            if (! is_string($uuid) || $uuid === '') {
+            if (! is_string($uuid)) {
+                continue;
+            }
+
+            if ($uuid === '') {
                 continue;
             }
 

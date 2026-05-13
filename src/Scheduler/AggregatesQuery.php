@@ -139,9 +139,11 @@ final class AggregatesQuery
         if ($stats['failed'] > 0) {
             $reasons[] = ['kind' => 'failed', 'count' => $stats['failed']];
         }
+
         if ($stats['hung'] > 0) {
             $reasons[] = ['kind' => 'hung', 'count' => $stats['hung']];
         }
+
         if ($stats['missed'] > 0) {
             $reasons[] = ['kind' => 'missed', 'count' => $stats['missed']];
         }

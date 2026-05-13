@@ -132,6 +132,7 @@ final class RecordJobQueued
         if ($batchId !== '') {
             $fields['batch_id'] = $batchId;
         }
+
         foreach ($fields as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
         }

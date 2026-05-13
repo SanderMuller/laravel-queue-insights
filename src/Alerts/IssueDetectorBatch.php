@@ -99,9 +99,11 @@ final readonly class IssueDetectorBatch
                 if ($flags['depth'] || $flags['stalled']) {
                     $client->get(KeyPrefix::make("live:depth:{$c}:{$q}"));
                 }
+
                 if ($flags['stalled']) {
                     $client->zcount(KeyPrefix::make("wait:{$c}:{$q}"), (string) $stalledThreshold, '+inf');
                 }
+
                 if ($flags['oldest']) {
                     $client->zrangebyscore(
                         KeyPrefix::make("pending-zset:{$c}:{$q}"),
@@ -110,12 +112,15 @@ final readonly class IssueDetectorBatch
                         ['LIMIT' => [0, 1], 'WITHSCORES' => true],
                     );
                 }
+
                 if ($flags['stuck']) {
                     $client->zrange(KeyPrefix::make("inflight-zset:{$c}:{$q}"), 0, 0, ['WITHSCORES' => true]);
                 }
+
                 if ($flags['errored']) {
                     $client->get(KeyPrefix::make("snapshot:error:{$c}:{$q}"));
                 }
+
                 if ($flags['backlog']) {
                     $client->zrange(KeyPrefix::make("samples:depth:{$c}:{$q}"), 0, -1, ['WITHSCORES' => true]);
                 }
@@ -132,6 +137,7 @@ final readonly class IssueDetectorBatch
         if ($flags['depth'] || $flags['stalled']) {
             ++$stride;
         }
+
         foreach (['stalled', 'oldest', 'stuck', 'errored', 'backlog'] as $key) {
             if ($flags[$key]) {
                 ++$stride;
@@ -185,22 +191,27 @@ final readonly class IssueDetectorBatch
             $state['depthRaw'] = $phase1[$offset + $cursor] ?? null;
             ++$cursor;
         }
+
         if ($flags['stalled']) {
             $state['recent'] = $phase1[$offset + $cursor] ?? null;
             ++$cursor;
         }
+
         if ($flags['oldest']) {
             $state['oldestHead'] = ZsetHead::firstMemberScore($phase1[$offset + $cursor] ?? null);
             ++$cursor;
         }
+
         if ($flags['stuck']) {
             $state['stuckHead'] = ZsetHead::firstMemberScore($phase1[$offset + $cursor] ?? null);
             ++$cursor;
         }
+
         if ($flags['errored']) {
             $state['errorRaw'] = $phase1[$offset + $cursor] ?? null;
             ++$cursor;
         }
+
         if ($flags['backlog']) {
             $state['samples'] = BacklogGrowingDetector::decodeSamples($phase1[$offset + $cursor] ?? null);
         }
@@ -221,6 +232,7 @@ final readonly class IssueDetectorBatch
                 $classLookups[] = ['idx' => $i, 'kind' => 'oldest', 'uuid' => $state['oldestHead'][0]];
             }
         }
+
         if ($state['stuckHead'] !== null) {
             $age = $now - (int) $state['stuckHead'][1];
             if ($age >= $stuckThreshold) {
@@ -287,18 +299,23 @@ final readonly class IssueDetectorBatch
         if ($flags['depth']) {
             $issues[] = $this->depthDetector->evaluate($c, $q, $depthInt);
         }
+
         if ($flags['stalled']) {
             $issues[] = $this->stalledDetector->evaluate($c, $q, $state['depthRaw'], $state['recent'], $now);
         }
+
         if ($flags['oldest']) {
             $issues[] = $this->oldestPendingDetector->evaluate($c, $q, $state['oldestHead'], $classByPair['oldest'][$i] ?? null, $now);
         }
+
         if ($flags['stuck']) {
             $issues[] = $this->stuckInFlightDetector->evaluate($c, $q, $state['stuckHead'], $classByPair['stuck'][$i] ?? null, $now);
         }
+
         if ($flags['errored']) {
             $issues[] = $this->snapshotErroredDetector->evaluate($c, $q, $state['errorRaw']);
         }
+
         if ($flags['backlog']) {
             $issues[] = $this->backlogGrowingDetector->evaluate($c, $q, $state['samples']);
         }

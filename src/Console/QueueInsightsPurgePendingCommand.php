@@ -61,8 +61,8 @@ final class QueueInsightsPurgePendingCommand extends Command
 
         try {
             $canonical = CanonicalQueueKey::from($queueRaw);
-        } catch (InvalidArgumentException $e) {
-            $this->error("Invalid queue value [{$queueRaw}]: {$e->getMessage()}");
+        } catch (InvalidArgumentException $invalidArgumentException) {
+            $this->error("Invalid queue value [{$queueRaw}]: {$invalidArgumentException->getMessage()}");
 
             return self::INVALID;
         }
@@ -83,6 +83,7 @@ final class QueueInsightsPurgePendingCommand extends Command
 
             return self::INVALID;
         }
+
         $zsetKey = KeyPrefix::make("pending-zset:{$connection}:{$canonical}");
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
@@ -145,8 +146,8 @@ final class QueueInsightsPurgePendingCommand extends Command
         $tempKey = $zsetKey . ':purging-' . bin2hex(random_bytes(4));
         try {
             $redis->command('rename', [$zsetKey, $tempKey]);
-        } catch (Throwable $e) {
-            $this->error("Failed to snapshot {$zsetKey} via RENAME: {$e->getMessage()}");
+        } catch (Throwable $throwable) {
+            $this->error("Failed to snapshot {$zsetKey} via RENAME: {$throwable->getMessage()}");
 
             return self::FAILURE;
         }

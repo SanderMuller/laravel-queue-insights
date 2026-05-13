@@ -1,5 +1,6 @@
 <?php declare(strict_types=1);
 
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\Date;
 use Mockery\LegacyMockInterface;
 use Mockery\MockInterface;
@@ -23,8 +24,8 @@ beforeEach(function (): void {
 });
 
 /**
- * @param  array{depth?: int, delayed?: ?int, inflight?: ?int, error?: ?string, last_at?: ?\Carbon\CarbonInterface, pending_tracked_count?: ?int}  $overrides
- * @return array{depth: int, delayed: ?int, inflight: ?int, error: ?string, last_at: ?\Carbon\CarbonInterface, pending_tracked_count: ?int}
+ * @param array{depth?: int, delayed?: ?int, inflight?: ?int, error?: ?string, last_at?: ?CarbonInterface, pending_tracked_count?: ?int} $overrides
+ * @return array{depth: int, delayed: ?int, inflight: ?int, error: ?string, last_at: ?CarbonInterface, pending_tracked_count: ?int}
  */
 function snapshot(array $overrides = []): array
 {

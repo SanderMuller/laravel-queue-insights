@@ -59,12 +59,12 @@ it('purges the zset + matching per-uuid hashes with --force', function (): void 
         ->and(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(0)
         ->and(R::int('exists', 'qmtest:pending:uuid-orphan-000'))->toBe(0)
         ->and(R::int('exists', 'qmtest:pending:uuid-orphan-001'))->toBe(0)
-        ->and(R::int('exists', 'qmtest:pending:uuid-orphan-002'))->toBe(0);
-
-    expect(Artisan::output())->toContain('Purged 3 zset members + 3 matching pending:{uuid} hashes');
+        ->and(R::int('exists', 'qmtest:pending:uuid-orphan-002'))->toBe(0)
+        ->and(Artisan::output())
+        ->toContain('Purged 3 zset members + 3 matching pending:{uuid} hashes');
 });
 
-it('refuses --force when the target IS the connection\'s live default queue', function (): void {
+it("refuses --force when the target IS the connection's live default queue", function (): void {
     // Connection's configured queue is `staging_default` per the beforeEach.
     seedOrphanPending('sqs', 'staging_default', 1);
 
@@ -202,8 +202,9 @@ it('handles orphan zset members whose per-uuid hash has TTL-d out', function ():
     ]);
 
     expect($exit)->toBe(0)
-        ->and(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(0);
-    expect(Artisan::output())->toContain('Purged 1 zset member + 0 matching');
+        ->and(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(0)
+        ->and(Artisan::output())
+        ->toContain('Purged 1 zset member + 0 matching');
 });
 
 it('canonicalises an SQS URL passed as the queue argument', function (): void {
