@@ -4,6 +4,29 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.18.0 - 2026-05-13
+
+### Highlights
+
+- **`connection_drift` alert rule (opt-in, default off).** Ninth detector. Walks `config('queue.connections')` against the configured canonical queues and flags pending rows under a connection that isn't the canonical for that queue — i.e. dispatcher/worker drift that `connection_aliases` would fix. Pipelined into one Redis round-trip per dashboard tick. Multi-canonical queues (one queue name served by more than one canonical, e.g. `redis-staging:default` AND `sqs:default`) emit a single Issue listing every candidate so the operator picks the right alias target. Cooldown deduplicates per (rule, non-canonical, queue). Enable via:
+  ```php
+  // config/queue-insights.php
+  'alerts' => [
+      'rules' => [
+          'connection_drift' => ['enabled' => true, 'severity' => 'warning'],
+      ],
+  ],
+  
+  ```
+- **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
+- **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
+
+### What's Changed
+
+* feat(alerts,console): `connection_drift` detector + `queue-insights:migrate-aliases` command (0a33c7b)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.17.0...0.18.0
+
 ## 0.17.0 - 2026-05-13
 
 ### Highlights
@@ -16,6 +39,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   ```
   Affects every connection-keyed Redis key (pending / inflight / wait zsets, live + history + samples counters, per-class roster + duration / processed-total / failed-total / last_run, completed-stream) and the matching Prometheus `connection` labels. Validator rejects transitive chains and mutual cycles at boot; identity mappings are allowed. Legacy `?qk=`, `?qopen=`, and `/queue-insights/{connection}` URLs canonicalise transparently.
@@ -179,6 +203,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -397,6 +422,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -512,6 +538,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -547,6 +574,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -676,6 +704,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
