@@ -4,6 +4,37 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.16.1 - 2026-05-13
+
+A new pending-orphan cleanup command, a `qi-time` UTC bug for hosts on `CarbonImmutable`, and a perf wave that drops warm dashboard Redis round-trips by ~92 % on the seeded 8-queue bench.
+
+### Highlights
+
+- **`php artisan queue-insights:purge-pending {connection} {queue}` command.** One-shot operator tool for the post-0.15→0.16 cutover window — drops a pending-tracking zset plus every per-uuid hash whose stored queue matches the target. Dry-run by default; `--force` to actually delete. Refuses to run against the connection's CURRENT default queue unless `--allow-live-queue` is set, so a misfired invocation can't shred in-flight pending visibility on the live default. Uses an atomic `RENAME` to a per-invocation temp key before walking entries, so concurrent producers can't race the purge into deleting a uuid that landed mid-scan. Hash reads + deletes are pipelined in chunks of 500. See the [`UPGRADING.md` cutover-window note](UPGRADING.md#upgrading-from-015-to-016) for invocation examples.
+- **`qi-time` blade component now emits UTC `datetime` for `CarbonImmutable` inputs.** The 0.16.0 perf change collapsed `$carbon->copy()->utc()` into `$carbon->utc()` to avoid the per-call `copy()` allocation. That works for the mutable `Carbon` (mutates in place + returns `$this`) but breaks `CarbonImmutable`, which returns a new instance without touching the receiver — so on hosts that ship `Date::use(CarbonImmutable::class)` the `datetime` attribute and `aria-label` rendered in the original timezone while the JS hydrator parsed them as UTC. Capture `$utcCarbon = $carbon->utc()` and use that for the UTC output paths; Carbon callers still avoid the `copy()` allocation. Regression test covers `CarbonImmutable` in a non-UTC offset.
+- **Warm dashboard Redis cost: 238 → 16–18 round-trips per render.** A four-patch pipelining wave (`PendingJobsReader::hydrate`, `QueueRowsBuilder` snapshot fan-out, cross-queue `ZRANGEBYSCORE` aggregation across pending/delayed/in-flight categories, and `IssueDetector::detectAll`) collapses the dashboard's wire:poll Redis I/O to two pipelined round-trips for the queue grid + two for the alert detectors. On production Redis at 0.5–1 ms RTT/cmd, warm render drops from ~120–240 ms Redis-bound to ~8–65 ms. Same numbers verified with seeded 8-queue × 50-inflight × 50-pending × 25-delayed × 80-failed × 20-class state via `autoresearch/dashboard-warm-bench.php`.
+- **`retention.duration_samples_cap` config knob.** Caps the per-class `duration:samples` list that backs the `slow_p95` detector + the Classes-tab p95 column. Default `500` preserves the previous hardcoded behaviour (no silent shrink on upgrade); operators running into per-class Redis memory pressure can lower it (e.g. `200`) to trim that list ~60 % at a small loss in percentile stability. Wired into both the listener-side LTRIM and the dual-write Lua so the aggregate and per-connection lists share one source of truth.
+- **"Needs attention" banner on the schedule task modal.** When a task has recent missed / hung / failed / skipped runs, the per-task drilldown surfaces a one-row summary at the top with `last_failed_at` so an operator opening the modal sees what changed without scrolling through the runs table.
+
+### What's Changed
+
+* feat: `queue-insights:purge-pending` command + "needs attention" banner on the schedule task modal (df521a5, 5dddf19, dfb51b5)
+* fix(qi-time): emit UTC `datetime` + `aria-label` for `CarbonImmutable` inputs (53d03e2)
+* fix(alerts): skip the per-uuid `HGET` when the head age is under the threshold — restores the pre-extraction snapshot-command behaviour on `OldestPendingDetector` / `StuckInFlightDetector` (458fb73)
+* perf(blade): `qi-time` drops `Carbon::copy()` and dedupes the UTC `format()` call — ~80 % per-invocation cost cut (a45fd0b)
+* perf(pending): pipeline the `HGETALL` fan-out in `PendingJobsReader::hydrate` — 150 sequential reads → 1 pipelined round-trip on the seeded bench (830ef02)
+* perf(dashboard): batch `QueueRowsBuilder` per-queue snapshot reads via new `QueueInsights::queueRowSnapshots()` + `Support\QueueRowSnapshotReader` (e9c7b54, f795617)
+* perf(pending): pipeline cross-queue `ZRANGEBYSCORE` fan-out across pending / delayed / in-flight categories (82ddce1)
+* perf(alerts): pipeline `IssueDetector::detectAll` across configured queues via new `Alerts\IssueDetectorBatch` + per-detector `evaluate()` split (d8ff2d6). The snapshot-command per-queue path (`detect()`) is unchanged.
+* perf(memory): new `retention.duration_samples_cap` config + skip writing empty `batch_id` on pending hashes for non-batched jobs (3475e5c)
+* refactor(views): extract `icon-close`, `icon-warning-triangle`, `icon-chevron-{left,right}`, `icon-error-circle`, `icon-info-circle` blade components — dedupes ~35 inline SVG copies (81c60e9, 1eb408a, 394b8ee, 2a23d29)
+* simplify: extract `attentionReasons`, pipeline purge `HGET`/`DEL`, drop redundant `flags['any']` aggregate, hoist `$now` on `StalledDetector::evaluate`, dedupe seven inlined `Redis::connection(...)` callsites (d57832c, 583a3ab)
+* chore: rector + pint mechanical cleanup (04b9d53)
+* ci(run-tests): trim matrix from 25 to 9 cells with explicit floor / ceiling / mid coverage (a4f846f)
+* docs(ai): move per-subsystem AI internals to `.ai/docs/` with a pointer index in `.ai/guidelines/architecture.md`; `CLAUDE.md` / `AGENTS.md` regen drops ~1450 inlined lines (57d03a4)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.16.0...0.16.1
+
 ## 0.16.0 - 2026-05-12
 
 ### Highlights
@@ -120,6 +151,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -334,6 +366,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -447,6 +480,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -482,6 +516,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -609,6 +644,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
