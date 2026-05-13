@@ -22,6 +22,8 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - [Running workers](#running-workers)
 - [Ops runbook](#ops-runbook)
 - [Alerting](#alerting)
+- [Horizon supervisor auto-discovery](#horizon-supervisor-auto-discovery)
+- [Connection aliasing](#connection-aliasing)
 - [Prometheus](#prometheus)
 - [Scheduler observability](#scheduler-observability)
 - [Testing](#testing)
@@ -54,6 +56,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Alerting** — eight detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
 - **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
+- **Horizon integration** — supervisor queue auto-discovery from `horizon.environments`, `horizon.silenced` merged into our suppression filter, operator-declared `connection_aliases` collapses dispatcher/worker connection drift onto a canonical key.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
@@ -108,7 +111,7 @@ When you monitor more than one queue connection (e.g. a multi-tenant app with on
 
 A tab strip above the headline cards renders one tab per allowed connection plus an "All" tab. The strip auto-suppresses when only one connection is monitored.
 
-The `{connection}` segment is constrained to your configured `snapshots.*.connection` names — typos 404 instead of mounting an empty dashboard.
+The `{connection}` segment is constrained to the union of `snapshots.*.connection` and any Horizon-autodiscovered supervisor connections — typos 404 instead of mounting an empty dashboard. Pre-alias legacy URLs (`/queue-insights/redis` when `aliases.redis = redis-staging` is published) resolve to the canonical scope.
 
 #### Per-connection authorisation (optional)
 
@@ -195,7 +198,7 @@ When the active class scope IS a class in `queue-insights.silenced`, both Failed
 
 Both *Recent completed* and *Recent failed* have an always-visible filter toolbar above the list. Each field binds to a short query-string key, so a narrowed view is shareable and bookmarkable.
 
-Connection, Queue, and Class are populated as `<select>` dropdowns from the configured snapshots and the 24h class roster — no free-text typos. The Class dropdown on both panes binds to the global `?ck=` (same prop the Classes tab toggles), so picking a class on either pane scopes the other automatically.
+Connection, Queue, and Class are populated as `<select>` dropdowns from the configured queues (snapshots + Horizon autodiscovery) and the 24h class roster — no free-text typos. The Class dropdown on both panes binds to the global `?ck=` (same prop the Classes tab toggles), so picking a class on either pane scopes the other automatically.
 
 #### Recent failed filter
 
@@ -350,7 +353,7 @@ To embed a connection-scoped view, pass the scope as a mount param:
 @livewire('queue-insights-dashboard', ['connection' => $tenant->queueConnection])
 ```
 
-The component validates the connection against the configured snapshots (404s on mismatch) and runs `viewQueueInsightsConnection` defensively, same as the bundled route — so this is safe to render in publicly-reachable views.
+The component validates the connection against the configured roster (snapshots + Horizon autodiscovery; 404s on mismatch) and runs `viewQueueInsightsConnection` defensively, same as the bundled route — so this is safe to render in publicly-reachable views.
 
 ### Dark mode
 
@@ -382,7 +385,7 @@ $this->app->bind(PayloadSanitizer::class, YourSanitizer::class);
 
 ## Running workers
 
-`php artisan queue-insights:work` is a thin parent supervisor that reads `queue-insights.snapshots`, groups entries by connection, and spawns one `queue:work` subprocess per connection with `--queue=q1,q2,...` (Laravel's built-in priority list).
+`php artisan queue-insights:work` is a thin parent supervisor that reads `queue-insights.snapshots`, groups entries by connection, and spawns one `queue:work` subprocess per connection with `--queue=q1,q2,...` (Laravel's built-in priority list). For hosts running Laravel Horizon, use `horizon` instead — `queue-insights:work` is the alternative for projects without Horizon. (Horizon autodiscovery feeds the *dashboard*, but does not start workers from `horizon.environments` via this command.)
 
 ```bash
 # Boot every monitored connection. One process per (connection, queue list).
@@ -609,6 +612,46 @@ Counter writes (`qi:processed:{class}:{bucket}`, `qi:failed:{class}:{bucket}`, `
 | `qi:failed:{class}:{bucket}` Redis counters + `qi:classes` zset  | Still written by the listeners. Silencing is reversible without losing history.                                                                              |
 
 The bulk-retry uuid collector inherits the same SQL exclusion path — bulk-retry actions on the default-filter view never queue silenced classes for retry. Toggle "Show silenced" first if you want them in the bulk set.
+
+#### Horizon-silenced jobs
+
+When `laravel/horizon` is installed, entries from Horizon's own `config('horizon.silenced')` are automatically merged into the same filter set — operator-edited `config/horizon.php` entries and upstream packages writing to it at boot (e.g. [spatie/laravel-health](https://github.com/spatie/laravel-health)'s `silence_health_queue_job` flag, which adds `Spatie\Health\Jobs\HealthQueueJob`) take effect without a duplicate `queue-insights.silenced` entry. Merge is read-only; we never write back to Horizon's config.
+
+## Horizon supervisor auto-discovery
+
+When `laravel/horizon` is installed, the dashboard Queues panel + pending/in-flight aggregation surface every Horizon supervisor's `{connection, queue}` from `horizon.environments` without hand-listing each one under `snapshots[]`. Static snapshot entries still win on collision (deduped on canonical `{connection, queue}`). Resolution mirrors Horizon's own `ProvisioningPlan` — `Str::is` glob match on env keys, recursive merge with `horizon.defaults` for supervisors that only override `processes`/`tries`/`balance`.
+
+```php
+// config/queue-insights.php — defaults (no operator action needed for most hosts):
+'horizon' => [
+    'autodiscover' => env('QUEUE_INSIGHTS_HORIZON_AUTODISCOVER', true),
+    'environment' => env('QUEUE_INSIGHTS_HORIZON_ENV'), // null = app()->environment()
+],
+```
+
+Opt out with `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=false` to keep the static-snapshots-only behaviour. Set `QUEUE_INSIGHTS_HORIZON_ENV` when running multiple Horizon environments off the same Laravel `APP_ENV`.
+
+## Connection aliasing
+
+Use when one physical queue store is reached via multiple Laravel queue connection names — e.g. a `redis` connection for dispatchers + a `redis-staging` connection for Horizon workers, both pointing at the same Redis DB. Without aliasing, `JobQueued::$connectionName` (the dispatcher's name) and `JobProcessing::$connectionName` (the worker's name) diverge across every connection-keyed keyspace (pending/inflight zsets, per-class rosters + counters, Prometheus labels). Pending rows orphan; the dashboard panel scoped to the worker connection shows zero pending for a queue that's actively draining.
+
+Publish the alias map to collapse both sides onto a canonical name:
+
+```php
+// config/queue-insights.php
+'connection_aliases' => [
+    'redis' => 'redis-staging',
+    'redis-staging' => 'redis-staging',
+],
+```
+
+Rules (enforced by `ConfigValidator::validateConnectionAliases`):
+
+- identity mappings (`A => A`) allowed
+- transitive chains (`A => B, B => C, B !== C`) rejected — flatten manually
+- mutual cycles (`A => B, B => A`) rejected
+
+Affects every connection-keyed Redis key and the `connection` label on every Prometheus metric. See [`UPGRADING.md`](UPGRADING.md) for the Prometheus relabel rule.
 
 ## Prometheus
 

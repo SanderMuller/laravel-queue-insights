@@ -732,3 +732,60 @@ it('Silenced tab resets to page 1 when per-page changes', function (): void {
         ->assertSet('silencedCompletedPerPage', 50)
         ->assertSet('silencedCompletedPage', 1);
 });
+
+it('canonicalises a pre-alias path segment in mount() under connection_aliases', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis-staging', 'queue' => 'premium-broadcast'],
+    ]);
+    config()->set('queue-insights.connection_aliases', ['redis' => 'redis-staging']);
+
+    // Legacy bookmark `/queue-insights/redis` should resolve to the canonical
+    // scope rather than 404 — ConfiguredConnections::all() returns the
+    // canonical alias `redis-staging`, and mount() canonicalises the
+    // incoming param before the in_array check.
+    Livewire::test(QueueInsightsDashboard::class, ['connection' => 'redis'])
+        ->assertSet('scopeConnection', 'redis-staging');
+});
+
+it('still 404s when the path segment is unmapped and unknown', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis-staging', 'queue' => 'premium-broadcast'],
+    ]);
+    config()->set('queue-insights.connection_aliases', ['redis' => 'redis-staging']);
+
+    Livewire::test(QueueInsightsDashboard::class, ['connection' => 'sqs'])
+        ->assertStatus(404);
+});
+
+it('mount() accepts a Horizon-autodiscovered connection that is not in snapshots[]', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+    config()->set('horizon.environments', [
+        'testing' => [
+            'sup' => ['connection' => 'horizon-only', 'queue' => 'broadcast'],
+        ],
+    ]);
+
+    Livewire::test(QueueInsightsDashboard::class, ['connection' => 'horizon-only'])
+        ->assertSet('scopeConnection', 'horizon-only');
+});
+
+it('un-scoped dashboard auth sweep covers Horizon-autodiscovered connections', function (): void {
+    // Pre-fix, ConfiguredConnections::all() only saw snapshots[] entries, so
+    // the unscoped sweep silently bypassed authorization for Horizon-only
+    // connections (security bug — per-connection auth could be sidestepped).
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'sqs', 'queue' => 'work'],
+    ]);
+    config()->set('horizon.environments', [
+        'testing' => [
+            'sup' => ['connection' => 'horizon-only', 'queue' => 'broadcast'],
+        ],
+    ]);
+
+    Gate::define('viewQueueInsightsConnection', static fn (?User $user, string $connection): bool => $connection !== 'horizon-only');
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->assertForbidden();
+});

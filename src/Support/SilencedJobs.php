@@ -64,14 +64,40 @@ final readonly class SilencedJobs
      */
     private array $lowerPatterns;
 
+    /**
+     * Lowercased Horizon-sourced silences merged into `lowerSet` for match
+     * lookups. Stored separately so `all()` keeps the operator-editable list
+     * uncoupled from upstream packages that self-register silences via
+     * `config('horizon.silenced')` (e.g. spatie/laravel-health's
+     * `silence_health_queue_job` flag → `HealthQueueJob::class`).
+     *
+     * @var list<string>
+     */
+    private array $horizonClasses;
+
     public function __construct()
     {
         $list = config('queue-insights.silenced', []);
         $this->classes = is_array($list)
             ? array_values(array_filter($list, is_string(...)))
             : [];
+
+        // Merge `horizon.silenced` so packages that silence themselves via
+        // Horizon (spatie/laravel-health writes to `horizon.silenced` at boot;
+        // operators add entries via `config/horizon.php`) take effect in our
+        // dashboard / detectors / notifications without a duplicate
+        // `queue-insights.silenced` entry. Merge is read-only — we never write
+        // back to the Horizon config.
+        $horizon = config('horizon.silenced', []);
+        $this->horizonClasses = is_array($horizon)
+            ? array_values(array_filter($horizon, is_string(...)))
+            : [];
+
         $this->lowerSet = array_fill_keys(
-            array_map(strtolower(...), $this->classes),
+            array_map(
+                strtolower(...),
+                [...$this->classes, ...$this->horizonClasses],
+            ),
             true,
         );
 
@@ -107,16 +133,37 @@ final readonly class SilencedJobs
     }
 
     /**
-     * Exact-match list only. Patterns are not enumerable, so callers that
-     * need to "iterate every silenced class" (e.g. the Silenced dashboard
-     * tab) must combine this list with `isSilenced()` for pattern coverage
-     * — see `DashboardData::buildSilencedListings`.
+     * Exact-match list (operator + Horizon, deduped). Patterns are not
+     * enumerable, so callers that need to "iterate every silenced class"
+     * (e.g. the Silenced dashboard tab) must combine this list with
+     * `isSilenced()` for pattern coverage — see
+     * `DashboardData::buildSilencedListings`.
+     *
+     * Includes upstream `horizon.silenced` entries so the Silenced tab
+     * surfaces classes packages have self-registered (otherwise an operator
+     * who never touched `queue-insights.silenced` would see an empty tab
+     * even though detectors / dashboard filters are correctly suppressing
+     * Horizon-silenced classes).
      *
      * @return list<string>
      */
     public function all(): array
     {
-        return $this->classes;
+        if ($this->horizonClasses === []) {
+            return $this->classes;
+        }
+
+        $seen = array_fill_keys(array_map(strtolower(...), $this->classes), true);
+        $merged = $this->classes;
+        foreach ($this->horizonClasses as $class) {
+            $lower = strtolower($class);
+            if (! isset($seen[$lower])) {
+                $seen[$lower] = true;
+                $merged[] = $class;
+            }
+        }
+
+        return $merged;
     }
 
     /**
@@ -129,7 +176,9 @@ final readonly class SilencedJobs
 
     public function hasAny(): bool
     {
-        return $this->classes !== [] || $this->patterns !== [];
+        return $this->classes !== []
+            || $this->horizonClasses !== []
+            || $this->patterns !== [];
     }
 
     /**
@@ -140,7 +189,10 @@ final readonly class SilencedJobs
      */
     public function appendExclusion(Builder $query): void
     {
-        foreach ($this->classes as $class) {
+        // Operator + Horizon classes both contribute exclusions — otherwise
+        // detectors / dashboard filters would suppress a class while the
+        // failed-jobs SQL query still rendered it.
+        foreach ([...$this->classes, ...$this->horizonClasses] as $class) {
             $pattern = DisplayNamePayloadMatch::pattern($class);
             if ($pattern !== null) {
                 $query->whereRaw('LOWER(payload) NOT LIKE ? ESCAPE ?', $pattern);

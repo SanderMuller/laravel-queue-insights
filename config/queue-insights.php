@@ -29,6 +29,51 @@ return [
         ['connection' => 'sqs', 'queue' => env('SQS_HIGH_QUEUE')],
     ], fn (array $entry): bool => ! empty($entry['queue']))),
 
+    /*
+     | Horizon supervisor auto-discovery. When `laravel/horizon` is installed
+     | and `autodiscover` is on, the dashboard surfaces every Horizon supervisor
+     | queue without `snapshots[]` hand-listing. Mirrors Horizon's own
+     | `ProvisioningPlan` resolution: env keys are matched via `Str::is` glob,
+     | then `horizon.defaults` is recursively merged into the matched env block.
+     |
+     | Static `snapshots[]` entries still take effect — auto-discovery only
+     | adds queues not already configured (dedup on the canonical
+     | `{connection, queue}` pair).
+     */
+    'horizon' => [
+        'autodiscover' => env('QUEUE_INSIGHTS_HORIZON_AUTODISCOVER', true),
+        /*
+         | Which `horizon.environments.<env>` block to read. `null` (default)
+         | falls back to `app()->environment()`. Useful when one Laravel app
+         | runs against multiple Horizon environments.
+         */
+        'environment' => env('QUEUE_INSIGHTS_HORIZON_ENV'),
+    ],
+
+    /*
+     | Map of operator-known queue connection names to a canonical alias used
+     | for Queue Insights' per-connection storage keys, dashboard URLs, and
+     | Prometheus labels. REQUIRED when one physical queue store is reached
+     | via multiple Laravel queue connections (e.g. `redis` for dispatchers +
+     | `redis-staging` for Horizon workers, both pointing at the same Redis
+     | DB) and you want pending / in-flight / wait metrics to reconcile
+     | across both.
+     |
+     | Example:
+     |     'connection_aliases' => [
+     |         'redis' => 'redis-staging',
+     |         'redis-staging' => 'redis-staging',
+     |     ],
+     |
+     | Rules (enforced by ConfigValidator::validateConnectionAliases):
+     |   - identity mappings (A => A) are allowed
+     |   - transitive chains (A => B, B => C) are rejected — flatten manually
+     |   - mutual cycles (A => B, B => A) are rejected
+     |
+     | An unmapped connection name is used verbatim (the pre-alias behaviour).
+     */
+    'connection_aliases' => [],
+
     'driver_overrides' => [],
 
     'capture' => [

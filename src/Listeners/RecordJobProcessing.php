@@ -10,6 +10,7 @@ use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageClaim;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
@@ -29,7 +30,8 @@ final class RecordJobProcessing
 
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
-            $connection = (string) $event->connectionName;
+            // Canonicalise — see ConnectionAlias docblock.
+            $connection = ConnectionAlias::canonical((string) $event->connectionName);
             $queueRaw = (string) $event->job->getQueue();
             $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
 
@@ -225,7 +227,16 @@ final class RecordJobProcessing
                 $connection = $defaultConnection;
                 $queueKey = $defaultQueueKey;
             } else {
-                $connection = $chainConnection ?? $defaultConnection;
+                // Canonicalise the override so the claim key matches what
+                // the child's `RecordJobQueued::resolveChainLineage` will
+                // compute (the child's `$event->connectionName` is also
+                // canonicalised at the listener top). Without this,
+                // `Bus::chain(...)->onConnection('redis')` would push a
+                // claim under raw `redis` while the child pops under the
+                // canonical alias.
+                $connection = $chainConnection !== null
+                    ? ConnectionAlias::canonical($chainConnection)
+                    : $defaultConnection;
                 $queueRaw = $chainQueue ?? $defaultQueueRaw;
                 $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connection);
             }

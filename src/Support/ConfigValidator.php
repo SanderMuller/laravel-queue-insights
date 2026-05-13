@@ -46,7 +46,14 @@ final class ConfigValidator
                 throw new QueueInsightsConfigException("queue-insights.snapshots[{$index}] invalid queue: " . $e->getMessage(), $e->getCode(), previous: $e);
             }
 
-            $slot = $connection . '|' . $canonical;
+            // Canonicalise the connection so post-alias collisions (e.g.
+            // entries `{redis, foo}` and `{redis-staging, foo}` under
+            // `aliases.redis = 'redis-staging'`) are caught at boot rather
+            // than silently dropped by `ConfiguredQueueList::push` at read
+            // time. validateConnectionAliases ran first so the alias map is
+            // well-formed by this point.
+            $canonicalConnection = ConnectionAlias::canonical($connection);
+            $slot = $canonicalConnection . '|' . $canonical;
 
             if (isset($seen[$slot])) {
                 throw new QueueInsightsConfigException(sprintf(
@@ -326,6 +333,92 @@ final class ConfigValidator
     public static function validateScheduler(array $scheduler): void
     {
         SchedulerConfigValidator::validate($scheduler);
+    }
+
+    /**
+     * Validate `connection_aliases`. Operator-declared single-hop map. Rules:
+     *
+     *  - associative array, keys + values non-empty strings
+     *  - identity mappings (`A => A`) are allowed
+     *  - transitive chains (`A => B, B => C, B !== C`) are rejected — the
+     *    resolver is single-hop, so a producer on A would write to B while
+     *    a worker on C would write to C, leaving drift unfixed. Operators
+     *    flatten the chain manually so intent is explicit.
+     *  - mutual cycles (`A => B, B => A`) fall under the chain rule above
+     *
+     * @param  array<array-key, mixed>  $aliases
+     */
+    public static function validateConnectionAliases(array $aliases): void
+    {
+        // Pass 1: shape check. Pass 2 (chain detection) reads $aliases[$to]
+        // and assumes every value is a non-empty string, so shape must
+        // settle first.
+        foreach ($aliases as $from => $to) {
+            if (! is_string($from) || $from === '') {
+                throw new QueueInsightsConfigException(
+                    'queue-insights.connection_aliases keys must be non-empty strings.'
+                );
+            }
+
+            if (! is_string($to) || $to === '') {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.connection_aliases['{$from}'] must be a non-empty string."
+                );
+            }
+        }
+
+        // Pass 2: reject A => B when B is itself a non-identity key. Catches
+        // transitive chains (A=>B, B=>C) and mutual cycles (A=>B, B=>A).
+        foreach ($aliases as $from => $to) {
+            if ($from === $to) {
+                continue;
+            }
+
+            if (! array_key_exists($to, $aliases)) {
+                continue;
+            }
+
+            if ($aliases[$to] === $to) {
+                continue;
+            }
+
+            $next = $aliases[$to];
+            throw new QueueInsightsConfigException(sprintf(
+                "queue-insights.connection_aliases transitive chain rejected: '%s' => '%s' => '%s'. Flatten manually so '%s' maps directly to '%s' (or the final canonical name).",
+                $from,
+                $to,
+                $next,
+                $from,
+                $next,
+            ));
+        }
+    }
+
+    /**
+     * Validate the `horizon.*` block. Only `autodiscover` (bool) and
+     * `environment` (non-empty string or null) are validated — the rest of
+     * the keyspace is Horizon's own and validated by Horizon at boot.
+     *
+     * @param  array<array-key, mixed>  $horizon
+     */
+    public static function validateHorizon(array $horizon): void
+    {
+        if (array_key_exists('autodiscover', $horizon) && ! is_bool($horizon['autodiscover'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.horizon.autodiscover must be a boolean.'
+            );
+        }
+
+        if (! array_key_exists('environment', $horizon) || $horizon['environment'] === null) {
+            return;
+        }
+
+        $env = $horizon['environment'];
+        if (! is_string($env) || $env === '') {
+            throw new QueueInsightsConfigException(
+                'queue-insights.horizon.environment must be a non-empty string or null.'
+            );
+        }
     }
 
     /**

@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageClaim;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
@@ -59,7 +60,8 @@ final class RecordJobQueued
                 (string) microtime(true),
             ]);
 
-            $connection = (string) $event->connectionName;
+            // Canonicalise — see ConnectionAlias docblock.
+            $connection = ConnectionAlias::canonical((string) $event->connectionName);
             $queueKey = CanonicalQueueKey::fromOrDefault((string) $event->queue, $connection);
 
             $this->writePendingTracking($redis, $event, $uuid, $payload, $connection, $queueKey);

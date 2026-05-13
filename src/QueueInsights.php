@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConfiguredQueueList;
 use SanderMuller\QueueInsights\Support\DisplayNamePayloadMatch;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\HourlyBucketReader;
@@ -116,34 +117,7 @@ final class QueueInsights
      */
     public function configuredQueues(?string $scopeConnection = null): array
     {
-        $out = [];
-
-        foreach (Config::array('snapshots') as $entry) {
-            if (! is_array($entry)) {
-                continue;
-            }
-
-            $connection = $entry['connection'] ?? null;
-            $queue = $entry['queue'] ?? null;
-            if (! is_string($connection)) {
-                continue;
-            }
-
-            if (! is_string($queue)) {
-                continue;
-            }
-
-            if ($scopeConnection !== null && $connection !== $scopeConnection) {
-                continue;
-            }
-
-            $out[] = [
-                'connection' => $connection,
-                'queue' => $queue,
-            ];
-        }
-
-        return $out;
+        return ConfiguredQueueList::build($scopeConnection);
     }
 
     /**

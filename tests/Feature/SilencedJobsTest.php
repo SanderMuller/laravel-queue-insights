@@ -130,6 +130,55 @@ it('all() / patterns() preserve operator-supplied casing for display', function 
         ->and($silenced->patterns())->toBe(['App\\Jobs\\Reports\\*']);
 });
 
+it('merges horizon.silenced entries so packages that self-register silences take effect', function (): void {
+    // spatie/laravel-health's `silence_health_queue_job` flag writes
+    // HealthQueueJob::class into `horizon.silenced` at boot. We must mirror
+    // that suppression in our dashboard / detectors.
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Operator']);
+    config()->set('horizon.silenced', ['Spatie\\Health\\Jobs\\HealthQueueJob']);
+
+    $silenced = resolve(SilencedJobs::class);
+
+    expect($silenced->isSilenced('Spatie\\Health\\Jobs\\HealthQueueJob'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Operator'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Other'))->toBeFalse()
+        ->and($silenced->hasAny())->toBeTrue()
+        ->and($silenced->all())->toBe([
+            'App\\Jobs\\Operator',
+            'Spatie\\Health\\Jobs\\HealthQueueJob',
+        ]);
+});
+
+it('horizon.silenced merge dedups case-insensitively against the operator list', function (): void {
+    config()->set('queue-insights.silenced', ['App\\Jobs\\Foo']);
+    // Same class with different casing — operator entry must win for display.
+    config()->set('horizon.silenced', ['app\\jobs\\foo', 'App\\Jobs\\Bar']);
+
+    $silenced = resolve(SilencedJobs::class);
+
+    expect($silenced->all())->toBe(['App\\Jobs\\Foo', 'App\\Jobs\\Bar'])
+        ->and($silenced->isSilenced('App\\Jobs\\Foo'))->toBeTrue()
+        ->and($silenced->isSilenced('App\\Jobs\\Bar'))->toBeTrue();
+});
+
+it('hasAny() reports true when only horizon.silenced is populated', function (): void {
+    config()->set('queue-insights.silenced', []);
+    config()->set('queue-insights.silenced_patterns', []);
+    config()->set('horizon.silenced', ['Spatie\\Health\\Jobs\\HealthQueueJob']);
+
+    expect(resolve(SilencedJobs::class)->hasAny())->toBeTrue();
+});
+
+it('non-string entries in horizon.silenced are dropped silently', function (): void {
+    config()->set('queue-insights.silenced', []);
+    config()->set('horizon.silenced', ['App\\Jobs\\Real', 42, null, ['nested']]);
+
+    $silenced = resolve(SilencedJobs::class);
+
+    expect($silenced->all())->toBe(['App\\Jobs\\Real'])
+        ->and($silenced->isSilenced('App\\Jobs\\Real'))->toBeTrue();
+});
+
 it('app()->scoped binding produces a fresh instance after a scope flush (Octane parity)', function (): void {
     config()->set('queue-insights.silenced', ['App\\Jobs\\First']);
     $first = resolve(SilencedJobs::class);

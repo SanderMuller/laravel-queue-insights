@@ -50,7 +50,11 @@ final class SnapshotPairs
                 continue;
             }
 
-            $out[] = ['connection' => $connection, 'queue' => $canonical];
+            // Canonicalise connection so Prometheus collectors emit a
+            // consistent `connection` label that matches the listener-side
+            // writes once `connection_aliases` is published. Producers /
+            // workers / dashboard / Prometheus all converge on the same name.
+            $out[] = ['connection' => ConnectionAlias::canonical($connection), 'queue' => $canonical];
         }
 
         return $out;

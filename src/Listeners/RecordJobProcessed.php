@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\HourBucket;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
@@ -42,7 +43,8 @@ final readonly class RecordJobProcessed
         try {
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
-            $connectionName = (string) $event->connectionName;
+            // Canonicalise — see ConnectionAlias docblock.
+            $connectionName = ConnectionAlias::canonical((string) $event->connectionName);
             $queueRaw = (string) $event->job->getQueue();
             $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connectionName);
 

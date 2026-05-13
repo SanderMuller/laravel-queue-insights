@@ -68,10 +68,70 @@ it('lists configured queues from config', function (): void {
         ['connection' => 'sqs', 'queue' => 'default'],
         ['connection' => 'redis', 'queue' => 'high'],
     ]);
+    config()->set('queue-insights.horizon.autodiscover', false);
 
     expect(resolve(QueueInsights::class)->configuredQueues())->toBe([
         ['connection' => 'sqs', 'queue' => 'default'],
         ['connection' => 'redis', 'queue' => 'high'],
+    ]);
+});
+
+it('unions Horizon supervisor queues with static snapshots and dedups on canonical key', function (): void {
+    config()->set('queue-insights.snapshots', [
+        // Static entry — wins on collision.
+        ['connection' => 'redis-staging', 'queue' => 'premium-broadcast'],
+    ]);
+    config()->set('queue-insights.horizon.autodiscover', true);
+    config()->set('horizon.environments', [
+        'testing' => [
+            'staging-premiums' => [
+                'connection' => 'redis-staging',
+                // Duplicate of snapshots → dropped. Calculator is new → added.
+                'queue' => 'premium-broadcast,premium-calculator',
+            ],
+            'staging-portefeuille' => [
+                'connection' => 'redis-staging',
+                'queue' => 'portefeuille',
+            ],
+        ],
+    ]);
+
+    expect(resolve(QueueInsights::class)->configuredQueues())->toBe([
+        ['connection' => 'redis-staging', 'queue' => 'premium-broadcast'],
+        ['connection' => 'redis-staging', 'queue' => 'premium-calculator'],
+        ['connection' => 'redis-staging', 'queue' => 'portefeuille'],
+    ]);
+});
+
+it('disables Horizon discovery when autodiscover is false', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'default'],
+    ]);
+    config()->set('queue-insights.horizon.autodiscover', false);
+    config()->set('horizon.environments', [
+        'testing' => ['sup' => ['connection' => 'redis-staging', 'queue' => 'horizon-only']],
+    ]);
+
+    expect(resolve(QueueInsights::class)->configuredQueues())->toBe([
+        ['connection' => 'redis', 'queue' => 'default'],
+    ]);
+});
+
+it('applies scopeConnection filter to the merged static + Horizon set', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'sqs', 'queue' => 'in-scope'],
+        ['connection' => 'redis-staging', 'queue' => 'out-of-scope'],
+    ]);
+    config()->set('horizon.environments', [
+        'testing' => [
+            'sup' => ['connection' => 'sqs', 'queue' => 'from-horizon'],
+            'sup2' => ['connection' => 'redis-staging', 'queue' => 'horizon-out'],
+        ],
+    ]);
+
+    expect(resolve(QueueInsights::class)->configuredQueues('sqs'))->toBe([
+        ['connection' => 'sqs', 'queue' => 'in-scope'],
+        ['connection' => 'sqs', 'queue' => 'from-horizon'],
     ]);
 });
 
@@ -370,5 +430,23 @@ it('hourlyThroughput excludes silenced classes from the failed series but keeps 
     expect($series[23])->toMatchArray([
         'processed' => 11,
         'failed' => 2,
+    ]);
+});
+
+it('configuredQueues dedups when snapshots and Horizon collide only after alias canonicalisation', function (): void {
+    config()->set('queue-insights.connection_aliases', ['redis' => 'redis-staging']);
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'redis', 'queue' => 'shared-queue'],
+    ]);
+    config()->set('queue-insights.horizon.autodiscover', true);
+    config()->set('horizon.environments', [
+        'testing' => ['sup' => ['connection' => 'redis-staging', 'queue' => 'shared-queue']],
+    ]);
+
+    // Snapshots wins on collision; only one entry survives even though both
+    // raw connection names are different. ConfiguredQueueList::push canonicalises
+    // 'redis' -> 'redis-staging' before the dedup-seen check.
+    expect(resolve(QueueInsights::class)->configuredQueues())->toBe([
+        ['connection' => 'redis-staging', 'queue' => 'shared-queue'],
     ]);
 });

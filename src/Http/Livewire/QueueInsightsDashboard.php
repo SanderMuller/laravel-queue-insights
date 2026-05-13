@@ -22,6 +22,7 @@ use SanderMuller\QueueInsights\Dashboard\RetryStatus;
 use SanderMuller\QueueInsights\Support\AuditFieldSanitizer;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
+use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\QueueScopeKey;
@@ -250,6 +251,13 @@ final class QueueInsightsDashboard extends Component
             return;
         }
 
+        // Canonicalise the incoming path segment so legacy bookmarks under
+        // a pre-alias name (e.g. `/queue-insights/redis` before the operator
+        // published `aliases.redis = 'redis-staging'`) resolve to the
+        // canonical scope. ConfiguredConnections::all() already returns
+        // canonical names, so the in_array check stays consistent.
+        $connection = ConnectionAlias::canonical($connection);
+
         if (! in_array($connection, ConfiguredConnections::all(), true)) {
             abort(404);
         }
@@ -300,7 +308,7 @@ final class QueueInsightsDashboard extends Component
             return;
         }
 
-        $key = $connection . ':' . $canonicalQueue;
+        $key = QueueScopeKey::compose($connection, $canonicalQueue);
         $this->selectedQueue = $this->selectedQueue === $key ? '' : $key;
         $this->failedPage = 1;
         $this->completedPage = 1;

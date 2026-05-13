@@ -434,3 +434,83 @@ it('rejects a non-bool dashboard.theme.enabled', function (): void {
         ->and(fn () => ConfigValidator::validateDashboard(['theme' => ['enabled' => 1]]))
         ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme.enabled must be a boolean');
 });
+
+it('accepts an empty horizon block', function (): void {
+    expect(fn () => ConfigValidator::validateHorizon([]))->not->toThrow(Throwable::class);
+});
+
+it('accepts a well-formed horizon block', function (): void {
+    expect(fn () => ConfigValidator::validateHorizon(['autodiscover' => true, 'environment' => 'production']))
+        ->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateHorizon(['autodiscover' => false, 'environment' => null]))
+        ->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-bool horizon.autodiscover', function (): void {
+    expect(fn () => ConfigValidator::validateHorizon(['autodiscover' => 'yes']))
+        ->toThrow(QueueInsightsConfigException::class, 'horizon.autodiscover must be a boolean')
+        ->and(fn () => ConfigValidator::validateHorizon(['autodiscover' => 1]))
+        ->toThrow(QueueInsightsConfigException::class, 'horizon.autodiscover must be a boolean');
+});
+
+it('rejects a non-string or empty horizon.environment', function (): void {
+    expect(fn () => ConfigValidator::validateHorizon(['environment' => '']))
+        ->toThrow(QueueInsightsConfigException::class, 'horizon.environment must be a non-empty string or null')
+        ->and(fn () => ConfigValidator::validateHorizon(['environment' => 42]))
+        ->toThrow(QueueInsightsConfigException::class, 'horizon.environment must be a non-empty string or null');
+});
+
+it('accepts an empty connection_aliases map', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases([]))->not->toThrow(Throwable::class);
+});
+
+it('accepts identity mappings in connection_aliases', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases(['redis' => 'redis']))
+        ->not->toThrow(Throwable::class);
+});
+
+it('accepts a flat alias map with multiple sources pointing to one canonical', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases([
+        'redis' => 'redis-staging',
+        'redis-staging' => 'redis-staging',
+        'redis-legacy' => 'redis-staging',
+    ]))->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-string connection_aliases key', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases([0 => 'redis-staging']))
+        ->toThrow(QueueInsightsConfigException::class, 'connection_aliases keys must be non-empty strings');
+});
+
+it('rejects a non-string connection_aliases value', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases(['redis' => 42]))
+        ->toThrow(QueueInsightsConfigException::class, "connection_aliases['redis'] must be a non-empty string");
+});
+
+it('rejects an empty-string connection_aliases value', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases(['redis' => '']))
+        ->toThrow(QueueInsightsConfigException::class, "connection_aliases['redis'] must be a non-empty string");
+});
+
+it('rejects a transitive chain A => B => C', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases([
+        'redis' => 'redis-staging',
+        'redis-staging' => 'redis-prod',
+    ]))->toThrow(QueueInsightsConfigException::class, 'transitive chain rejected');
+});
+
+it('rejects a mutual cycle A => B, B => A', function (): void {
+    expect(fn () => ConfigValidator::validateConnectionAliases([
+        'redis' => 'redis-staging',
+        'redis-staging' => 'redis',
+    ]))->toThrow(QueueInsightsConfigException::class, 'transitive chain rejected');
+});
+
+it('rejects snapshots collision under post-alias canonical connections', function (): void {
+    config()->set('queue-insights.connection_aliases', ['redis' => 'redis-staging']);
+
+    expect(fn () => ConfigValidator::validateSnapshots([
+        ['connection' => 'redis', 'queue' => 'foo'],
+        ['connection' => 'redis-staging', 'queue' => 'foo'],
+    ]))->toThrow(QueueInsightsConfigException::class, 'collision on connection [redis-staging]');
+});

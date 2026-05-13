@@ -2,6 +2,8 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use InvalidArgumentException;
+
 /**
  * Decompose the dashboard's `selectedQueue` URL prop (canonical
  * `'{connection}:{queue}'` shape; written by `QueueInsightsDashboard::
@@ -32,6 +34,31 @@ final class QueueScopeKey
             return null;
         }
 
-        return ['connection' => $connection, 'queue' => $queue];
+        // Canonicalise both segments so legacy bookmarks resolve to the
+        // canonical scope. Connection: alias map collapses producer/worker
+        // names. Queue: CanonicalQueueKey strips driver-specific shapes
+        // (e.g. SQS URLs `https://sqs.../work` → `work`) so a hand-written
+        // `?qk=sqs:https://…/work` matches dashboard rows keyed by `work`.
+        try {
+            $canonicalQueue = CanonicalQueueKey::from($queue);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
+
+        return [
+            'connection' => ConnectionAlias::canonical($connection),
+            'queue' => $canonicalQueue,
+        ];
+    }
+
+    /**
+     * Compose the canonical `'{connection}:{queue}'` URL prop. Centralises
+     * the raw concatenation that previously sat inline at
+     * `QueueInsightsDashboard::selectQueue` so the connection segment is
+     * canonicalised at write time too.
+     */
+    public static function compose(string $connection, string $queue): string
+    {
+        return ConnectionAlias::canonical($connection) . ':' . $queue;
     }
 }

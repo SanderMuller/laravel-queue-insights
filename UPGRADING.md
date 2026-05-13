@@ -4,6 +4,70 @@ Migration steps between minor/major versions of `laravel-queue-insights`. Patch 
 
 Newest at the top. Across-version jumps must complete intermediate sections in order.
 
+## Upgrading from 0.16 to 0.17
+
+### Horizon supervisor queues now auto-discovered
+
+When `laravel/horizon` is installed, the dashboard Queues panel + pending/in-flight aggregation now union every supervisor's `{connection, queue}` from `horizon.environments` with the static `snapshots[]` list. Resolution mirrors Horizon's own `ProvisioningPlan` (Str::is glob on env keys, `array_replace_recursive` with `horizon.defaults`).
+
+**Action — none required for most hosts.** Static `snapshots[]` entries still win on collision. If you want the previous static-only behaviour:
+
+```dotenv
+QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=false
+```
+
+If you run multiple Horizon environments off the same `APP_ENV`:
+
+```dotenv
+QUEUE_INSIGHTS_HORIZON_ENV=production
+```
+
+### `horizon.silenced` entries now silenced in Queue Insights
+
+Classes silenced via Horizon — operator-edited `config/horizon.php` or upstream packages writing to it at boot (spatie/laravel-health writes `Spatie\Health\Jobs\HealthQueueJob` when `silence_health_queue_job` is on) — are now suppressed across our dashboard Silenced tab, failure-rate detectors, notifications, and the failed-jobs SQL exclusion.
+
+**Action — none required.** Strictly additive. Operator-edited `queue-insights.silenced` entries still take precedence on display casing.
+
+### `connection_aliases` for cross-connection drift
+
+When a job is dispatched on Laravel queue connection `A` but processed by a worker bound to connection `B` (both pointing at the same physical Redis DB — common with Horizon supervisor setups), Queue Insights previously wrote `pending-zset:A:{queue}` and tried to clear `pending-zset:B:{queue}`. Keys never met; pending rows were orphaned until TTL.
+
+**Action — required if you have drift.** Publish the alias map in `config/queue-insights.php`:
+
+```php
+'connection_aliases' => [
+    'redis' => 'redis-staging',
+    'redis-staging' => 'redis-staging',
+],
+```
+
+Validator rules: identity allowed; transitive chains (`A => B, B => C`) rejected; mutual cycles rejected. Flatten chains manually.
+
+### Prometheus label churn when `connection_aliases` is published
+
+`connection` label values on both queue-scoped + class-scoped metrics switch to the canonical alias on rollout. Affected series:
+
+- `queue_insights_depth{connection,queue}`
+- `queue_insights_inflight{connection,queue}`
+- `queue_insights_delayed{connection,queue}`
+- `queue_insights_wait_p50{connection,queue}`, `_p95{connection,queue}`
+- `queue_insights_jobs_processed_total{class,connection}`
+- `queue_insights_jobs_failed_total{class,connection}`
+- `queue_insights_job_duration_*{class,connection}`
+
+Operators relying on the pre-aliased name in alert rules / Grafana panels need a Prometheus `relabel_configs` rule:
+
+```yaml
+- source_labels: [connection]
+  regex: redis
+  target_label: connection
+  replacement: redis-staging
+```
+
+### Composer `require-dev`
+
+`laravel/horizon: ^5.29` was added to `require-dev` so the autodiscovery test suite autoloads `Laravel\Horizon\Horizon::class`. Hosts that already have Horizon installed are unaffected; CI matrix gains Horizon.
+
 ## Upgrading from 0.15 to 0.16
 
 ### Pending-zset key now uses the connection's configured default queue

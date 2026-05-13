@@ -258,6 +258,9 @@ final class QueueInsightsServiceProvider extends ServiceProvider
             return is_array($value) ? $value : [];
         };
 
+        // Aliases validated BEFORE snapshots so the snapshot collision check
+        // can rely on a well-formed alias map for canonicalisation.
+        ConfigValidator::validateConnectionAliases($section($cfg, 'connection_aliases'));
         ConfigValidator::validateSnapshots($section($cfg, 'snapshots'));
         ConfigValidator::validatePending($section($cfg, 'pending'));
         ConfigValidator::validateBatches($section($cfg, 'batches'));
@@ -278,6 +281,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
         ConfigValidator::validateDashboard($section($cfg, 'dashboard'));
         ConfigValidator::validateScheduler($section($cfg, 'scheduler'));
+        ConfigValidator::validateHorizon($section($cfg, 'horizon'));
 
         // Silenced fails loud on a non-array shape rather than coercing
         // to `[]` like the other section validators — a `silenced =>

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\HourBucket;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
@@ -43,7 +44,8 @@ final readonly class RecordJobFailed
         try {
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
-            $connectionName = (string) $event->connectionName;
+            // Canonicalise — see ConnectionAlias docblock.
+            $connectionName = ConnectionAlias::canonical((string) $event->connectionName);
             $queueRaw = (string) $event->job->getQueue();
             $queueKey = CanonicalQueueKey::fromOrDefault($queueRaw, $connectionName);
 
