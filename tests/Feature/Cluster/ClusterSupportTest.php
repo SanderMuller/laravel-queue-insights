@@ -133,8 +133,9 @@ it('runs a multi-key RENAME without CROSSSLOT (the purge-command pattern)', func
 
     // QueueInsightsPurgePendingCommand RENAMEs a zset to a temp key built
     // as `$zsetKey . ':purging-…'` — both carry the hash-tagged prefix, so
-    // they co-locate. RENAME is a two-key command; cluster rejects it with
-    // CROSSSLOT if the keys span slots.
+    // they co-locate onto one slot. phpredis's RedisCluster honours that
+    // and runs the RENAME; predis's cluster client rejects RENAME outright
+    // regardless of slots (see the skip below).
     $zsetKey = KeyPrefix::make('pending-zset:redis:default');
     $tempKey = $zsetKey . ':purging-abc123';
     $redis->command('zadd', [$zsetKey, 1, 'uuid-1']);
@@ -145,7 +146,11 @@ it('runs a multi-key RENAME without CROSSSLOT (the purge-command pattern)', func
         ->and($redis->command('zrange', [$tempKey, 0, -1]))->toBe(['uuid-1']);
 
     $redis->command('del', [$tempKey]);
-})->group('cluster');
+})->group('cluster')->skip(
+    getenv('QI_REDIS_CLIENT') === 'predis',
+    'predis cluster rejects RENAME outright (NotSupportedException), even for same-slot keys. '
+    . 'QueueInsightsPurgePendingCommand catches this and fails gracefully — see .ai/docs/redis-cluster.md.',
+);
 
 it('runs a multi-key MGET across KeyPrefix-built keys without CROSSSLOT', function (): void {
     $redis = R::conn('cluster');

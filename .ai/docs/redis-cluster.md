@@ -72,6 +72,7 @@ connection (`clusters` block or `options.cluster`) so the client follows
 2. **Never double-wrap.** If the operator already put a `{…}` in `key_prefix`, `make()` leaves it untouched (`str_contains($prefix, '{')` guard) — a deliberate per-tenant tag is theirs to own.
 3. **Pinning is all-or-nothing.** Either every package key shares the tag (correct) or the feature is off. There is no partial mode.
 4. **Cluster detection is by connection class**, not config — `RedisPipeline` checks `instanceof PhpRedisClusterConnection|PredisClusterConnection`, checked **before** the `PhpRedisConnection` branch (cluster extends it).
+5. **`RENAME` works on phpredis cluster, not predis cluster.** Same-slot hash-tagged keys satisfy phpredis's `RedisCluster`, but predis's cluster client rejects `RENAME` outright (`NotSupportedException`) regardless of slots. The only `RENAME` is in `QueueInsightsPurgePendingCommand::forcePurge()`, which already wraps it in try/catch and fails the command gracefully — so predis-cluster hosts get a clean "Failed to snapshot … via RENAME" error from `queue-insights:purge-pending --force`, not a crash. The `cluster` test group skips its RENAME case on predis for this reason.
 
 ## What NOT to do
 
@@ -87,4 +88,5 @@ connection (`clusters` block or `options.cluster`) so the client follows
 | `CROSSSLOT Keys in request don't hash to the same slot` | `redis_cluster` not enabled, or `key_prefix` lost its hash tag | Set `QUEUE_INSIGHTS_REDIS_CLUSTER=true`; confirm `KeyPrefix::make()` output starts with `{…}` |
 | `Call to undefined method RedisCluster::pipeline()` | A pipeline reached `Connection::pipeline()` instead of the eager fallback — a new cluster connection class not covered by the `instanceof` check | Add the class to `RedisPipeline::run`'s cluster branch |
 | Commands error with `MOVED` | The connection is a plain client against a cluster endpoint | Reconfigure as a Laravel `clusters` connection so the client follows redirects |
+| `queue-insights:purge-pending --force` reports "Failed to snapshot … via RENAME" on cluster | predis cluster rejects `RENAME` outright | Expected on predis cluster — the command fails closed, no data touched. Use phpredis on cluster if you need `--force` purge. |
 | `cluster` test group all skipped in CI | `REDIS_CLUSTER_HOST` not exported / cluster service didn't reach `cluster_state:ok` | Check the `test-cluster` job's service health-check |

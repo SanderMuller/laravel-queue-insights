@@ -176,6 +176,14 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 20
+      # Plain standalone Redis for the `default` connection. The cluster
+      # tests target `cluster`, but TestCase still resolves `default`, and
+      # phpredis connects eagerly — so it needs a real endpoint on 6379.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 5
 
     steps:
       - name: Checkout code
@@ -200,5 +208,8 @@ jobs:
         env:
           REDIS_CLUSTER_HOST: 127.0.0.1
           REDIS_CLUSTER_PORT: 7000
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+          REDIS_DB: 15
           QI_REDIS_CLIENT: ${{ matrix.redis-client }}
         run: vendor/bin/pest --group=cluster --ci
