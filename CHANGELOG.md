@@ -4,6 +4,20 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.19.0 - 2026-05-14
+
+### Highlights
+
+- **Redis Cluster support (opt-in).** Queue Insights issues multi-key Lua scripts, pipelines, and `MGET` fan-outs that cluster-mode Redis rejects with `CROSSSLOT` when keys span hash slots — so on a cluster those writes silently failed. Set `QUEUE_INSIGHTS_REDIS_CLUSTER=true` and the package wraps `key_prefix` in a Redis hash tag (`{qm:env:}…`), pinning the whole keyspace to one slot so every multi-key op stays legal. `RedisPipeline` routes cluster connections through an eager command fallback (`RedisCluster` has no `pipeline()`). The matching Redis connection must be configured as a real Laravel `clusters` connection so the client follows `MOVED` — see [UPGRADING.md](UPGRADING.md#upgrading-from-018-to-019) for the copy-paste config. A `grokzen/redis-cluster` CI lane exercises the multi-key surfaces against a real cluster on both predis and phpredis. Note: predis's cluster client rejects `RENAME`, so `queue-insights:purge-pending --force` fails closed on predis cluster (it works on phpredis cluster); listeners, dashboard, and alerts work on both.
+- **Calmer dashboard typography.** The dashboard now loads the Inter variable font and uses a larger, more consistent text scale across the chrome, queue/job rows, tab strip, and filter toolbar — less visual noise, easier to scan at a glance.
+
+### What's Changed
+
+* feat(redis): Redis Cluster support via single-slot hash-tag pinning (d60c85b)
+* dashboard typography pass — Inter variable font + larger text scale (7c1fb53)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.18.0...0.19.0
+
 ## 0.18.0 - 2026-05-13
 
 ### Highlights
@@ -16,6 +30,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
           'connection_drift' => ['enabled' => true, 'severity' => 'warning'],
       ],
   ],
+  
   
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
@@ -39,6 +54,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   ```
@@ -203,6 +219,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -423,6 +440,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -539,6 +557,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -574,6 +593,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -704,6 +724,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
