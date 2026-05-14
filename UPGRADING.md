@@ -4,6 +4,48 @@ Migration steps between minor/major versions of `laravel-queue-insights`. Patch 
 
 Newest at the top. Across-version jumps must complete intermediate sections in order.
 
+## Upgrading from 0.18 to 0.19
+
+### Redis Cluster support
+
+Queue Insights now runs against cluster-mode Redis. Previously its multi-key Lua scripts and pipelines failed with `CROSSSLOT` on a cluster, because the keys spanned hash slots — depth snapshots, completed/failed counters, and the pending → in-flight transition all silently dropped their writes.
+
+**Action — required only if `redis_connection` points at a Redis Cluster.** Two changes:
+
+1. Enable hash-tag pinning so every package key hashes to a single slot:
+
+```dotenv
+QUEUE_INSIGHTS_REDIS_CLUSTER=true
+```
+
+2. Make sure the matching Redis connection in `config/database.php` is a real cluster connection — a plain connection pointed at a cluster endpoint will not follow `MOVED` redirects:
+
+```php
+// config/database.php
+'redis' => [
+    'client' => 'phpredis',
+
+    'options' => [
+        'cluster' => 'redis', // use the Redis Cluster protocol
+    ],
+
+    'clusters' => [
+        'queue-insights' => [
+            [
+                'host' => env('REDIS_QUEUE_INSIGHTS_HOST', '127.0.0.1'),
+                'port' => env('REDIS_QUEUE_INSIGHTS_PORT', 6379),
+            ],
+        ],
+    ],
+],
+```
+
+Then point `QUEUE_INSIGHTS_REDIS` at that connection name (`queue-insights` above). Redis Cluster does not support multiple databases — drop any `database` key from the connection; the hash-tagged `key_prefix` is what isolates the keyspace.
+
+**Action — none required for standalone (non-cluster) Redis.** Leave `QUEUE_INSIGHTS_REDIS_CLUSTER` unset/false; nothing changes.
+
+Trade-off: hash-tag pinning co-locates the entire Queue Insights keyspace on a single cluster slot — one node. Intentional and fine for the package's bounded keyspace, but it does not shard. See the Redis Cluster section in the README.
+
 ## Upgrading from 0.16 to 0.17
 
 ### Horizon supervisor queues now auto-discovered

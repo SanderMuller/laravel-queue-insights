@@ -14,6 +14,16 @@ final class KeyPrefix
             $prefix = 'qm:';
         }
 
+        // Redis Cluster: every package key must hash to the same slot, or the
+        // multi-key Lua scripts + pipelines this package issues hit CROSSSLOT.
+        // Wrapping the prefix in a hash tag `{…}` pins the entire keyspace to
+        // one slot. Skipped when the operator already placed their own hash
+        // tag in `key_prefix` — a deliberate `{…}` (e.g. per-tenant) is left
+        // exactly as written rather than double-wrapped.
+        if (Config::bool('redis_cluster', false) && ! str_contains($prefix, '{')) {
+            $prefix = '{' . $prefix . '}';
+        }
+
         return $prefix . $suffix;
     }
 

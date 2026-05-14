@@ -21,6 +21,24 @@ return [
     'key_prefix' => env('QUEUE_INSIGHTS_KEY_PREFIX', 'qm:' . env('APP_ENV', 'production') . ':'),
 
     /*
+     | Set true when `redis_connection` points at a Redis Cluster (cluster
+     | mode enabled). The package then wraps `key_prefix` in a Redis hash
+     | tag `{…}` so every key it writes hashes to a single slot — required
+     | because the package issues multi-key Lua scripts and pipelines that
+     | Redis Cluster rejects with CROSSSLOT when keys span slots. If you have
+     | already placed your own `{…}` hash tag in `key_prefix`, it is left
+     | as-is and not double-wrapped.
+     |
+     | The matching Redis connection in config/database.php must ALSO be a
+     | cluster connection (a `clusters` block, or `options.cluster`) so the
+     | client follows MOVED redirects. See UPGRADING.md for the full recipe.
+     |
+     | Leave false for standalone Redis — hash tags are unnecessary there
+     | and would needlessly rename every key.
+     */
+    'redis_cluster' => env('QUEUE_INSIGHTS_REDIS_CLUSTER', false),
+
+    /*
      | Each entry: ['connection' => ..., 'queue' => ...]. Connection must exist in
      | config/queue.php. Driver is auto-detected via queue.connections.{name}.driver.
      */

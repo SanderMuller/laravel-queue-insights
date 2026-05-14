@@ -58,6 +58,23 @@ abstract class TestCase extends Orchestra
             'database' => is_string($db) && is_numeric($db) ? (int) $db : 15,
         ]);
 
+        // Optional Redis Cluster connection — only wired up when the
+        // `cluster` CI lane exports REDIS_CLUSTER_HOST; the `cluster` test
+        // group skips otherwise. The cluster-mode option goes under the
+        // `clusters`-scoped config subtree, NOT global `database.redis.options`,
+        // so `default` stays a plain connection even on the cluster lane.
+        $clusterHost = getenv('REDIS_CLUSTER_HOST');
+        if (is_string($clusterHost) && $clusterHost !== '') {
+            $clusterPort = getenv('REDIS_CLUSTER_PORT');
+            $config->set('database.redis.clusters.options', ['cluster' => 'redis']);
+            $config->set('database.redis.clusters.cluster', [
+                [
+                    'host' => $clusterHost,
+                    'port' => is_string($clusterPort) && is_numeric($clusterPort) ? (int) $clusterPort : 7000,
+                ],
+            ]);
+        }
+
         $config->set('queue.default', 'sync');
         $config->set('queue.connections.sync', ['driver' => 'sync']);
 

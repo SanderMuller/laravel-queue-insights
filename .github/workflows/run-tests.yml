@@ -137,3 +137,68 @@ jobs:
           # RedisClientParityTest.
           QI_REDIS_CLIENT: ${{ matrix.redis-client }}
         run: vendor/bin/pest --ci
+
+  # Dedicated Redis Cluster lane. The package issues multi-key Lua scripts +
+  # pipelines that Redis Cluster rejects with CROSSSLOT unless every key
+  # hashes to one slot — `redis_cluster` hash-tag pinning + the
+  # EagerCommandCollector pipeline fallback exist for exactly this. The
+  # `cluster` test group exercises those paths against a real cluster;
+  # `grokzen/redis-cluster` runs a 6-node (3 master / 3 replica) cluster in
+  # one service container. Both drivers, since the cluster connection class
+  # and the RedisEval / RedisPipeline branches diverge between them.
+  test-cluster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        redis-client: [predis, phpredis]
+
+    name: cluster - ${{ matrix.redis-client }}
+
+    services:
+      redis-cluster:
+        image: grokzen/redis-cluster:7.0.10
+        env:
+          # grokzen's documented setting for reachability from the host
+          # runner — the cluster nodes stay addressable via the mapped
+          # 127.0.0.1:7000-7005 ports below.
+          IP: 0.0.0.0
+        ports:
+          - 7000:7000
+          - 7001:7001
+          - 7002:7002
+          - 7003:7003
+          - 7004:7004
+          - 7005:7005
+        options: >-
+          --health-cmd "redis-cli -p 7000 cluster info | grep -q cluster_state:ok"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, redis, sqlite
+          coverage: none
+
+      - name: Setup problem matchers
+        run: |
+          echo "::add-matcher::${{ runner.tool_cache }}/php.json"
+          echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
+
+      - name: Install dependencies
+        run: composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Execute cluster tests
+        env:
+          REDIS_CLUSTER_HOST: 127.0.0.1
+          REDIS_CLUSTER_PORT: 7000
+          QI_REDIS_CLIENT: ${{ matrix.redis-client }}
+        run: vendor/bin/pest --group=cluster --ci

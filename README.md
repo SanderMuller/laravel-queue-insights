@@ -60,6 +60,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
+- **Redis Cluster compatible** — opt-in (`QUEUE_INSIGHTS_REDIS_CLUSTER`); hash-tag pinning keeps the keyspace on one slot so the package's multi-key Lua + pipelines stay CROSSSLOT-legal.
 
 ## Requirements
 
@@ -453,6 +454,17 @@ The default 120s covers `--timeout=60` + 20s SQS long-poll + headroom. The windo
 
 - Shared Redis (multi-tenant, or multiple apps or envs on the same Redis): keep the default `QUEUE_INSIGHTS_KEY_PREFIX=qm:{APP_ENV}:`. Safe against collision.
 - Dedicated Redis: override to `QUEUE_INSIGHTS_KEY_PREFIX=qm:` to drop the env segment and shorten every key.
+
+### Redis Cluster
+
+Queue Insights issues multi-key Lua scripts and pipelines (atomic counter pairs, the pending → in-flight transition, batched dashboard reads). Redis Cluster rejects any multi-key command whose keys span hash slots with `CROSSSLOT` — so on a cluster-mode Redis those writes silently fail (the listeners catch and log; the dashboard reads error).
+
+To run against Redis Cluster:
+
+1. **Set `QUEUE_INSIGHTS_REDIS_CLUSTER=true`.** This wraps `key_prefix` in a Redis hash tag (`{qm:env:}…`), so every key the package writes hashes to a single slot and multi-key ops become CROSSSLOT-legal. If you have already placed your own `{…}` tag in `QUEUE_INSIGHTS_KEY_PREFIX`, it is left as-is.
+2. **Configure the matching connection as a real cluster connection** in `config/database.php` (a `clusters` block, or `options.cluster`) so the client follows `MOVED` redirects — a plain connection pointed at a cluster endpoint will not. See [UPGRADING.md](UPGRADING.md) for a copy-paste `clusters` block.
+
+Trade-off: hash-tag pinning co-locates the entire Queue Insights keyspace on **one** cluster slot — i.e. one node. That is intentional and fine for a bounded observability keyspace (capped streams, TTL'd keys), but it means Queue Insights does not shard across the cluster. If that keyspace is large enough to matter, point `redis_connection` at a standalone (non-cluster) Redis instead.
 
 ## Alerting
 

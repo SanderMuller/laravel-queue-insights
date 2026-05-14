@@ -1,5 +1,6 @@
 <?php declare(strict_types=1);
 
+use SanderMuller\QueueInsights\Support\EagerCommandCollector;
 use SanderMuller\QueueInsights\Support\RedisPipeline;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -58,4 +59,30 @@ it('returns an empty list when no commands are queued', function (): void {
 
     expect($results)
         ->toBeEmpty();
+});
+
+it('eager execution reproduces the native pipeline reply shape on the active driver', function (): void {
+    R::conn()->command('set', ['p:a', '1']);
+    R::conn()->command('hset', ['p:h', 'f', '9']);
+    R::conn()->command('zadd', ['p:z', 5, 'm']);
+
+    // EagerCommandCollector is the fallback RedisPipeline::run uses on
+    // cluster connections (which have no pipeline()). It must yield
+    // byte-identical replies to the native pipeline on the active driver,
+    // or cluster reads would silently shift shape vs single-node reads —
+    // `zrange … withscores` is the shape most likely to diverge, so it's
+    // in the sequence on purpose.
+    $callback = static function (mixed $pipe): void {
+        $pipe->get('p:a');
+        $pipe->hgetall('p:h');
+        $pipe->zrange('p:z', 0, -1, ['withscores' => true]);
+        $pipe->zcard('p:z');
+    };
+
+    $viaPipeline = RedisPipeline::run(R::conn(), $callback);
+
+    $collector = new EagerCommandCollector(R::conn());
+    $callback($collector);
+
+    expect($collector->results())->toEqual($viaPipeline);
 });
