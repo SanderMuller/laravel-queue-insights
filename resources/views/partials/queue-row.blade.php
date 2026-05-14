@@ -34,7 +34,7 @@
     x-on:keydown.space.prevent.self="$wire.selectQueue(@js($q['connection']), @js($q['queue']))">
     <div class="grid grid-cols-12 items-center gap-4 px-4 py-3">
         <div class="col-span-4 min-w-0">
-            <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $q['connection'] }}</p>
+            <p class="truncate text-sm text-gray-500 dark:text-gray-300">{{ $q['connection'] }}</p>
             <p class="truncate font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $q['queue'] }}</p>
         </div>
         <dl class="col-span-4 grid grid-cols-3 text-center text-sm tabular-nums">
@@ -51,7 +51,7 @@
                 <dd class="font-semibold text-gray-900 dark:text-gray-100">{{ $q['delayed'] ?? '—' }}</dd>
             </div>
         </dl>
-        <dl class="col-span-2 text-xs tabular-nums text-gray-500 dark:text-gray-300" title="Wait time = enqueue → worker pickup. Most recent 1000 jobs.">
+        <dl class="col-span-2 text-sm tabular-nums text-gray-500 dark:text-gray-300" title="Wait time = enqueue → worker pickup. Most recent 1000 jobs.">
             <div class="flex items-center justify-end gap-1.5">
                 <dt class="text-gray-400 dark:text-gray-400">p50</dt>
                 <dd class="font-medium text-gray-700 dark:text-gray-300">{{ $q['wait_p50_ms'] !== null ? number_format($q['wait_p50_ms']).'ms' : '—' }}</dd>
@@ -61,7 +61,7 @@
                 <dd class="font-medium text-gray-700 dark:text-gray-300">{{ $q['wait_p95_ms'] !== null ? number_format($q['wait_p95_ms']).'ms' : '—' }}</dd>
             </div>
         </dl>
-        <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-xs">
+        <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-sm">
             @if($q['error'])
                 <x-queue-insights::hint triggerClass="rounded bg-red-50 dark:bg-red-900/40 px-1.5 py-0.5 font-medium text-red-700 dark:text-red-300 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30 cursor-help">
                     error
@@ -94,9 +94,9 @@
             @endif
 
             @if($q['last_at'])
-                <x-queue-insights::qi-time :at="$q['last_at']" prefix="last" class="basis-full text-right text-xs text-gray-400 dark:text-gray-400"/>
+                <x-queue-insights::qi-time :at="$q['last_at']" prefix="last" class="basis-full text-right text-sm text-gray-400 dark:text-gray-400"/>
             @else
-                <span class="basis-full text-right text-xs text-gray-400 dark:text-gray-400">
+                <span class="basis-full text-right text-sm text-gray-400 dark:text-gray-400">
                     <x-queue-insights::hint placement="bottom" triggerClass="cursor-help underline decoration-dotted decoration-gray-300 underline-offset-2">
                         no snapshot yet
                         <x-slot:tip>

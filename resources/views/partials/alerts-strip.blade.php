@@ -58,7 +58,7 @@
                     </button>
                 </div>
 
-                <div x-show="open" x-cloak class="ml-5 flex flex-col gap-1 text-xs">
+                <div x-show="open" x-cloak class="ml-5 flex flex-col gap-1 text-sm">
                     <p class="opacity-90">{{ $issue->description }}</p>
 
                     @if(! empty($issue->context))

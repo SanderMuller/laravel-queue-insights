@@ -74,21 +74,21 @@
     </div>
 
     <div class="col-span-2 min-w-0">
-        <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $f['connection'] ?? '—' }}</p>
-        <p class="mt-0.5 truncate font-mono text-xs text-gray-800 dark:text-gray-200">{{ $f['queue'] ?? '—' }}</p>
+        <p class="truncate text-sm text-gray-500 dark:text-gray-300">{{ $f['connection'] ?? '—' }}</p>
+        <p class="mt-0.5 truncate font-mono text-sm text-gray-800 dark:text-gray-200">{{ $f['queue'] ?? '—' }}</p>
     </div>
 
     <div class="col-span-2 text-right">
         <p class="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $runtimeShort }}</p>
         @if($attempts !== null && $maxTries !== null)
-            <p class="mt-0.5 text-xs font-medium tabular-nums text-gray-500 dark:text-gray-300">{{ $attempts }}/{{ $maxTries }} tries</p>
+            <p class="mt-0.5 text-sm font-medium tabular-nums text-gray-500 dark:text-gray-300">{{ $attempts }}/{{ $maxTries }} tries</p>
         @elseif($attempts !== null && $attempts > 1)
-            <p class="mt-0.5 text-xs font-medium tabular-nums text-amber-700 dark:text-amber-300">{{ $attempts }} tries</p>
+            <p class="mt-0.5 text-sm font-medium tabular-nums text-amber-700 dark:text-amber-300">{{ $attempts }} tries</p>
         @endif
     </div>
 
     <div class="col-span-2 text-right">
-        <x-queue-insights::qi-time :at="$f['failed_at'] ?? null" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
+        <x-queue-insights::qi-time :at="$f['failed_at'] ?? null" class="block whitespace-nowrap text-sm text-gray-700 dark:text-gray-300"/>
     </div>
 
     <div class="col-span-1 text-right">

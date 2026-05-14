@@ -13,9 +13,9 @@
     </div>
 @else
     @if(count($atRisk) > 0)
-        <h3 class="mb-2 text-xs font-semibold tracking-wide text-red-700 dark:text-red-300">Needs attention <span class="font-normal text-red-500 dark:text-red-400 tabular-nums">({{ count($atRisk) }})</span></h3>
+        <h3 class="mb-2 text-sm font-semibold tracking-wide text-red-700 dark:text-red-300">Needs attention <span class="font-normal text-red-500 dark:text-red-400 tabular-nums">({{ count($atRisk) }})</span></h3>
         <div class="mb-5 rounded-lg bg-white ring-1 ring-red-600/20 dark:bg-gray-900 dark:ring-red-400/30">
-            <div class="grid grid-cols-12 items-center gap-4 border-b border-red-200/60 px-4 py-2 text-xs font-medium text-red-700/80 dark:border-red-400/20 dark:text-red-300">
+            <div class="grid grid-cols-12 items-center gap-4 border-b border-red-200/60 px-4 py-2 text-sm font-medium text-red-700/80 dark:border-red-400/20 dark:text-red-300">
                 <div class="col-span-4">Queue</div>
                 <div class="col-span-4 grid grid-cols-3 text-center">
                     <div>Depth</div><div>In-flight</div><div>Delayed</div>
@@ -32,10 +32,10 @@
     @endif
     @if(count($healthy) > 0)
         @if(count($atRisk) > 0)
-            <h3 class="mb-2 text-xs font-semibold tracking-wide text-gray-500 dark:text-gray-300">Healthy <span class="font-normal text-gray-400 dark:text-gray-400 tabular-nums">({{ count($healthy) }})</span></h3>
+            <h3 class="mb-2 text-sm font-semibold tracking-wide text-gray-500 dark:text-gray-300">Healthy <span class="font-normal text-gray-400 dark:text-gray-400 tabular-nums">({{ count($healthy) }})</span></h3>
         @endif
         <div class="rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
-            <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-xs font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
+            <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-sm font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
                 <div class="col-span-4">Queue</div>
                 <div class="col-span-4 grid grid-cols-3 text-center">
                     <div>Depth</div><div>In-flight</div><div>Delayed</div>

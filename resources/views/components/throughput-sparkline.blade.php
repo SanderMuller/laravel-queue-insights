@@ -82,11 +82,11 @@
          class="rounded-xl bg-white p-5 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
     <div class="mb-4 flex flex-wrap items-end justify-between gap-4">
         <div>
-            <p class="text-xs font-medium text-gray-500 dark:text-gray-300">Throughput &middot; last 24h</p>
+            <p class="text-sm font-medium text-gray-500 dark:text-gray-300">Throughput &middot; last 24h</p>
             <p class="mt-1 text-2xl font-semibold tracking-tight text-gray-900 tabular-nums dark:text-gray-100">{{ number_format($throughputTotalProcessed) }}
                 <span class="ml-1 text-sm font-normal text-gray-500 dark:text-gray-300">processed</span></p>
         </div>
-        <dl class="flex gap-5 text-xs">
+        <dl class="flex gap-5 text-sm">
             <div class="flex items-center gap-2">
                 <span class="size-2 rounded-sm bg-emerald-500" aria-hidden="true"></span>
                 <dt class="text-gray-500 dark:text-gray-300">Processed</dt>

@@ -25,7 +25,7 @@
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-baseline gap-2">
                 <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Queues</h3>
-                <p class="text-xs text-gray-500 dark:text-gray-300 tabular-nums">{{ count($queues) }}</p>
+                <p class="text-sm text-gray-500 dark:text-gray-300 tabular-nums">{{ count($queues) }}</p>
             </div>
             @if(count($atRisk) > 0)
                 <span class="inline-flex items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/40 dark:text-red-300">
@@ -37,7 +37,7 @@
             @endif
         </div>
         @if(count($queuePreview ?? []) === 0)
-            <p class="py-2 text-xs text-gray-500 dark:text-gray-300">No queues configured.</p>
+            <p class="py-2 text-sm text-gray-500 dark:text-gray-300">No queues configured.</p>
         @else
             <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                 @foreach($queuePreview as $q)
@@ -49,7 +49,7 @@
             <span class="text-[11px] tabular-nums text-gray-500 dark:text-gray-300">{{ number_format($totalDepth) }} backlog · {{ number_format($totalInFlight) }} in-flight</span>
             <button type="button"
                     x-on:click="setTab('queues')"
-                    class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
+                    class="rounded text-sm font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                 See all {{ count($queues) }} →
             </button>
         </div>
@@ -61,7 +61,7 @@
             <div class="flex items-center justify-between gap-2">
                 <div class="flex items-baseline gap-2">
                     <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Pending</h3>
-                    <p class="text-xs text-gray-500 dark:text-gray-300 tabular-nums">{{ count($inFlightRows) + count($pendingRows) + count($delayedRows) }}</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-300 tabular-nums">{{ count($inFlightRows) + count($pendingRows) + count($delayedRows) }}</p>
                 </div>
                 @if(count($inFlightRows) > 0)
                     <span class="inline-flex items-center gap-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
@@ -71,7 +71,7 @@
                 @endif
             </div>
             @if(! $hasPendingAny)
-                <p class="py-2 text-xs text-gray-500 dark:text-gray-300">No pending jobs tracked.</p>
+                <p class="py-2 text-sm text-gray-500 dark:text-gray-300">No pending jobs tracked.</p>
             @else
                 <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                     @foreach($pendingPreview as $p)
@@ -85,7 +85,7 @@
                 </span>
                 <button type="button"
                         x-on:click="setTab('pending')"
-                        class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
+                        class="rounded text-sm font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                     See all →
                 </button>
             </div>
@@ -97,12 +97,12 @@
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-baseline gap-2">
                 <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Recent completed</h3>
-                <p class="text-xs text-gray-500 dark:text-gray-300 tabular-nums">{{ $completedTotal ?? count($completedRows) }}</p>
+                <p class="text-sm text-gray-500 dark:text-gray-300 tabular-nums">{{ $completedTotal ?? count($completedRows) }}</p>
             </div>
             <span class="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">{{ number_format($stats['jobs_past_hour']) }}/hr</span>
         </div>
         @if(count($completedPreview ?? []) === 0)
-            <p class="py-2 text-xs text-gray-500 dark:text-gray-300">No completed jobs yet.</p>
+            <p class="py-2 text-sm text-gray-500 dark:text-gray-300">No completed jobs yet.</p>
         @else
             <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                 @foreach($completedPreview as $row)
@@ -113,7 +113,7 @@
         <div class="mt-auto flex items-center justify-end gap-2 border-t border-gray-950/5 pt-2 dark:border-white/10">
             <button type="button"
                     x-on:click="setTab('completed')"
-                    class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
+                    class="rounded text-sm font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                 See all {{ $completedTotal ?? count($completedRows) }} →
             </button>
         </div>
@@ -124,7 +124,7 @@
         <div class="flex items-center justify-between gap-2">
             <div class="flex items-baseline gap-2">
                 <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Recent failed</h3>
-                <p class="text-xs text-gray-500 dark:text-gray-300 tabular-nums">{{ $failedTotal ?? count($failedRows) }}</p>
+                <p class="text-sm text-gray-500 dark:text-gray-300 tabular-nums">{{ $failedTotal ?? count($failedRows) }}</p>
             </div>
             @if($stats['failed_past_hour'] > 0)
                 <span class="inline-flex items-center gap-1 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-900/40 dark:text-red-300">
@@ -136,7 +136,7 @@
             @endif
         </div>
         @if(count($failedPreview ?? []) === 0)
-            <p class="py-2 text-xs text-gray-500 dark:text-gray-300">No failed jobs.</p>
+            <p class="py-2 text-sm text-gray-500 dark:text-gray-300">No failed jobs.</p>
         @else
             <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                 @foreach($failedPreview as $f)
@@ -147,7 +147,7 @@
         <div class="mt-auto flex items-center justify-end gap-2 border-t border-gray-950/5 pt-2 dark:border-white/10">
             <button type="button"
                     x-on:click="setTab('failed')"
-                    class="rounded text-xs font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
+                    class="rounded text-sm font-medium text-emerald-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:text-emerald-300">
                 See all {{ $failedTotal ?? count($failedRows) }} →
             </button>
         </div>

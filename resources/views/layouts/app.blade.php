@@ -13,6 +13,21 @@
         <meta name="color-scheme" content="light dark">
     @endif
     <title>Queue Insights</title>
+    {{-- Inter font-family is *declared* up front so the system-ui fallback
+         renders immediately and downstream `font-feature-settings` apply
+         without waiting on the remote CSS. The actual font file fetch is
+         non-blocking and happens lower in <head> — see the preload-swap
+         block after the theme-init script. That ordering matters: a
+         render-blocking <link rel="stylesheet"> would stall the
+         theme-init script and break the no-FOIT contract documented in
+         .ai/docs/dashboard-dark-mode.md. --}}
+    <style>
+        :root { font-family: 'InterVariable', ui-sans-serif, system-ui, sans-serif;
+                font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01', 'ss03'; }
+        @supports not (font-variation-settings: normal) {
+            :root { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
+        }
+    </style>
     @if($qiThemeEnabled)
         {{-- Theme init — MUST run before <body> paints to avoid FOIT. Single
              owner of matchMedia + localStorage + html.dark/dataset.theme.
@@ -77,6 +92,15 @@
             })();
         </script>
     @endif
+    {{-- Inter variable font — non-blocking fetch. Sits AFTER the theme-init
+         script so a slow/blocked rsms.me does not stall `html.dark`
+         application. preload+onload swaps in the stylesheet once it's
+         downloaded; <noscript> keeps SR/no-JS hosts working; system-ui
+         is already painting from the inline :root rule above. --}}
+    <link rel="preconnect" href="https://rsms.me/" crossorigin>
+    <link rel="preload" as="style" href="https://rsms.me/inter/inter.css"
+          onload="this.onload=null;this.rel='stylesheet'">
+    <noscript><link rel="stylesheet" href="https://rsms.me/inter/inter.css"></noscript>
     {{-- Tailwind v3 Play CDN. Spec hard-depends on:
            1. inline `tailwind.config = { darkMode: 'class' }` working
            2. `dark:` ancestor selector triggered by `html.dark`

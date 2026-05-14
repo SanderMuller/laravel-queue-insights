@@ -39,14 +39,14 @@
         </p>
     </div>
     <div class="col-span-2 min-w-0">
-        <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
-        <p class="mt-0.5 truncate font-mono text-xs text-gray-800 dark:text-gray-200">{{ $row['queue'] ?? '—' }}</p>
+        <p class="truncate text-sm text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
+        <p class="mt-0.5 truncate font-mono text-sm text-gray-800 dark:text-gray-200">{{ $row['queue'] ?? '—' }}</p>
     </div>
     <div class="col-span-2 text-right">
         <p class="text-sm font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $runtimeShort }}</p>
     </div>
     <div class="col-span-2 text-right">
-        <x-queue-insights::qi-time :at="$processedAt" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
+        <x-queue-insights::qi-time :at="$processedAt" class="block whitespace-nowrap text-sm text-gray-700 dark:text-gray-300"/>
     </div>
     <div class="col-span-1 text-right">
         <x-queue-insights::icon-chevron-right class="ml-auto inline-block size-3 text-gray-400 dark:text-gray-400"/>

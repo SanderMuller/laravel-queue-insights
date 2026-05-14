@@ -49,10 +49,10 @@
         <div class="h-1.5 w-full overflow-hidden rounded-full bg-gray-950/5 dark:bg-white/10">
             <div class="h-full {{ $barTone }} transition-all" style="width: {{ max(2, $progress) }}%"></div>
         </div>
-        <p class="mt-1 text-xs tabular-nums text-gray-500 dark:text-gray-300">{{ $progress }}% · {{ $processed }}/{{ $total }}</p>
+        <p class="mt-1 text-sm tabular-nums text-gray-500 dark:text-gray-300">{{ $progress }}% · {{ $processed }}/{{ $total }}</p>
     </div>
 
-    <dl class="col-span-2 grid grid-cols-2 text-center text-xs tabular-nums">
+    <dl class="col-span-2 grid grid-cols-2 text-center text-sm tabular-nums">
         <div>
             <dt class="text-gray-400 dark:text-gray-400">failed</dt>
             <dd class="font-medium {{ $hasFailures ? 'text-red-700 dark:text-red-300' : 'text-gray-700 dark:text-gray-300' }}">{{ $failed }}</dd>
@@ -63,16 +63,16 @@
         </div>
     </dl>
 
-    <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-xs">
+    <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-sm">
         @if($statusChip)
             <span class="rounded {{ $statusChip['cls'] }} px-1.5 py-0.5 font-medium ring-1 ring-inset">
                 {{ $statusChip['label'] }}
             </span>
         @endif
         @if($finishedAt instanceof \Carbon\CarbonInterface)
-            <x-queue-insights::qi-time :at="$finishedAt" prefix="finished" class="basis-full text-right text-xs text-gray-400 dark:text-gray-400"/>
+            <x-queue-insights::qi-time :at="$finishedAt" prefix="finished" class="basis-full text-right text-sm text-gray-400 dark:text-gray-400"/>
         @elseif($createdAt instanceof \Carbon\CarbonInterface)
-            <x-queue-insights::qi-time :at="$createdAt" prefix="created" class="basis-full text-right text-xs text-gray-400 dark:text-gray-400"/>
+            <x-queue-insights::qi-time :at="$createdAt" prefix="created" class="basis-full text-right text-sm text-gray-400 dark:text-gray-400"/>
         @endif
     </div>
 </x-queue-insights::list-row>

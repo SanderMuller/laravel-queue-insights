@@ -82,7 +82,7 @@
             @php($scopedClassShort = $selectedClass !== null && str_contains($selectedClass, '\\')
                 ? substr($selectedClass, strrpos($selectedClass, '\\') + 1)
                 : $selectedClass)
-            <p class="flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+            <p class="flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                 <span>Filtering by</span>
                 @if($selectedQueue !== '')
                     <span class="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:ring-white/10">

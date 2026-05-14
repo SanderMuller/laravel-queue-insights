@@ -117,17 +117,17 @@
         </p>
     </div>
     <div class="col-span-3 min-w-0">
-        <p class="truncate text-xs text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
-        <p class="mt-0.5 truncate font-mono text-xs text-gray-800 dark:text-gray-200">{{ $row['queue'] ?? '—' }}</p>
+        <p class="truncate text-sm text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
+        <p class="mt-0.5 truncate font-mono text-sm text-gray-800 dark:text-gray-200">{{ $row['queue'] ?? '—' }}</p>
     </div>
     <div class="col-span-2 text-right">
-        <x-queue-insights::qi-time :at="$queuedCarbon" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
+        <x-queue-insights::qi-time :at="$queuedCarbon" class="block whitespace-nowrap text-sm text-gray-700 dark:text-gray-300"/>
     </div>
     <div class="col-span-2 text-right">
         @if($isInFlight)
-            <x-queue-insights::qi-time :at="$startedCarbon" prefix="started" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
+            <x-queue-insights::qi-time :at="$startedCarbon" prefix="started" class="block whitespace-nowrap text-sm text-gray-700 dark:text-gray-300"/>
         @else
-            <x-queue-insights::qi-time :at="$availableCarbon" class="block whitespace-nowrap text-xs text-gray-700 dark:text-gray-300"/>
+            <x-queue-insights::qi-time :at="$availableCarbon" class="block whitespace-nowrap text-sm text-gray-700 dark:text-gray-300"/>
         @endif
     </div>
 </x-queue-insights::list-row>
