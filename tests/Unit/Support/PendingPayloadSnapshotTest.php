@@ -67,6 +67,28 @@ it('writes payload_body in full mode alongside metadata', function (): void {
         ->toHaveKey('displayName', 'App\\Jobs\\X');
 });
 
+it('strips data.command by default in full mode (safer-default vs redact-bypass)', function (): void {
+    // The default `pending.capture.include_command_body=false` swaps the
+    // serialized blob for a sentinel BEFORE the redact-walk + size cap.
+    // `redact_keys` cannot reach inside PHP-serialized bytes, so any
+    // sensitive property would otherwise round-trip into Redis verbatim.
+    $fields = PendingPayloadSnapshot::build(fakePayload(), 'full', [], 2048, 4096);
+
+    $body = decodePayloadBody($fields['payload_body'] ?? null);
+    expect($body['data']['command'])->toBe('[OMITTED_BY_PENDING_CAPTURE]');
+    expect($body['data']['commandName'])->toBe('App\\Jobs\\X');
+});
+
+it('preserves data.command verbatim when include_command_body=true', function (): void {
+    $cmd = 'O:11:"App\\Jobs\\X":1:{s:5:"email";s:13:"a@example.com";}';
+    $payload = fakePayload(['data' => ['commandName' => 'App\\Jobs\\X', 'command' => $cmd]]);
+
+    $fields = PendingPayloadSnapshot::build($payload, 'full', [], 2048, 4096, true);
+
+    $body = decodePayloadBody($fields['payload_body'] ?? null);
+    expect($body['data']['command'])->toBe($cmd);
+});
+
 it('redacts top-level keys matching the redact-keys regex list', function (): void {
     $payload = fakePayload(['password' => 'hunter2', 'api_key' => 'sk_live_1', 'safe' => 'ok']);
 
@@ -79,15 +101,16 @@ it('redacts top-level keys matching the redact-keys regex list', function (): vo
         ->toHaveKey('safe', 'ok');
 });
 
-it('keeps PHP-serialized command blobs intact even past maxFieldBytes', function (): void {
-    // The SerializedCommandReader pipeline + nested-data ValueParser
-    // need the bytes intact to decode the instance properties on the
-    // modal. Truncation would silently produce an invalid serialized
-    // string that ends up as a wall of garbage in the right column.
+it('keeps PHP-serialized command blobs intact past maxFieldBytes when include_command_body is on', function (): void {
+    // With the opt-in flag, the SerializedCommandReader pipeline +
+    // nested-data ValueParser need the bytes intact to decode the
+    // instance properties on the modal. Truncation would silently
+    // produce an invalid serialized string that ends up as a wall of
+    // garbage in the right column.
     $longCmd = 'O:11:"App\\Jobs\\X":1:{s:4:"blob";s:1000:"' . str_repeat('A', 1000) . '";}';
     $payload = fakePayload(['data' => ['commandName' => 'App\\Jobs\\X', 'command' => $longCmd]]);
 
-    $fields = PendingPayloadSnapshot::build($payload, 'full', [], 128, 16384);
+    $fields = PendingPayloadSnapshot::build($payload, 'full', [], 128, 16384, true);
 
     $body = decodePayloadBody($fields['payload_body'] ?? null);
     expect($body['data']['command'])->toBe($longCmd);

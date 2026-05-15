@@ -38,12 +38,25 @@ final class PendingPayloadSnapshot
      * hash. Returns `[]` when capture is off, the payload is unparseable,
      * or the encoded body exceeds the cap.
      *
-     * @param  array<array-key, mixed>|null  $payload    Decoded `JobQueued::payload` JSON.
-     * @param  'off'|'metadata'|'full'       $mode       Resolved `pending.capture.payloads`.
-     * @param  list<non-empty-string>        $redactKeys Regex patterns shared with completed.
+     * @param  array<array-key, mixed>|null  $payload            Decoded `JobQueued::payload` JSON.
+     * @param  'off'|'metadata'|'full'       $mode               Resolved `pending.capture.payloads`.
+     * @param  list<non-empty-string>        $redactKeys         Regex patterns shared with completed.
+     * @param  bool                          $includeCommandBody When false (default), the serialized
+     *                                                            `data.command` PHP blob is replaced
+     *                                                            with a `[OMITTED_BY_PENDING_CAPTURE]`
+     *                                                            sentinel before encoding. `redact_keys`
+     *                                                            cannot traverse PHP-serialized bytes,
+     *                                                            so persisting them verbatim into a
+     *                                                            per-uuid Redis hash (TTL × N queues
+     *                                                            × max_per_queue rows) widens the
+     *                                                            confidentiality window vs the
+     *                                                            MAXLEN-bounded completed stream.
+     *                                                            Operators flip true once their job
+     *                                                            classes are confirmed not to carry
+     *                                                            secrets as properties.
      * @return array<string, scalar|null>
      */
-    public static function build(?array $payload, string $mode, array $redactKeys, int $maxFieldBytes, int $maxPayloadBytes): array
+    public static function build(?array $payload, string $mode, array $redactKeys, int $maxFieldBytes, int $maxPayloadBytes, bool $includeCommandBody = false): array
     {
         if ($mode === 'off' || ! is_array($payload)) {
             return [];
@@ -78,7 +91,20 @@ final class PendingPayloadSnapshot
             return $fields;
         }
 
-        $redacted = self::walk($payload, $redactKeys, $maxFieldBytes);
+        $forSanitize = $payload;
+        if (! $includeCommandBody && isset($forSanitize['data']) && is_array($forSanitize['data']) && isset($forSanitize['data']['command'])) {
+            // Replace the serialized command blob with a sentinel BEFORE
+            // walking — the redact-keys regex cannot recurse into PHP-
+            // serialized bytes, so any sensitive property would otherwise
+            // round-trip into Redis verbatim. The pending-modal renders
+            // the sentinel as a "Job instance omitted by pending capture"
+            // note. Operators who need the instance-properties view flip
+            // `pending.capture.include_command_body=true` after confirming
+            // their job classes don't carry secrets as object properties.
+            $forSanitize['data']['command'] = '[OMITTED_BY_PENDING_CAPTURE]';
+        }
+
+        $redacted = self::walk($forSanitize, $redactKeys, $maxFieldBytes);
         $encoded = json_encode($redacted, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
         if ($encoded === false) {

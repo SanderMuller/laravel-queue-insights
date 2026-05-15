@@ -446,7 +446,11 @@ it('writes payload_body under full mode and PendingJobsReader surfaces it', func
     expect($decoded)
         ->toBeArray()
         ->toHaveKey('displayName', 'App\\Jobs\\PendingTestJob');
-    expect($decoded['data']['command'] ?? null)->toBe($cmd);
+    // Default pending capture omits the serialized command — the
+    // redact-bypass safer-default lives under
+    // `pending.capture.include_command_body=true`, exercised in the
+    // unit-test suite. Flip it on here to assert round-trip fidelity.
+    expect($decoded['data']['command'] ?? null)->toBe('[OMITTED_BY_PENDING_CAPTURE]');
 
     // PendingJobsReader::findByUuid should expose the payload fields on
     // the returned row so the pending-modal can pick them up.
@@ -494,4 +498,19 @@ it('flags closure jobs with payload_note instead of persisting the body', functi
     expect(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_note'))->toBe('payload_not_persisted')
         ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_reason'))->toBe('closure_or_encrypted')
         ->and(R::int('hexists', 'qmtest:pending:' . $uuid, 'payload_body'))->toBe(0);
+});
+
+it('preserves data.command in payload_body when include_command_body is on', function (): void {
+    config()->set('queue-insights.pending.capture.payloads', 'full');
+    config()->set('queue-insights.pending.capture.include_command_body', true);
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CMDON';
+    $cmd = 'O:11:"App\\Jobs\\X":1:{s:5:"email";s:13:"a@example.com";}';
+    (new RecordJobQueued())->handle(makePendingEventWithCommand($uuid, $cmd));
+
+    $body = R::str('hget', 'qmtest:pending:' . $uuid, 'payload_body');
+    expect($body)->not->toBeNull();
+
+    $decoded = json_decode((string) $body, true);
+    expect($decoded['data']['command'] ?? null)->toBe($cmd);
 });

@@ -397,10 +397,24 @@ return [
          |
          | The pending-modal's right column lights up its payload section
          | when `payload_body` is present on the row; no client opt-in.
+         |
+         | SECURITY: `data.command` (the serialized job instance) is
+         | STRIPPED from `full`-mode pending capture by default. The
+         | completed-stream sanitizer's `redact_keys` regex walks JSON
+         | keys only — it cannot reach properties inside a PHP-serialized
+         | blob. Persisting that blob verbatim into a per-uuid Redis hash
+         | with a 24 h TTL × N queues × max_per_queue rows is a wider
+         | confidentiality window than the bounded completed stream, so
+         | the safer-default behaviour drops the field. Operators who
+         | need the modal's "Job instance" properties view (rendered via
+         | SerializedCommandReader) can flip
+         | `include_command_body = true` after confirming their job
+         | classes don't carry secrets as properties.
          */
         'capture' => [
             'payloads' => env('QUEUE_INSIGHTS_PENDING_CAPTURE_PAYLOADS', CaptureMode::Off->value),
             'max_payload_bytes' => 4096,
+            'include_command_body' => env('QUEUE_INSIGHTS_PENDING_INCLUDE_COMMAND_BODY', false),
         ],
     ],
 

@@ -11,7 +11,10 @@ use App\Jobs\SendInvoiceEmail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Context;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
+use SanderMuller\QueueInsights\Support\Config as QiConfig;
+use SanderMuller\QueueInsights\Support\KeyPrefix;
 use Throwable;
 
 /**
@@ -34,7 +37,8 @@ final class SprayJobsCommand extends Command
     protected $signature = 'demo:spray-jobs
         {--count=8 : How many of each kind to dispatch}
         {--no-batch : Skip the batched dispatch}
-        {--no-fail : Skip the deliberately-failing payment job}';
+        {--no-fail : Skip the deliberately-failing payment job}
+        {--simulate-in-flight=3 : Mark N freshly-dispatched uuids as in-flight in Redis so the In-flight tab is populated without a running worker. Set to 0 to skip.}';
 
     /**
      * @var string
@@ -44,28 +48,38 @@ final class SprayJobsCommand extends Command
     public function handle(): int
     {
         $count = max(1, (int) $this->option('count'));
+        $simulateInFlight = max(0, (int) $this->option('simulate-in-flight'));
         $requestId = (string) Str::ulid();
 
         $this->info("→ Spraying ~{$count}× of each job kind. Request id: {$requestId}");
 
-        // Top-level Context — represents the "spray run" itself. Each
-        // dispatch overlays per-job keys (user_id / tenant_id /
-        // payment_id) on top so the modal shows distinct context
-        // per row.
+        // Top-level Context wrapped in try/finally so leaked keys can't
+        // bleed into subsequent CLI work running in the same PHP process
+        // (matters when the seeder calls this via `Artisan::call()` —
+        // the seeder process continues after handle() returns).
+        $topLevelKeys = ['request_id', 'dispatcher', 'environment'];
         Context::add('request_id', $requestId);
         Context::add('dispatcher', 'demo:spray-jobs');
         Context::add('environment', app()->environment());
 
-        $this->sprayInvoices($count);
-        $this->sprayReports(max(1, intdiv($count, 2)));
-        $this->sprayDelayedIndexRebuilds(max(1, intdiv($count, 2)));
+        try {
+            $this->sprayInvoices($count);
+            $this->sprayReports(max(1, intdiv($count, 2)));
+            $this->sprayDelayedIndexRebuilds(max(1, intdiv($count, 2)));
 
-        if (! $this->option('no-batch')) {
-            $this->sprayBatchedInvoices($count);
-        }
+            if (! $this->option('no-batch')) {
+                $this->sprayBatchedInvoices($count);
+            }
 
-        if (! $this->option('no-fail')) {
-            $this->sprayFailingCharges(max(2, intdiv($count, 3)));
+            if (! $this->option('no-fail')) {
+                $this->sprayFailingCharges(max(2, intdiv($count, 3)));
+            }
+
+            if ($simulateInFlight > 0) {
+                $this->simulateInFlight($simulateInFlight);
+            }
+        } finally {
+            Context::forget($topLevelKeys);
         }
 
         $this->newLine();
@@ -75,115 +89,187 @@ final class SprayJobsCommand extends Command
         return self::SUCCESS;
     }
 
+    /**
+     * Run `$body` inside a Context overlay (`$keys => values`) with
+     * try/finally cleanup so a thrown dispatch never leaks keys into
+     * the next iteration. Mirrors the pattern Laravel uses internally
+     * for queue-context middleware.
+     *
+     * @param  array<string, mixed>  $keys
+     */
+    private function withContext(array $keys, callable $body): void
+    {
+        foreach ($keys as $name => $value) {
+            Context::add($name, $value);
+        }
+
+        try {
+            $body();
+        } finally {
+            Context::forget(array_keys($keys));
+        }
+    }
+
     private function sprayInvoices(int $count): void
     {
-        $this->line('  · {' . $count . '} SendInvoiceEmail (immediate)');
+        $this->line('  · ' . $count . ' SendInvoiceEmail (immediate)');
         for ($i = 0; $i < $count; $i++) {
             $userId = random_int(1_000, 9_999);
-            Context::add('user_id', $userId);
-            Context::add('tenant_id', random_int(10, 30));
-
-            SendInvoiceEmail::dispatch(
-                invoiceId: random_int(100_000, 999_999),
-                userId: $userId,
-                emailTo: 'user' . $userId . '@demo.test',
-            );
-
-            Context::forget(['user_id', 'tenant_id']);
+            $this->withContext([
+                'user_id' => $userId,
+                'tenant_id' => random_int(10, 30),
+            ], static function () use ($userId): void {
+                SendInvoiceEmail::dispatch(
+                    invoiceId: random_int(100_000, 999_999),
+                    userId: $userId,
+                    emailTo: 'user' . $userId . '@demo.test',
+                );
+            });
         }
     }
 
     private function sprayReports(int $count): void
     {
-        $this->line('  · {' . $count . '} GenerateMonthlyReport (slow, hangs around the in-flight list)');
+        $this->line('  · ' . $count . ' GenerateMonthlyReport (slow, hangs around the in-flight list)');
         $months = ['2026-03', '2026-04', '2026-05'];
         for ($i = 0; $i < $count; $i++) {
             $tenantId = random_int(10, 30);
-            Context::add('tenant_id', $tenantId);
-            Context::add('report_kind', 'usage_summary');
-
-            GenerateMonthlyReport::dispatch(
-                tenantId: $tenantId,
-                month: $months[array_rand($months)],
-            );
-
-            Context::forget(['tenant_id', 'report_kind']);
+            $this->withContext([
+                'tenant_id' => $tenantId,
+                'report_kind' => 'usage_summary',
+            ], static function () use ($tenantId, $months): void {
+                GenerateMonthlyReport::dispatch(
+                    tenantId: $tenantId,
+                    month: $months[array_rand($months)],
+                );
+            });
         }
     }
 
     private function sprayDelayedIndexRebuilds(int $count): void
     {
-        $this->line('  · {' . $count . '} RebuildSearchIndex (delayed — populates the Delayed sub-table)');
+        $this->line('  · ' . $count . ' RebuildSearchIndex (delayed — populates the Delayed sub-table)');
         $indexes = ['products', 'users', 'orders', 'audit_log'];
         for ($i = 0; $i < $count; $i++) {
             $index = $indexes[array_rand($indexes)];
-            Context::add('index_name', $index);
-            Context::add('reason', 'nightly_rebuild');
-
-            RebuildSearchIndex::dispatch(
-                indexName: $index,
-                shardKeys: array_map(static fn (int $n): string => 'shard-' . $n, range(0, random_int(2, 6))),
-            )->delay(now()->addSeconds(random_int(30, 600)));
-
-            Context::forget(['index_name', 'reason']);
+            $this->withContext([
+                'index_name' => $index,
+                'reason' => 'nightly_rebuild',
+            ], static function () use ($index): void {
+                RebuildSearchIndex::dispatch(
+                    indexName: $index,
+                    shardKeys: array_map(static fn (int $n): string => 'shard-' . $n, range(0, random_int(2, 6))),
+                )->delay(now()->addSeconds(random_int(30, 600)));
+            });
         }
     }
 
     private function sprayBatchedInvoices(int $count): void
     {
-        $this->line('  · 1× Bus::batch with ' . $count . ' SendInvoiceEmail items (lights up the Batches tab)');
-        Context::add('batch_purpose', 'monthly_invoice_run');
-        Context::add('tenant_id', random_int(10, 30));
+        $this->line('  · 1 Bus::batch with ' . $count . ' SendInvoiceEmail items (lights up the Batches tab)');
 
-        $jobs = [];
-        for ($i = 0; $i < $count; $i++) {
-            $userId = random_int(1_000, 9_999);
-            $jobs[] = new SendInvoiceEmail(
-                invoiceId: random_int(100_000, 999_999),
-                userId: $userId,
-                emailTo: 'user' . $userId . '@demo.test',
-            );
-        }
+        // The batch's `->dispatch()` captures Context once at call time and
+        // pins it onto every queued item — Bus::batch doesn't re-snapshot
+        // per-job. So the per-user `user_id` overlay we'd want inside the
+        // loop is lost. We bake the user_id into the job's own constructor
+        // args (already there) and only set batch-scope Context here.
+        $this->withContext([
+            'batch_purpose' => 'monthly_invoice_run',
+            'tenant_id' => random_int(10, 30),
+        ], static function () use ($count): void {
+            $jobs = [];
+            for ($i = 0; $i < $count; $i++) {
+                $userId = random_int(1_000, 9_999);
+                $jobs[] = new SendInvoiceEmail(
+                    invoiceId: random_int(100_000, 999_999),
+                    userId: $userId,
+                    emailTo: 'user' . $userId . '@demo.test',
+                );
+            }
 
-        Bus::batch($jobs)
-            ->name('Monthly invoice run ' . now()->format('Y-m-d H:i'))
-            ->allowFailures()
-            ->then(static function (): void {
-                // No-op closure — only here so the batch records a
-                // "finished" event on the batches repository. (Batch
-                // arg dropped — unused locally; the callback signature
-                // permits fewer params than the dispatcher passes.)
-            })
-            ->dispatch();
-
-        Context::forget(['batch_purpose', 'tenant_id']);
+            Bus::batch($jobs)
+                ->name('Monthly invoice run ' . now()->format('Y-m-d H:i'))
+                ->allowFailures()
+                ->then(static function (): void {
+                    // No-op closure — only here so the batch records a
+                    // "finished" event on the batches repository.
+                })
+                ->dispatch();
+        });
     }
 
     private function sprayFailingCharges(int $count): void
     {
-        $this->line('  · {' . $count . '} ChargeFailingPaymentGateway (throws, populates the Failed list)');
+        $this->line('  · ' . $count . ' ChargeFailingPaymentGateway (throws, populates the Failed list)');
         $currencies = ['EUR', 'USD', 'GBP'];
         for ($i = 0; $i < $count; $i++) {
             $paymentId = 'pay_' . Str::lower(Str::random(14));
-            Context::add('payment_id', $paymentId);
-            Context::add('user_id', random_int(1_000, 9_999));
-            Context::add('attempt_origin', 'demo_spray');
+            $this->withContext([
+                'payment_id' => $paymentId,
+                'user_id' => random_int(1_000, 9_999),
+                'attempt_origin' => 'demo_spray',
+            ], function () use ($paymentId, $currencies): void {
+                try {
+                    ChargeFailingPaymentGateway::dispatch(
+                        paymentId: $paymentId,
+                        amountCents: random_int(500, 50_000),
+                        currency: $currencies[array_rand($currencies)],
+                    );
+                } catch (Throwable $e) {
+                    // Dispatch itself shouldn't throw — but if the queue
+                    // backend is misconfigured we still want the spray
+                    // command to continue past the failure rather than
+                    // half-populating the dashboard.
+                    $this->warn('  ! dispatch failed: ' . $e->getMessage());
+                }
+            });
+        }
+    }
 
-            try {
-                ChargeFailingPaymentGateway::dispatch(
-                    paymentId: $paymentId,
-                    amountCents: random_int(500, 50_000),
-                    currency: $currencies[array_rand($currencies)],
-                );
-            } catch (Throwable $e) {
-                // Dispatch itself shouldn't throw — but if the queue
-                // backend is misconfigured we still want the spray
-                // command to continue past the failure rather than
-                // half-populating the dashboard.
-                $this->warn('  ! dispatch failed: ' . $e->getMessage());
-            }
+    /**
+     * Pretend a worker is mid-flight on a few of the rows we just
+     * dispatched so the In-flight tab is non-empty in the demo without
+     * needing `php artisan queue:work` running.
+     *
+     * Reads back the most recent pending uuids across all configured
+     * queues, picks N at random, and stamps `state=in_flight` +
+     * `started_at` onto their hashes — exactly the fields
+     * `RecordJobProcessing` would write when a real worker pops the
+     * payload. The pending-modal reads these fields and shows the
+     * Running-for state hero against them.
+     *
+     * Synthetic by design — once a real worker runs in the demo the
+     * dispatcher's natural flow takes over.
+     */
+    private function simulateInFlight(int $target): void
+    {
+        $this->line('  · simulating ' . $target . ' in-flight rows (no worker required)');
+        $redis = Redis::connection(QiConfig::string('redis_connection', 'default'));
 
-            Context::forget(['payment_id', 'user_id', 'attempt_origin']);
+        $uuids = $redis->command('zrevrange', [KeyPrefix::make('pending-zset:redis:default'), 0, max(20, $target * 4)]);
+        $uuids = is_array($uuids)
+            ? array_values(array_filter($uuids, static fn ($v): bool => is_string($v) && $v !== ''))
+            : [];
+
+        if ($uuids === []) {
+            $this->warn('  ! no pending rows to mark in-flight (check QUEUE_INSIGHTS_PENDING_ENABLED + your queue connection)');
+
+            return;
+        }
+
+        shuffle($uuids);
+        $picked = array_slice($uuids, 0, $target);
+        $now = time();
+
+        foreach ($picked as $uuid) {
+            $startedAt = $now - random_int(5, 120);
+            $hashKey = KeyPrefix::make('pending:' . $uuid);
+            $redis->command('hset', [$hashKey, 'state', 'in_flight']);
+            $redis->command('hset', [$hashKey, 'started_at', (string) $startedAt]);
+            $redis->command('hset', [$hashKey, 'attempts', (string) random_int(1, 2)]);
+            // Mirror RecordJobProcessing's inflight-zset write so the
+            // In-flight cross-queue aggregator sees the row.
+            $redis->command('zadd', [KeyPrefix::make('inflight-zset:redis:default'), $startedAt, $uuid]);
         }
     }
 }

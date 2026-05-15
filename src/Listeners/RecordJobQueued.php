@@ -194,6 +194,7 @@ final class RecordJobQueued
             $redactKeys,
             Config::int('capture.max_field_bytes', 2048),
             Config::int('pending.capture.max_payload_bytes', 4096),
+            Config::bool('pending.capture.include_command_body', false),
         );
 
         $out = [];
