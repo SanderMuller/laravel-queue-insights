@@ -11,6 +11,13 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Register Artisan commands defined under demo/app/Console/Commands —
+    // currently the `demo:spray-jobs` populator (see SprayJobsCommand)
+    // that fills the dashboard with a realistic mix of immediate /
+    // delayed / batched / failing jobs (each carrying Laravel Context).
+    ->withCommands([
+        __DIR__.'/../app/Console/Commands',
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
         // Append the demo basic-auth gate to the `web` middleware group.
         // This covers `/` (mounted by Workbench), `/livewire/update`
