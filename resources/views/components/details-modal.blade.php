@@ -232,144 +232,152 @@
 
                 {{-- Right column — job config + payload body. --}}
                 <div class="min-w-0 space-y-6 p-5">
-            {{-- Section B: Job config (happy path) OR status branches (closure/error/overflow). --}}
-            @if($hasSectionB)
-                <section data-section="job-config">
-                    @if($hasStatusNote)
-                        <div class="flex gap-3 rounded-lg bg-amber-50 dark:bg-amber-900/40 p-3 text-sm text-amber-900 dark:text-amber-200 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
-                            <x-queue-insights::icon-warning-triangle class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"/>
-                            <div class="min-w-0">
-                                <p class="font-medium">Payload not persisted</p>
-                                @if($reason = $payload['payload_reason'] ?? null)
-                                    <p class="mt-1 text-xs text-amber-800 dark:text-amber-200">Reason: {{ str_replace('_', ' ', $reason) }}</p>
-                                @endif
-                            </div>
-                        </div>
-                    @elseif($hasStatusEncodingError)
-                        <div class="flex gap-3 rounded-lg bg-red-50 dark:bg-red-900/40 p-3 text-sm text-red-900 dark:text-red-200 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
-                            <x-queue-insights::icon-error-circle class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400"/>
-                            <div class="min-w-0">
-                                <p class="font-medium">Payload encoding failed</p>
-                                <p class="mt-1 text-xs text-red-800 dark:text-red-200">Sanitizer could not JSON-encode the payload for this job.</p>
-                            </div>
-                        </div>
-                    @elseif($hasStatusSizeOverflow)
-                        <div class="flex gap-3 rounded-lg bg-red-50 dark:bg-red-900/40 p-3 text-sm text-red-900 dark:text-red-200 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
-                            <x-queue-insights::icon-error-circle class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400"/>
-                            <div class="min-w-0">
-                                <p class="font-medium">Payload exceeded size cap</p>
-                                @if($size = $payload['payload_size'] ?? null)
-                                    <p class="mt-1 text-xs text-red-800 dark:text-red-200 tabular-nums">{{ $size }} bytes — raise
-                                        <code class="rounded bg-red-100 dark:bg-red-900/60 px-1 font-mono">capture.max_payload_bytes</code>
-                                        or narrow the sanitizer.
-                                    </p>
-                                @endif
-                            </div>
-                        </div>
-                    @elseif($hasJobConfigCards)
-                        <h4 class="mb-3 text-xs font-medium text-gray-500 dark:text-gray-300">Job Config</h4>
+                    @php
+                        $displayName = $payload['payload_displayName'] ?? null;
+                        // Status-branch banners are visually identical across all variants —
+                        // they're alert states, not data layout. Variants only re-skin the
+                        // happy-path config render + the payload section. Footer/empty-state
+                        // sit outside the picker.
+                        $statusBranch = null;
+                        if ($hasSectionB) {
+                            if ($hasStatusNote) {
+                                $statusBranch = 'note';
+                            } elseif ($hasStatusEncodingError) {
+                                $statusBranch = 'encoding';
+                            } elseif ($hasStatusSizeOverflow) {
+                                $statusBranch = 'size';
+                            }
+                        }
+                    @endphp
 
-                        @if($displayName = $payload['payload_displayName'] ?? null)
-                            <p class="mb-3 break-all font-mono text-xs text-gray-800 dark:text-gray-200">{{ $displayName }}</p>
-                        @endif
+                    {{-- Job-config section — promoted "Hero gradient header" baseline
+                         from round 1. Stays outside the round-2 picker since the user
+                         is iterating on the section under it. --}}
+                    @if($hasSectionB)
+                        <section data-section="job-config">
+                            @if($statusBranch === 'note')
+                                @include('queue-insights::partials.details-modal-status-note', ['reason' => $payload['payload_reason'] ?? null])
+                            @elseif($statusBranch === 'encoding')
+                                @include('queue-insights::partials.details-modal-status-encoding')
+                            @elseif($statusBranch === 'size')
+                                @include('queue-insights::partials.details-modal-status-size', ['size' => $payload['payload_size'] ?? null])
+                            @elseif($hasJobConfigCards)
+                                <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
+                                    <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job Config</p>
+                                    @if($displayName)
+                                        <p class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $displayName }}</p>
+                                    @endif
 
-                        <dl class="grid grid-cols-3 overflow-hidden rounded-lg ring-1 ring-gray-950/5 dark:ring-white/10">
-                            @if(isset($payload['payload_maxTries']))
-                                <div class="bg-white dark:bg-gray-900 p-3 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
-                                    <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">maxTries</dt>
-                                    <dd class="mt-1 text-base font-medium text-gray-900 dark:text-gray-100 tabular-nums">{{ $payload['payload_maxTries'] ?: '—' }}</dd>
+                                    @php
+                                        $hasPills = isset($payload['payload_maxTries']) || isset($payload['payload_timeout']) || $backoffDisplay !== null;
+                                    @endphp
+                                    @if($hasPills)
+                                        <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                                            @if(isset($payload['payload_maxTries']))
+                                                <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
+                                                    <span class="text-gray-500 dark:text-gray-400">maxTries</span>
+                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $payload['payload_maxTries'] ?: '—' }}</span>
+                                                </span>
+                                            @endif
+                                            @if(isset($payload['payload_timeout']))
+                                                <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
+                                                    <span class="text-gray-500 dark:text-gray-400">timeout</span>
+                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $payload['payload_timeout'] ?: '—' }}</span>
+                                                </span>
+                                            @endif
+                                            @if($backoffDisplay !== null)
+                                                <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
+                                                    <span class="text-gray-500 dark:text-gray-400">backoff</span>
+                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $backoffDisplay }}</span>
+                                                </span>
+                                            @endif
+                                        </div>
+                                    @endif
                                 </div>
                             @endif
-
-                            @if(isset($payload['payload_timeout']))
-                                <div class="bg-white dark:bg-gray-900 p-3 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
-                                    <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">timeout</dt>
-                                    <dd class="mt-1 text-base font-medium text-gray-900 dark:text-gray-100 tabular-nums">{{ $payload['payload_timeout'] ?: '—' }}</dd>
-                                </div>
-                            @endif
-
-                            @if($backoffDisplay !== null)
-                                <div class="bg-white dark:bg-gray-900 p-3 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
-                                    <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">backoff</dt>
-                                    <dd class="mt-1 text-base font-medium text-gray-900 dark:text-gray-100 tabular-nums">{{ $backoffDisplay }}</dd>
-                                </div>
-                            @endif
-                        </dl>
+                        </section>
                     @endif
-                </section>
-            @endif
 
-            {{-- Section C: Payload body (visible only when `payload_body` present). --}}
-            @if($sectionCBody !== null)
-                <section data-section="payload">
-                    <h4 class="mb-3 text-xs font-medium text-gray-500 dark:text-gray-300">Payload</h4>
+                    {{-- Payload section — underline-link tabs over a soft inset body.
+                         Tab buttons sit on a shared bottom-border rail, active tab gets a
+                         2px emerald underline. Body sits flush in a gray inset surface so
+                         the modal reads as documentation rather than a control panel. --}}
+                    @if($sectionCBody !== null)
+                        @php
+                            $payloadJsonString = is_array($sectionCBody) ? json_encode($sectionCBody, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBody;
+                        @endphp
 
-                    <div class="mb-3 inline-flex rounded-md bg-gray-950/5 dark:bg-white/10 p-0.5" role="tablist">
-                        <button type="button"
-                                role="tab"
-                                id="qi-tab-raw"
-                                aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
-                                aria-controls="qi-panel-raw"
-                                wire:click="setPayloadTab('raw')"
-                                class="rounded px-3 py-1 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100' }}">
-                            Raw fields
-                        </button>
-                        <button type="button"
-                                role="tab"
-                                id="qi-tab-json"
-                                aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
-                                aria-controls="qi-panel-json"
-                                wire:click="setPayloadTab('json')"
-                                class="rounded px-3 py-1 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 shadow-sm' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100' }}">
-                            Sanitized JSON
-                        </button>
-                    </div>
-                    @if($payloadTab === 'json')
-                        <pre role="tabpanel"
-                             id="qi-panel-json"
-                             aria-labelledby="qi-tab-json"
-                             data-json-highlight
-                             class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 dark:bg-gray-800 p-4 font-mono text-xs leading-5 text-gray-900 dark:text-gray-100 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">{{ is_array($sectionCBody) ? json_encode($sectionCBody, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBody }}</pre>
-                    @else
-                        <div role="tabpanel"
-                             id="qi-panel-raw"
-                             aria-labelledby="qi-tab-raw">
-                            <x-queue-insights::structured-payload :payload="$sectionCBody"/>
+                        <section data-section="payload">
+                            <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
+                                <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
+                                <div class="-mb-px flex items-center gap-4" role="tablist">
+                                    <button type="button"
+                                            role="tab"
+                                            id="qi-tab-raw"
+                                            aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
+                                            aria-controls="qi-panel-raw"
+                                            wire:click="setPayloadTab('raw')"
+                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
+                                        Raw fields
+                                    </button>
+                                    <button type="button"
+                                            role="tab"
+                                            id="qi-tab-json"
+                                            aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
+                                            aria-controls="qi-panel-json"
+                                            wire:click="setPayloadTab('json')"
+                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
+                                        Sanitized JSON
+                                    </button>
+                                </div>
+                            </div>
+                            @if($payloadTab === 'json')
+                                <pre role="tabpanel"
+                                     id="qi-panel-json"
+                                     aria-labelledby="qi-tab-json"
+                                     data-json-highlight
+                                     class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{{ $payloadJsonString }}</pre>
+                            @else
+                                <div role="tabpanel"
+                                     id="qi-panel-raw"
+                                     aria-labelledby="qi-tab-raw"
+                                     class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+                                    <x-queue-insights::structured-payload :payload="$sectionCBody"/>
+                                </div>
+                            @endif
+                        </section>
+                    @endif
+
+                    {{-- Footer — tiered escalation hints. Shared across all variants. --}}
+                    @if($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Off)
+                        <div class="flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
+                            <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
+                            <p>
+                                Capture is off — only base metadata is stored. Set
+                                <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">QUEUE_INSIGHTS_CAPTURE_PAYLOADS=metadata</code>
+                                or
+                                <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">=full</code>
+                                to see more. Review
+                                <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">SECURITY.md</code>
+                                before enabling full.
+                            </p>
+                        </div>
+                    @elseif($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Metadata)
+                        <div class="flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
+                            <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
+                            <p>
+                                Metadata-only capture — job config without a serialized command body. Set
+                                <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">=full</code>
+                                (with a sanitizer) for sanitized payload bodies.
+                            </p>
                         </div>
                     @endif
-                </section>
-            @endif
 
-            {{-- Footer — tiered escalation hints. --}}
-            @if($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Off)
-                <div class="flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
-                    <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
-                    <p>
-                        Capture is off — only base metadata is stored. Set
-                        <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">QUEUE_INSIGHTS_CAPTURE_PAYLOADS=metadata</code>
-                        or
-                        <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">=full</code>
-                        to see more. Review
-                        <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">SECURITY.md</code>
-                        before enabling full.
-                    </p>
-                </div>
-            @elseif($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Metadata)
-                <div class="flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
-                    <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
-                    <p>
-                        Metadata-only capture — job config without a serialized command body. Set
-                        <code class="rounded bg-white dark:bg-gray-900 px-1 py-0.5 font-mono ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">=full</code>
-                        (with a sanitizer) for sanitized payload bodies.
-                    </p>
-                </div>
-            @endif
-
-            @unless($hasRightContent)
-                <div class="rounded-lg bg-gray-50 px-4 py-6 text-center text-xs text-gray-500 ring-1 ring-inset ring-gray-950/5 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10">
-                    No job config or payload body was captured for this job.
-                </div>
-            @endunless
+                    @unless($hasRightContent)
+                        <div class="rounded-lg bg-gray-50 px-4 py-6 text-center text-xs text-gray-500 ring-1 ring-inset ring-gray-950/5 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10">
+                            No job config or payload body was captured for this job.
+                        </div>
+                    @endunless
                 </div>{{-- /right column --}}
             </div>{{-- /grid --}}
         </div>{{-- /job view --}}

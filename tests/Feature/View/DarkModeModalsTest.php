@@ -31,8 +31,9 @@ it('emits dark variants on details-modal panel + two-column rail + tabs', functi
         ->toContain('dark:divide-white/10')
         // Stream-id chip background.
         ->toContain('dark:bg-white/10')
-        // Tab strip background.
-        ->toContain('dark:bg-white/10 p-0.5')
+        // Underline-link payload tabs — bottom rail + active emerald underline.
+        ->toContain('border-emerald-500')
+        ->toContain('dark:hover:text-gray-200')
         // Attempts retry badge.
         ->toContain('dark:bg-amber-900/60 dark:text-amber-200')
         // Body text + secondary.

@@ -136,12 +136,14 @@ it('Section B job-config cards under metadata-normal', function (): void {
         ->assertSeeText('60');
 });
 
-it('Section B omits stat cards when their key is absent (no — placeholder)', function (): void {
+it('Section B omits stat chips when their key is absent (no — placeholder)', function (): void {
     config()->set('queue-insights.capture.payloads', 'metadata');
 
-    // Note: the metadata-mode footer legitimately contains the words "timeout" and
-    // "backoff" in an escalation hint. Assert against the card-label HTML specifically
-    // (using the stat-card label markup class) so the footer doesn't confuse the test.
+    // Hero-header job-config card renders each stat as a label/value chip pair:
+    //   `<span class="text-gray-500 ...">maxTries</span> <span ...>3</span>`
+    // The metadata-mode escalation footer mentions the same words inside `<code>` tokens,
+    // so the assertion targets the chip's label-span (text-gray-500) — that span is unique
+    // to the chip and the footer's `<code>` styling can't false-positive.
     openDetailsModal([
         'class' => 'App\\Foo',
         'connection' => 'redis',
@@ -153,12 +155,9 @@ it('Section B omits stat cards when their key is absent (no — placeholder)', f
         'payload_maxTries' => '3',
         // timeout + backoff omitted
     ])
-        // Stat-card labels are the only `<dt>` elements in the modal that contain these words
-        // — metadata-mode footer has them as `<code>` tokens instead. Target the `<dt>` tag
-        // so the footer text can't false-positive.
-        ->assertSeeHtml('>maxTries</dt>')
-        ->assertDontSeeHtml('>timeout</dt>')
-        ->assertDontSeeHtml('>backoff</dt>');
+        ->assertSeeHtml('<span class="text-gray-500 dark:text-gray-400">maxTries</span>')
+        ->assertDontSeeHtml('<span class="text-gray-500 dark:text-gray-400">timeout</span>')
+        ->assertDontSeeHtml('<span class="text-gray-500 dark:text-gray-400">backoff</span>');
 });
 
 it('Section B decodes backoff array into a joined list', function (): void {
