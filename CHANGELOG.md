@@ -4,6 +4,36 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.20.0 - 2026-05-15
+
+### Highlights
+
+- **Pending & in-flight payload capture (separate budget).** The completed-stream `capture.payloads` setting now has a sibling for pending rows: `pending.capture.payloads` (`off` / `metadata` / `full`) plus `max_payload_bytes` and `include_command_body`. Defaults to `off` and a 4 KB cap (a quarter of the completed-stream cap) because the memory math is structurally different — completed-stream entries are MAXLEN-trimmed (`N × bytes`), but pending hashes fan out as `max_per_queue × queues × TTL`, which on a 10k-row × 10-queue host is ~400 MB at 4 KB/row. `data.command` stays omitted even under `full` until the host explicitly opts in via `QUEUE_INSIGHTS_PENDING_INCLUDE_COMMAND_BODY=true`, and the same `capture.redact_keys` regex list is applied either way. The pending modal now renders Job-config tiles + a payload note in metadata-only capture, so even at the low default capture mode the modal is informative.
+- **Opt-in Redis memory headline tile.** New 7th tile beside the existing headline stats: total Redis bytes consumed by the package's keyspace. SCANs every key under `key_prefix`, pipelines `MEMORY USAGE` per key, sums, and caches the result for `dashboard.redis_memory.cache_ttl` seconds (default 60s) so the per-poll cost is paid at most once per minute. Default-off — the SCAN cost scales with this package's keyspace size; measure before enabling on multi-thousand-key hosts.
+  ```bash
+  # .env
+  QUEUE_INSIGHTS_REDIS_MEMORY_TILE=true
+  
+  ```
+- **Horizon autodiscovery is now runtime-gated, with a "Horizon not running" banner.** `horizon.autodiscover` becomes tri-state (`true` / `false` / `'force'`). Default `true` only autodiscovers when Horizon's service provider is **actually loaded** in the running app — important for Vapor and similar setups where `config/horizon.php` defines supervisors that are never run from this app context (jobs route to SQS, Horizon's provider is excluded). When `'force'` is set without the provider loaded, the dashboard surfaces a top-level red banner so operators don't read empty supervisor rows as a healthy state. See [README.md](README.md#horizon-supervisor-auto-discovery) for the full tri-state matrix.
+- **Sharpened alert output across mail / Slack / scheduler channels.** Every detector now produces operator-readable single-line descriptions (multi-line stack traces collapsed); the typed `SnapshotErrored` event payload still keeps the **raw** `error_message` so host listeners forwarding to Sentry / external systems get the full text. Scheduler alerts gained human-readable task labels in their notification subject + body so on-call doesn't have to map task keys back to commands.
+- **12h / 24h clock toggle.** Tri-state header control (12h / auto / 24h). `auto` follows the browser locale + OS 24-hour preference (en-US → AM/PM, en-GB → 24h). Persists per operator via `localStorage['qi-clock']`. Disable via `QUEUE_INSIGHTS_CLOCK_TOGGLE=false` if the host wants to force a single format.
+
+### What's Changed
+
+* feat(pending): capture payloads on pending/in-flight rows under a separate budget (c9fbb6a)
+* feat(dashboard): opt-in Redis memory usage tile (bda267c)
+* feat(horizon): runtime-gated autodiscovery + horizon-not-running banner (8160499)
+* feat(alerts): sanitise + sharpen mail/Slack output across remaining detectors (b22222d)
+* feat(alerts): human-readable label on scheduler alerts (722f711)
+* feat(dashboard): batch-item dead-click fallback + pending modal auto-transition + 12h/24h clock toggle (771d0bf)
+* fix(batch-items): cluster-safe enrichment + pre-decoded chain (81ed61b)
+* fix(batch-items): fail-soft on corrupt completed pointers (1dfbedf)
+* fix(ValueParser): strict round-trip equality on decodeScalar so trailing garbage rejects instead of laundering (a88e372)
+* Two-column pending + schedule modals; details-modal hero absorbs job config + tags (7a47d09, ffd6bf6, 45aa820)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.19.0...0.20.0
+
 ## 0.19.0 - 2026-05-14
 
 ### Highlights
@@ -32,6 +62,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   ],
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -54,6 +85,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -219,6 +251,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -441,6 +474,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -558,6 +592,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -593,6 +628,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -724,6 +760,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
