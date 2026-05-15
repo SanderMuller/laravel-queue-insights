@@ -22,6 +22,7 @@ use SanderMuller\QueueInsights\Events\ScheduledTaskHung as DomainScheduledTaskHu
 use SanderMuller\QueueInsights\Events\ScheduledTaskMissed as DomainScheduledTaskMissed;
 use SanderMuller\QueueInsights\Events\SnapshotErrored;
 use SanderMuller\QueueInsights\Events\StuckInFlight;
+use SanderMuller\QueueInsights\Scheduler\CommandLabel;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
 use Throwable;
@@ -101,12 +102,14 @@ final readonly class IssueDispatcher
             return;
         }
 
-        $context = [
+        $resolved = ScheduledTaskLabel::for($task, $taskKey);
+
+        $context = self::mergeTaskSummary([
             'task_key' => $taskKey,
             'run_id' => $runId,
             'exception_class' => $exception instanceof Throwable ? $exception::class : null,
             'exception_message' => $exception?->getMessage() ?? '',
-        ];
+        ], $resolved['summary']);
 
         $issue = new Issue(
             rule: 'scheduled_task_failed',
@@ -114,7 +117,7 @@ final readonly class IssueDispatcher
             connection: '',
             queue: '',
             jobClass: null,
-            title: "Scheduled task failed: {$taskKey}",
+            title: "Scheduled task failed: {$resolved['label']}",
             description: $exception instanceof Throwable
                 ? sprintf('%s — %s', $exception::class, $exception->getMessage())
                 : 'Task exited with non-zero status.',
@@ -137,12 +140,14 @@ final readonly class IssueDispatcher
             return;
         }
 
-        $context = [
+        $resolved = ScheduledTaskLabel::for($task, $taskKey);
+
+        $context = self::mergeTaskSummary([
             'task_key' => $taskKey,
             'run_id' => $runId,
             'started_at_ms' => $startedAtMs,
             'elapsed_seconds' => $elapsedSeconds,
-        ];
+        ], $resolved['summary']);
 
         $issue = new Issue(
             rule: 'scheduled_task_hung',
@@ -150,7 +155,7 @@ final readonly class IssueDispatcher
             connection: '',
             queue: '',
             jobClass: null,
-            title: "Scheduled task hung: {$taskKey}",
+            title: "Scheduled task hung: {$resolved['label']}",
             description: sprintf('Task has been running for %ds without finishing.', $elapsedSeconds),
             context: $context,
             detectedAt: Date::now()->getTimestamp(),
@@ -172,10 +177,12 @@ final readonly class IssueDispatcher
             return;
         }
 
-        $context = [
+        $resolved = ScheduledTaskLabel::for($task, $taskKey);
+
+        $context = self::mergeTaskSummary([
             'task_key' => $taskKey,
             'expected_at_ms' => $expectedAtMs,
-        ];
+        ], $resolved['summary']);
 
         $issue = new Issue(
             rule: 'scheduled_task_missed',
@@ -183,7 +190,7 @@ final readonly class IssueDispatcher
             connection: '',
             queue: '',
             jobClass: null,
-            title: "Scheduled task missed: {$taskKey}",
+            title: "Scheduled task missed: {$resolved['label']}",
             description: 'No Starting event observed within the drift window.',
             context: $context,
             detectedAt: Date::now()->getTimestamp(),
@@ -441,5 +448,49 @@ final readonly class IssueDispatcher
         $value = $ctx[$key] ?? '';
 
         return is_string($value) ? $value : '';
+    }
+
+    /**
+     * Fold the resolved task summary into the alert context. Only a curated
+     * subset surfaces in mail/Slack — booleans and the long mutex name stay
+     * out of the operator-facing payload.
+     *
+     * @param  array<string, mixed>  $context
+     * @param  ?array{description: ?string, command: string, expression: string, timezone: ?string, type: 'command'|'closure'|'exec', mutexName: string}  $summary
+     * @return array<string, mixed>
+     */
+    private static function mergeTaskSummary(array $context, ?array $summary): array
+    {
+        if ($summary === null) {
+            return $context;
+        }
+
+        $description = ScheduledTaskLabel::sanitise($summary['description']);
+        if ($description !== '') {
+            $context['task_description'] = $description;
+        }
+
+        $command = ScheduledTaskLabel::sanitise($summary['command']);
+        if ($command !== '') {
+            // `CommandLabel::short` strips the absolute PHP-binary prefix so
+            // `'/Users/.../Herd/bin/php' 'artisan' 'reports:export'` reads as
+            // `php artisan reports:export` — the verbose form is still on
+            // the task hash in Redis for the drilldown modal.
+            $context['task_command'] = CommandLabel::short($command);
+        }
+
+        $expression = ScheduledTaskLabel::sanitise($summary['expression']);
+        if ($expression !== '') {
+            $context['task_expression'] = $expression;
+        }
+
+        $timezone = ScheduledTaskLabel::sanitise($summary['timezone']);
+        if ($timezone !== '') {
+            $context['task_timezone'] = $timezone;
+        }
+
+        $context['task_type'] = $summary['type'];
+
+        return $context;
     }
 }

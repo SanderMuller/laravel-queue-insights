@@ -124,10 +124,25 @@ class QueueAlertNotification extends Notification
     /**
      * Resolve the target identifier shown in subject lines + Slack title.
      * Priority matches `cooldownKeySuffix`: taskKey → jobClass → connection:queue.
+     *
+     * For scheduler-scoped issues the raw `taskKey` is a SHA256 — operators
+     * read mail/Slack, so prefer the human-readable label written into context
+     * by `ScheduledTaskLabel`. Falls back to the bare `taskKey` when the
+     * dispatcher could not resolve a label (Event introspection failed).
      */
     private function issueTarget(): string
     {
         if ($this->issue->taskKey !== null) {
+            $description = $this->issue->context['task_description'] ?? null;
+            if (is_string($description) && $description !== '') {
+                return $description;
+            }
+
+            $command = $this->issue->context['task_command'] ?? null;
+            if (is_string($command) && $command !== '') {
+                return $command;
+            }
+
             return $this->issue->taskKey;
         }
 

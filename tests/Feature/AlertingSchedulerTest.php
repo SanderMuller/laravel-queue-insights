@@ -1,5 +1,6 @@
 <?php declare(strict_types=1);
 
+use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Event as EventDispatcher;
@@ -44,6 +45,17 @@ function fakeTask(): Event
     }
 
     return $mock;
+}
+
+function realTask(string $command, ?string $description = null, string $expression = '0 3 * * *'): Event
+{
+    $event = new Event(app(CacheEventMutex::class), $command);
+    $event->expression = $expression;
+    if ($description !== null) {
+        $event->description = $description;
+    }
+
+    return $event;
 }
 
 it('dispatchScheduledTaskFailed acquires cooldown and notifies via QueueAlertNotification', function (): void {
@@ -109,6 +121,145 @@ it('dispatchScheduledTaskMissed populates expected_at_ms in context', function (
         QueueAlertNotification::class,
         fn (QueueAlertNotification $n): bool => $n->issue->rule === 'scheduled_task_missed'
             && $n->issue->context['expected_at_ms'] === 1_700_000_000_000,
+    );
+});
+
+it('dispatchScheduledTaskMissed enriches title and context with the resolved task label', function (): void {
+    Notification::fake();
+
+    $task = realTask("'/opt/Herd/bin/php' 'artisan' 'reports:export'", 'Export nightly reports', '0 3 * * *');
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskMissed('cc6f446a6f39', $task, 1_778_791_980_000);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task missed: Export nightly reports'
+            && $n->issue->context['task_description'] === 'Export nightly reports'
+            && $n->issue->context['task_command'] === 'php artisan reports:export'
+            && $n->issue->context['task_expression'] === '0 3 * * *'
+            && $n->issue->context['task_type'] === 'command'
+            && $n->issue->context['task_key'] === 'cc6f446a6f39',
+    );
+});
+
+it('dispatchScheduledTaskMissed falls back to the shortened command when no description is set', function (): void {
+    Notification::fake();
+
+    $task = realTask("'/opt/Herd/bin/php' 'artisan' 'reports:export'");
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskMissed('cc6f446a6f39', $task, 1_778_791_980_000);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task missed: php artisan reports:export',
+    );
+});
+
+it('sanitises hostile task descriptions — whitespace-only collapses to command fallback', function (): void {
+    Notification::fake();
+
+    $task = realTask("'/opt/Herd/bin/php' 'artisan' 'reports:export'", "   \t  ");
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskMissed('cc6f446a6f39', $task, 1_778_791_980_000);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task missed: php artisan reports:export'
+            && ! array_key_exists('task_description', $n->issue->context),
+    );
+});
+
+it('sanitises hostile task descriptions — control characters collapse to a single line', function (): void {
+    Notification::fake();
+
+    $task = realTask("'/opt/Herd/bin/php' 'artisan' 'reports:export'", "Export\nnightly\rreports\t\u{0007}done");
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskMissed('cc6f446a6f39', $task, 1_778_791_980_000);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task missed: Export nightly reports done'
+            && $n->issue->context['task_description'] === 'Export nightly reports done',
+    );
+});
+
+it('dispatchScheduledTaskHung enriches title and context with the resolved task label', function (): void {
+    Notification::fake();
+
+    $task = realTask("'/opt/Herd/bin/php' 'artisan' 'reports:export'", 'Export nightly reports');
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskHung('cc6f446a6f39', '01HKHUNG', $task, 1_700_000_000_000, 47 * 60);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task hung: Export nightly reports'
+            && $n->issue->context['task_description'] === 'Export nightly reports'
+            && $n->issue->context['task_command'] === 'php artisan reports:export',
+    );
+});
+
+it('dispatchScheduledTaskHung falls back to the task_key prefix when task is null (reconciler could not resolve)', function (): void {
+    Notification::fake();
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskHung('cc6f446a6f39367975', '01HKHUNG', null, 1_700_000_000_000, 60);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task hung: cc6f446a6f39'
+            && ! array_key_exists('task_command', $n->issue->context),
+    );
+});
+
+it('dispatchScheduledTaskFailed enriches title and context with the resolved task label', function (): void {
+    Notification::fake();
+
+    $task = realTask("'/opt/Herd/bin/php' 'artisan' 'reports:export'", 'Export nightly reports');
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    $dispatcher->dispatchScheduledTaskFailed('cc6f446a6f39', '01HKFAIL', $task, new RuntimeException('boom'));
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task failed: Export nightly reports'
+            && $n->issue->context['task_description'] === 'Export nightly reports'
+            && $n->issue->context['exception_class'] === RuntimeException::class,
+    );
+});
+
+it('scheduled-task dispatch falls back to a short task_key prefix when Event introspection fails', function (): void {
+    Notification::fake();
+
+    /** @var IssueDispatcher $dispatcher */
+    $dispatcher = resolve(IssueDispatcher::class);
+    // fakeTask() is a strict Mockery mock — mutexName() will throw inside
+    // TaskSummariser, exercising the try/catch fallback in ScheduledTaskLabel.
+    $dispatcher->dispatchScheduledTaskMissed('cc6f446a6f39367975e2358d', fakeTask(), 1_778_791_980_000);
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $n): bool => $n->issue->title === 'Scheduled task missed: cc6f446a6f39'
+            && ! array_key_exists('task_command', $n->issue->context),
     );
 });
 
@@ -208,6 +359,53 @@ it('Slack payload links to the task slot for missed runs (no run id)', function 
     assert($runUrlField !== null);
     expect($runUrlField['value'])->toContain('s_tk=PruneCache')
         ->and($runUrlField['value'])->not->toContain('s_rid=');
+});
+
+it('mail subject + Slack title prefer the human task label over the opaque task_key', function (): void {
+    $issue = schedulerIssue(
+        rule: 'scheduled_task_missed',
+        context: [
+            'expected_at_ms' => 1_700_000_000_000,
+            'task_description' => 'Export nightly reports',
+            'task_command' => 'php artisan reports:export',
+        ],
+    );
+
+    $notification = new QueueAlertNotification($issue);
+    $mail = $notification->toMail(new QueueInsightsNotifiable());
+    $slack = $notification->toSlack(new QueueInsightsNotifiable());
+
+    expect($mail->subject)->toBe('[Queue Insights] critical: scheduled_task_missed on Export nightly reports');
+
+    $targetField = findField($slack, 'Target');
+    expect($targetField)->not->toBeNull();
+    assert($targetField !== null);
+    expect($targetField['value'])->toBe('Export nightly reports');
+});
+
+it('mail subject falls back to task_command when no description is set', function (): void {
+    $issue = schedulerIssue(
+        rule: 'scheduled_task_missed',
+        context: [
+            'expected_at_ms' => 1_700_000_000_000,
+            'task_command' => 'php artisan reports:export',
+        ],
+    );
+
+    $mail = (new QueueAlertNotification($issue))->toMail(new QueueInsightsNotifiable());
+
+    expect($mail->subject)->toBe('[Queue Insights] critical: scheduled_task_missed on php artisan reports:export');
+});
+
+it('mail subject falls back to the bare task_key when neither label is in context', function (): void {
+    $issue = schedulerIssue(
+        rule: 'scheduled_task_missed',
+        context: ['expected_at_ms' => 1_700_000_000_000],
+    );
+
+    $mail = (new QueueAlertNotification($issue))->toMail(new QueueInsightsNotifiable());
+
+    expect($mail->subject)->toBe('[Queue Insights] critical: scheduled_task_missed on PruneCache');
 });
 
 /**
