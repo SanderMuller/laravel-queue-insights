@@ -258,3 +258,98 @@ it('falls back to the stale modal when pending tracking is disabled', function (
         ->assertSeeHtml('aria-labelledby="qi-stale-modal-title"')
         ->assertSee('Job no longer tracked');
 });
+
+it('renders Job config + structured-payload when pending payload capture wrote full fields', function (): void {
+    $now = Date::now()->getTimestamp();
+
+    // Seed a hash whose shape matches what RecordJobQueued writes under
+    // `pending.capture.payloads = full`: routing metadata + the four
+    // payload_* metadata fields + a JSON-encoded payload_body. The modal
+    // should pick up both the Job-config tile row AND the structured-
+    // payload section in the right column.
+    foreach ([
+        'connection' => 'myredis',
+        'queue' => 'work',
+        'class' => 'App\\Jobs\\PayloadVisible',
+        'queued_at' => (string) ($now - 5),
+        'available_at' => (string) ($now - 5),
+        'payload_displayName' => 'App\\Jobs\\PayloadVisible',
+        'payload_maxTries' => '3',
+        'payload_timeout' => '60',
+        'payload_backoff' => '[1,5,10]',
+        'payload_body' => (string) json_encode([
+            'uuid' => 'pending-cap-full',
+            'displayName' => 'App\\Jobs\\PayloadVisible',
+            'data' => [
+                'commandName' => 'App\\Jobs\\PayloadVisible',
+                'command' => 'O:11:"App\\Jobs\\X":0:{}',
+            ],
+        ]),
+    ] as $field => $value) {
+        R::conn()->command('hset', ['qmtest:pending:pending-cap-full', $field, $value]);
+    }
+    R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-cap-full']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPending', 'pending-cap-full')
+        ->assertSeeHtml('aria-labelledby="qi-pending-modal-title"')
+        // Metadata tile row + values.
+        ->assertSee('maxTries')
+        ->assertSee('timeout')
+        ->assertSee('backoff')
+        ->assertSee('1, 5, 10s')
+        // Structured-payload section landed too.
+        ->assertSee('PayloadVisible');
+});
+
+it('renders Job config tiles when pending capture is metadata-only (no body)', function (): void {
+    $now = Date::now()->getTimestamp();
+
+    // Same seed minus `payload_body` — the metadata-mode path. The modal
+    // should still surface maxTries / timeout / backoff so a metadata-
+    // only capture isn't an empty right column.
+    foreach ([
+        'connection' => 'myredis',
+        'queue' => 'work',
+        'class' => 'App\\Jobs\\MetadataOnly',
+        'queued_at' => (string) ($now - 5),
+        'available_at' => (string) ($now - 5),
+        'payload_displayName' => 'App\\Jobs\\MetadataOnly',
+        'payload_maxTries' => '5',
+        'payload_timeout' => '90',
+    ] as $field => $value) {
+        R::conn()->command('hset', ['qmtest:pending:pending-cap-meta', $field, $value]);
+    }
+    R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-cap-meta']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPending', 'pending-cap-meta')
+        ->assertSeeHtml('aria-labelledby="qi-pending-modal-title"')
+        ->assertSee('Job config')
+        ->assertSee('maxTries')
+        ->assertSee('5')
+        ->assertSee('timeout')
+        ->assertSee('90');
+});
+
+it('renders the payload-not-persisted note for a closure pending job', function (): void {
+    $now = Date::now()->getTimestamp();
+
+    foreach ([
+        'connection' => 'myredis',
+        'queue' => 'work',
+        'class' => 'Closure',
+        'queued_at' => (string) ($now - 5),
+        'available_at' => (string) ($now - 5),
+        'payload_note' => 'payload_not_persisted',
+        'payload_reason' => 'closure_or_encrypted',
+    ] as $field => $value) {
+        R::conn()->command('hset', ['qmtest:pending:pending-closure', $field, $value]);
+    }
+    R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-closure']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPending', 'pending-closure')
+        ->assertSee('Payload not persisted')
+        ->assertSee('closure or encrypted');
+});

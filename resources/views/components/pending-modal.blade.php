@@ -265,6 +265,21 @@
                         $pendingPayloadNote = ($row['payload_note'] ?? null) === 'payload_not_persisted';
                         $pendingPayloadEncErr = ($row['payload_error'] ?? null) === 'payload_encoding_failed';
                         $pendingPayloadSizeErr = ($row['payload_error'] ?? null) === 'payload_too_large';
+                        // Metadata-mode visibility — same `payload_maxTries / timeout /
+                        // backoff` shape the details-modal Section B exposes. Renders
+                        // alongside (or in place of) the structured-payload body so a
+                        // metadata-only capture isn't an empty modal.
+                        $pendingBackoffRaw = $row['payload_backoff'] ?? null;
+                        $pendingBackoffDisplay = null;
+                        if (is_string($pendingBackoffRaw) && $pendingBackoffRaw !== '') {
+                            $pendingBackoffDecoded = json_decode($pendingBackoffRaw, true);
+                            $pendingBackoffDisplay = is_array($pendingBackoffDecoded) && array_is_list($pendingBackoffDecoded)
+                                ? implode(', ', array_map(static fn ($v): string => (string) $v, $pendingBackoffDecoded)).'s'
+                                : $pendingBackoffRaw;
+                        }
+                        $pendingHasJobConfig = isset($row['payload_maxTries'])
+                            || isset($row['payload_timeout'])
+                            || $pendingBackoffDisplay !== null;
                     @endphp
                     @if($pendingPayloadNote)
                         <div class="flex gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-400/30">
@@ -294,11 +309,39 @@
                                 @endif
                             </div>
                         </div>
-                    @elseif($pendingPayloadDecoded !== null)
-                        <section data-section="pending-payload">
-                            <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
-                            <x-queue-insights::structured-payload :payload="$pendingPayloadDecoded"/>
-                        </section>
+                    @else
+                        @if($pendingHasJobConfig)
+                            <section data-section="pending-job-config">
+                                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job config</p>
+                                <dl class="grid grid-cols-3 overflow-hidden rounded-lg ring-1 ring-gray-950/5 dark:ring-white/10">
+                                    @if(isset($row['payload_maxTries']))
+                                        <div class="bg-white p-3 dark:bg-gray-900 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
+                                            <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">maxTries</dt>
+                                            <dd class="mt-1 text-base font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $row['payload_maxTries'] ?: '—' }}</dd>
+                                        </div>
+                                    @endif
+                                    @if(isset($row['payload_timeout']))
+                                        <div class="bg-white p-3 dark:bg-gray-900 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
+                                            <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">timeout</dt>
+                                            <dd class="mt-1 text-base font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $row['payload_timeout'] ?: '—' }}</dd>
+                                        </div>
+                                    @endif
+                                    @if($pendingBackoffDisplay !== null)
+                                        <div class="bg-white p-3 dark:bg-gray-900 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
+                                            <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">backoff</dt>
+                                            <dd class="mt-1 text-base font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $pendingBackoffDisplay }}</dd>
+                                        </div>
+                                    @endif
+                                </dl>
+                            </section>
+                        @endif
+
+                        @if($pendingPayloadDecoded !== null)
+                            <section data-section="pending-payload">
+                                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
+                                <x-queue-insights::structured-payload :payload="$pendingPayloadDecoded"/>
+                            </section>
+                        @endif
                     @endif
                 </div>
             </div>
