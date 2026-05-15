@@ -33,6 +33,53 @@ namespace SanderMuller\QueueInsights\Support;
 final class ValueParser
 {
     /**
+     * Try to decode a PHP-serialized *scalar* leaf (`s:N:"…";`,
+     * `i:N;`, `b:0|1;`, `d:N;`, `N;`). Returns the unwrapped value
+     * boxed in `['value' => mixed]` on success, `null` otherwise.
+     *
+     * Designed to complement {@see parse()}: parse() handles containers
+     * (recursable), this handles leaves (inline-renderable). Laravel's
+     * `Context::dehydrate()` round-trips every Context entry as a
+     * serialized scalar — without this method the dashboard would
+     * surface `s:26:"01KRNH..."` literals where operators expect to
+     * see the actual value.
+     *
+     * @return array{value: int|float|string|bool|null}|null
+     */
+    public static function decodeScalar(string $value): ?array
+    {
+        $len = strlen($value);
+        if ($len < 2) {
+            return null;
+        }
+
+        $opener = $value[0];
+        if (! in_array($opener, ['s', 'i', 'b', 'd', 'N'], true)) {
+            return null;
+        }
+        if ($value[$len - 1] !== ';') {
+            return null;
+        }
+
+        $previous = error_reporting(0);
+        $decoded = @unserialize($value, ['allowed_classes' => false]);
+        error_reporting($previous);
+
+        // unserialize returns `false` on malformed input — `b:0;` is the
+        // only legitimate decoded-false case; everything else means parse
+        // failure and we fall through to the plain-string renderer.
+        if ($decoded === false && $value !== 'b:0;') {
+            return null;
+        }
+
+        if (is_scalar($decoded) || $decoded === null) {
+            return ['value' => $decoded];
+        }
+
+        return null;
+    }
+
+    /**
      * @return array<int|string, mixed>|null
      */
     public static function parse(string $value): ?array

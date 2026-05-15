@@ -11,6 +11,7 @@ use App\Jobs\SendInvoiceEmail;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Context;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Str;
 use SanderMuller\QueueInsights\Support\Config as QiConfig;
@@ -38,7 +39,8 @@ final class SprayJobsCommand extends Command
         {--count=8 : How many of each kind to dispatch}
         {--no-batch : Skip the batched dispatch}
         {--no-fail : Skip the deliberately-failing payment job}
-        {--simulate-in-flight=3 : Mark N freshly-dispatched uuids as in-flight in Redis so the In-flight tab is populated without a running worker. Set to 0 to skip.}';
+        {--simulate-in-flight=3 : Mark N freshly-dispatched uuids as in-flight in Redis so the In-flight tab is populated without a running worker. Set to 0 to skip.}
+        {--synthesize-failed=3 : Insert N rows directly into the failed_jobs table (with realistic payload + Context) so the Failed tab is populated without a running worker. Set to 0 to skip.}';
 
     /**
      * @var string
@@ -49,6 +51,7 @@ final class SprayJobsCommand extends Command
     {
         $count = max(1, (int) $this->option('count'));
         $simulateInFlight = max(0, (int) $this->option('simulate-in-flight'));
+        $synthesizeFailed = max(0, (int) $this->option('synthesize-failed'));
         $requestId = (string) Str::ulid();
 
         $this->info("→ Spraying ~{$count}× of each job kind. Request id: {$requestId}");
@@ -77,6 +80,10 @@ final class SprayJobsCommand extends Command
 
             if ($simulateInFlight > 0) {
                 $this->simulateInFlight($simulateInFlight);
+            }
+
+            if ($synthesizeFailed > 0) {
+                $this->synthesizeFailed($synthesizeFailed);
             }
         } finally {
             Context::forget($topLevelKeys);
@@ -270,6 +277,91 @@ final class SprayJobsCommand extends Command
             // Mirror RecordJobProcessing's inflight-zset write so the
             // In-flight cross-queue aggregator sees the row.
             $redis->command('zadd', [KeyPrefix::make('inflight-zset:redis:default'), $startedAt, $uuid]);
+        }
+    }
+
+    /**
+     * Insert N rows directly into the `failed_jobs` table so the Failed
+     * tab is populated without needing `queue:work` to have actually run
+     * a failing job. Builds the same payload shape Laravel's queue
+     * serializer would push at JobQueued time — including a top-level
+     * `illuminate:log:context` key with synthetic per-row Context — so
+     * the failed-modal's `structured-payload` renderer + the nested-data
+     * tree show realistic data on click.
+     *
+     * Synthetic by design. Once `queue:work` runs against a real
+     * ChargeFailingPaymentGateway dispatch, Laravel's own failure
+     * handler will land additional rows alongside these.
+     */
+    private function synthesizeFailed(int $count): void
+    {
+        $this->line('  · synthesizing ' . $count . ' failed_jobs rows (no worker required)');
+        $currencies = ['EUR', 'USD', 'GBP'];
+
+        for ($i = 0; $i < $count; $i++) {
+            $paymentId = 'pay_' . Str::lower(Str::random(14));
+            $userId = random_int(1_000, 9_999);
+            $amountCents = random_int(500, 50_000);
+            $currency = $currencies[array_rand($currencies)];
+            $uuid = (string) Str::uuid();
+
+            // Real instance → real serialized blob, so the
+            // SerializedCommandReader pipeline has something genuine to
+            // decode on the modal (instance properties + class name).
+            $jobInstance = new ChargeFailingPaymentGateway($paymentId, $amountCents, $currency);
+            $command = serialize($jobInstance);
+
+            $payload = json_encode([
+                'uuid' => $uuid,
+                'displayName' => ChargeFailingPaymentGateway::class,
+                'job' => 'Illuminate\\Queue\\CallQueuedHandler@call',
+                'maxTries' => 1,
+                'maxExceptions' => null,
+                'failOnTimeout' => false,
+                'backoff' => null,
+                'timeout' => null,
+                'retryUntil' => null,
+                'data' => [
+                    'commandName' => ChargeFailingPaymentGateway::class,
+                    'command' => $command,
+                ],
+                // Top-level Context key — matches Laravel 11+'s
+                // `ContextServiceProvider::boot` shape so the failed-modal's
+                // structured-payload "Other fields" renderer picks it up
+                // and shows the tree inline.
+                'illuminate:log:context' => [
+                    'request_id' => (string) Str::ulid(),
+                    'dispatcher' => 'demo:spray-jobs (synthesized)',
+                    'environment' => app()->environment(),
+                    'payment_id' => $paymentId,
+                    'user_id' => $userId,
+                    'attempt_origin' => 'demo_spray',
+                ],
+                'tags' => ['payment', 'failing', 'demo'],
+            ], JSON_UNESCAPED_SLASHES);
+
+            $exception = sprintf(
+                "RuntimeException: Payment gateway returned 502 for payment %s (%d %s) — upstream timeout after 3 retries in /var/www/app/Jobs/ChargeFailingPaymentGateway.php:48\n"
+                . "Stack trace:\n"
+                . "#0 [internal function]: App\\Jobs\\ChargeFailingPaymentGateway->handle()\n"
+                . "#1 /var/www/vendor/laravel/framework/src/Illuminate/Container/BoundMethod.php(36): call_user_func_array()\n"
+                . "#2 /var/www/vendor/laravel/framework/src/Illuminate/Container/Util.php(43): Illuminate\\Container\\BoundMethod::Illuminate\\Container\\{closure}()\n"
+                . "#3 /var/www/vendor/laravel/framework/src/Illuminate/Container/BoundMethod.php(95): Illuminate\\Container\\Util::unwrapIfClosure()\n"
+                . "#4 /var/www/vendor/laravel/framework/src/Illuminate/Queue/CallQueuedHandler.php(123): Illuminate\\Container\\BoundMethod::callBoundMethod()\n"
+                . '#5 {main}',
+                $paymentId,
+                $amountCents,
+                $currency,
+            );
+
+            DB::table('failed_jobs')->insert([
+                'uuid' => $uuid,
+                'connection' => 'database',
+                'queue' => 'default',
+                'payload' => $payload === false ? '{}' : $payload,
+                'exception' => $exception,
+                'failed_at' => now(),
+            ]);
         }
     }
 }

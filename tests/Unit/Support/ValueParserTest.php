@@ -78,3 +78,40 @@ it('does not instantiate restricted classes', function (): void {
     expect($parsed)->not->toBeNull()
         ->and($parsed['__class'] ?? null)->toBe('ArrayObject');
 });
+
+it('decodes a PHP-serialized scalar string leaf', function (): void {
+    expect(ValueParser::decodeScalar('s:5:"hello";'))->toBe(['value' => 'hello']);
+});
+
+it('decodes a PHP-serialized int leaf', function (): void {
+    expect(ValueParser::decodeScalar('i:42;'))->toBe(['value' => 42]);
+    expect(ValueParser::decodeScalar('i:-7;'))->toBe(['value' => -7]);
+});
+
+it('decodes a PHP-serialized bool leaf (true + false)', function (): void {
+    expect(ValueParser::decodeScalar('b:1;'))->toBe(['value' => true]);
+    expect(ValueParser::decodeScalar('b:0;'))->toBe(['value' => false]);
+});
+
+it('decodes a PHP-serialized float leaf', function (): void {
+    expect(ValueParser::decodeScalar('d:3.14;'))->toBe(['value' => 3.14]);
+});
+
+it('decodes a PHP-serialized null leaf', function (): void {
+    expect(ValueParser::decodeScalar('N;'))->toBe(['value' => null]);
+});
+
+it('returns null for a container opener — that is parse()s job', function (): void {
+    expect(ValueParser::decodeScalar('a:1:{s:1:"a";i:1;}'))->toBeNull();
+    expect(ValueParser::decodeScalar('O:8:"stdClass":0:{}'))->toBeNull();
+});
+
+it('returns null for a malformed scalar', function (): void {
+    expect(ValueParser::decodeScalar('s:notvalid'))->toBeNull();
+    expect(ValueParser::decodeScalar('i:abc;'))->toBeNull();
+});
+
+it('returns null for plain strings that just happen to start with a scalar opener', function (): void {
+    expect(ValueParser::decodeScalar('snake_case_key'))->toBeNull();
+    expect(ValueParser::decodeScalar('bonus payment'))->toBeNull();
+});

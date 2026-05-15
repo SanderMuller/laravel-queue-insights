@@ -50,9 +50,19 @@
                     $parsedFromString = is_string($v) && $v !== ''
                         ? \SanderMuller\QueueInsights\Support\ValueParser::parse($v)
                         : null;
+                    // Scalar fallback — Laravel's `Context::dehydrate()`
+                    // boxes each Context value as a PHP-serialized scalar
+                    // (`s:N:"…";`, `i:N;`). parse() ignores those (returns
+                    // null because they're not containers), so without this
+                    // fallback the dashboard renders `s:26:"…"` literals.
+                    // Unwrap the scalar so the row shows the actual value.
+                    $scalarDecoded = $parsedFromString === null && is_string($v) && $v !== ''
+                        ? \SanderMuller\QueueInsights\Support\ValueParser::decodeScalar($v)
+                        : null;
+                    $effectiveValue = $scalarDecoded !== null ? $scalarDecoded['value'] : $v;
                     $isContainer = (is_array($v) && $v !== []) || $parsedFromString !== null;
                     $containerData = $parsedFromString ?? (is_array($v) ? $v : []);
-                    $rendered = $isContainer ? '' : $renderInline($v);
+                    $rendered = $isContainer ? '' : $renderInline($effectiveValue);
                     $truncated = ! $isContainer && strlen($rendered) > 200;
                     $childCount = $isContainer ? count($containerData) : 0;
                     $childIsAssoc = $isContainer && ! array_is_list($containerData);
