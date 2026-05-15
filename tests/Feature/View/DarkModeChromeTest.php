@@ -94,6 +94,22 @@ it('emits dark variants on the snapshot-watchdog banner when the watchdog fires'
         ->toContain('dark:bg-red-400/20');
 });
 
+it('emits dark variants on the horizon-not-running banner when the helper fires', function (): void {
+    // Pass `$horizonNotRunning` explicitly — the partial accepts the override
+    // when rendered in isolation; in production it self-resolves via `app()`.
+    $html = View::make('queue-insights::partials.horizon-not-running-banner', [
+        'horizonNotRunning' => true,
+    ])->render();
+
+    expect($html)
+        ->toContain('dark:bg-amber-900/40')
+        ->toContain('dark:text-amber-200')
+        ->toContain('dark:ring-amber-400/30')
+        ->toContain('dark:text-amber-300')
+        // Inline `<code>` chips.
+        ->toContain('dark:bg-amber-400/20');
+});
+
 it('emits dark variants on the alerts strip — critical row', function (): void {
     // Source-grep instead of render-with-Issue-fixture: the `Issue` DTO is
     // marked @internal, and the alerts-strip's critical/warning branches

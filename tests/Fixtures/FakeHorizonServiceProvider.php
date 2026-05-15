@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Tests\Fixtures;
 
 use Laravel\Horizon\HorizonServiceProvider;
+use Override;
 
 /**
  * No-op subclass of Horizon's service provider. Registering this in a test
@@ -13,12 +14,14 @@ use Laravel\Horizon\HorizonServiceProvider;
  */
 final class FakeHorizonServiceProvider extends HorizonServiceProvider
 {
+    #[Override]
     public function register(): void
     {
         // Intentionally empty — the test only needs this class present in
         // the loaded-providers list.
     }
 
+    #[Override]
     public function boot(): void
     {
         // Intentionally empty.
