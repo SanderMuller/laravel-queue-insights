@@ -325,17 +325,22 @@ final class SprayJobsCommand extends Command
                     'commandName' => ChargeFailingPaymentGateway::class,
                     'command' => $command,
                 ],
-                // Top-level Context key — matches Laravel 11+'s
-                // `ContextServiceProvider::boot` shape so the failed-modal's
-                // structured-payload "Other fields" renderer picks it up
-                // and shows the tree inline.
+                // Top-level Context — `{data: {…}, hidden: []}` envelope
+                // matching `Illuminate\Log\Context\ContextServiceProvider::
+                // boot`'s `Context::dehydrate()` output. Each value is
+                // `serialize()`'d the way Laravel itself emits, so the
+                // dashboard's `ValueParser::decodeScalar` path unwraps
+                // each `s:N:"…"` / `i:N;` leaf inline on the modal.
                 'illuminate:log:context' => [
-                    'request_id' => (string) Str::ulid(),
-                    'dispatcher' => 'demo:spray-jobs (synthesized)',
-                    'environment' => app()->environment(),
-                    'payment_id' => $paymentId,
-                    'user_id' => $userId,
-                    'attempt_origin' => 'demo_spray',
+                    'data' => [
+                        'request_id' => serialize((string) Str::ulid()),
+                        'dispatcher' => serialize('demo:spray-jobs (synthesized)'),
+                        'environment' => serialize(app()->environment()),
+                        'payment_id' => serialize($paymentId),
+                        'user_id' => serialize($userId),
+                        'attempt_origin' => serialize('demo_spray'),
+                    ],
+                    'hidden' => [],
                 ],
                 'tags' => ['payment', 'failing', 'demo'],
             ], JSON_UNESCAPED_SLASHES);

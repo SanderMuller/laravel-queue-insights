@@ -62,3 +62,25 @@ it('qi-time hydrator reads documentElement.dataset.clock and toggles hour12 acco
         ->toContain("if (pref === '12h') { opts.hour12 = true; }")
         ->toContain("else if (pref === '24h') { opts.hour12 = false; }");
 });
+
+it('registers both Livewire morph hooks (added + updated) so newly-inserted modal nodes hydrate', function (): void {
+    // Regression — until this fix, only `morph.updated` was hooked.
+    // `morph.updated` fires for in-place updates (poll re-renders) but
+    // NOT for element INSERTIONS like the pending / failed / batch /
+    // schedule modals when `@if($selected* !== null)` flips false→true.
+    // Without the `morph.added` hook, a freshly-opened modal's
+    // `<time data-qi-time absolute-mono>` elements stay stuck on the
+    // server-side 12h `g:i A` fallback regardless of the clock toggle.
+    config()->set('queue-insights.dashboard.clock.enabled', true);
+
+    $html = renderQiLayoutForClock();
+
+    expect($html)
+        ->toContain("Livewire.hook('morph.updated', rehydrate)")
+        ->toContain("Livewire.hook('morph.added', rehydrate)")
+        // JSON colorizer takes the same pair so a modal-open JSON pane
+        // gets its highlighter run on first insertion, not only on
+        // subsequent polls.
+        ->toContain("Livewire.hook('morph.updated', colorize)")
+        ->toContain("Livewire.hook('morph.added', colorize)");
+});

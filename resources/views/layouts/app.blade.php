@@ -273,7 +273,7 @@
         }
 
         function registerQueueInsightsHook() {
-            Livewire.hook('morph.updated', function (payload) {
+            var colorize = function (payload) {
                 var el = payload && payload.el ? payload.el : document;
                 el.querySelectorAll('[data-json-highlight]').forEach(function (node) {
                     var src = node.textContent;
@@ -286,7 +286,16 @@
                     node.insertAdjacentHTML('afterbegin', escaped);
                     node._qiColorizedSrc = src;
                 });
-            });
+            };
+            // `morph.updated` covers in-place updates (poll re-renders);
+            // `morph.added` covers element INSERTIONS like the modal-
+            // open path (a `selectedPayloadId` null-guard switching
+            // from false to true mounts a new node, which fires
+            // `morph.added`, not `morph.updated`). Both hooks needed
+            // to avoid the colorizer skipping a newly-opened modal's
+            // JSON pane.
+            Livewire.hook('morph.updated', colorize);
+            Livewire.hook('morph.added', colorize);
         }
 
         // Dual-branch guard — works whether script runs before or after Livewire bootstrap.
@@ -533,14 +542,25 @@
 
             function registerLivewireHook() {
                 if (! window.Livewire || ! window.Livewire.hook) return;
-                Livewire.hook('morph.updated', function (payload) {
+                var rehydrate = function (payload) {
                     var el = payload && payload.el ? payload.el : document;
                     hydrateAll(el);
                     // Defensive: if the hovered <time> was replaced mid-show,
                     // mouseout may not fire on the old node. Hide the tip so
                     // it doesn't pin to a stale viewport coordinate.
                     hideTip();
-                });
+                };
+                // `morph.updated` catches in-place updates (poll re-renders
+                // that don't change DOM identity). `morph.added` catches
+                // element INSERTIONS — the path the pending / failed /
+                // batch / schedule modals take when their `selected*`
+                // null-guard flips from false to true. Without the `added` hook,
+                // a freshly-opened modal's `<time data-qi-time>` elements
+                // never run through the locale + clock-pref rewrite and
+                // stay stuck on the server-side 12h `g:i A` fallback —
+                // exactly the "I press 24h and nothing changes" symptom.
+                Livewire.hook('morph.updated', rehydrate);
+                Livewire.hook('morph.added', rehydrate);
             }
             function bootQiTime() {
                 hydrateAll(document);

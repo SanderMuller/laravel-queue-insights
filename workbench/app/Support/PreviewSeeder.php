@@ -1192,11 +1192,11 @@ LUA,
         // full`. The preview mirrors that here so every preview pending
         // / in-flight row's modal renders the structured-payload section
         // (with the decoded `illuminate:log:context` tree) instead of a
-        // bare metadata stub.
-        $fields = $this->enrichWithPayloadFields(['class' => $class, 'uuid' => $uuid] + $fields)
-            // The enricher writes `payload_*` keys onto the row; strip
-            // back the helper inputs (class/uuid already present above).
-            + $fields;
+        // bare metadata stub. The enricher reads `class` + `uuid` from
+        // the input row and adds `payload_*` keys; PHP's `+ $fields`
+        // semantics already preserve existing keys, so no tail-merge
+        // needed.
+        $fields = $this->enrichWithPayloadFields(['class' => $class, 'uuid' => $uuid] + $fields);
 
         foreach ($fields as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
