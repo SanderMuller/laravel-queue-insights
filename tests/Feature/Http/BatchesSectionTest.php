@@ -216,6 +216,25 @@ it('hydrates completed batch items with class + attempts + chain via pipelined X
         ->assertSeeHtml("wire:click=\"openPayload('" . $streamId . "')\"");
 });
 
+it('renders the batch modal without throwing when a uuid-completed pointer is corrupt', function (): void {
+    // A stale or hand-edited `uuid-completed:` pointer holding a malformed
+    // stream id (no `ms-seq` shape) would crash the EVAL inside
+    // BatchItemMeta::loadCompleted and propagate the exception up into the
+    // dashboard renderer. The fail-soft branch must skip the bad pointer,
+    // return empty meta, and let the modal fall through to the
+    // status-placeholder + UUID row for that item.
+    seedBatchRow('batch-corrupt');
+    R::raw('zadd', 'qmtest:batches:index', Date::now()->getTimestamp(), 'batch-corrupt');
+    R::raw('rpush', 'qmtest:batch:batch-corrupt:uuids', 'uuid-corrupt');
+    R::raw('set', 'qmtest:uuid-completed:uuid-corrupt', 'not-a-valid-stream-id');
+
+    Livewire::test(QueueInsightsDashboard::class, ['expandedBatchId' => 'batch-corrupt'])
+        // Modal still renders — class came back null, so the row shows the
+        // status-appropriate placeholder + uuid on line 2.
+        ->assertSee('Completed job')
+        ->assertSee('uuid-corrupt');
+});
+
 it('renders an in-flight batch item with running chip when the pending hash carries state=in_flight', function (): void {
     // Codex regression: a batched job that's actively running should render
     // as in_flight (▶ + running chip), not pending (⌛). The pending hash

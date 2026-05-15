@@ -79,6 +79,7 @@ parameters:
         -
             identifier: staticMethod.internalClass
             paths:
+                - tests/Feature/Cluster/
                 - tests/Unit/Alerts/
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php

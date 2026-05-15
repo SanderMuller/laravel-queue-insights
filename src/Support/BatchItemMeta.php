@@ -43,15 +43,37 @@ final class BatchItemMeta
             return [];
         }
 
-        $streamIds = array_values(array_unique($streamIdsByUuid));
+        // Filter to well-formed stream IDs (`<ms>-<seq>`). A single corrupt
+        // or stale `uuid-completed:*` pointer would otherwise make Redis
+        // throw inside the EVAL — taking down the whole batch render with
+        // it. Mirrors `loadFailed`'s fail-soft posture: skip bad pointers,
+        // return enrichment for the rest.
+        $streamIds = array_values(array_unique(
+            array_filter(
+                $streamIdsByUuid,
+                static fn (string $id): bool => preg_match('/^\d+-\d+$/', $id) === 1,
+            ),
+        ));
 
-        $reply = RedisEval::exec(
-            $redis,
-            LuaScripts::batchFetchCompletedMeta(),
-            1,
-            KeyPrefix::make('completed'),
-            ...$streamIds,
-        );
+        if ($streamIds === []) {
+            return [];
+        }
+
+        try {
+            $reply = RedisEval::exec(
+                $redis,
+                LuaScripts::batchFetchCompletedMeta(),
+                1,
+                KeyPrefix::make('completed'),
+                ...$streamIds,
+            );
+        } catch (Throwable) {
+            // Any Redis error (NOSCRIPT, OOM, IO, malformed reply, …) falls
+            // back to "no enrichment" — the batch modal degrades to the
+            // status-appropriate placeholder + UUID row instead of throwing
+            // into the dashboard renderer.
+            return [];
+        }
 
         if (! is_array($reply)) {
             return [];

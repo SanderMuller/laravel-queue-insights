@@ -2,6 +2,7 @@
 
 use Illuminate\Redis\Connections\PhpRedisClusterConnection;
 use Illuminate\Redis\Connections\PredisClusterConnection;
+use SanderMuller\QueueInsights\Support\BatchItemMeta;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
@@ -151,6 +152,42 @@ it('runs a multi-key RENAME without CROSSSLOT (the purge-command pattern)', func
     'predis cluster rejects RENAME outright (NotSupportedException), even for same-slot keys. '
     . 'QueueInsightsPurgePendingCommand catches this and fails gracefully — see .ai/docs/redis-cluster.md.',
 );
+
+it('BatchItemMeta::loadCompleted bulk-fetches stream entries via a single Lua EVAL on cluster', function (): void {
+    $redis = R::conn('cluster');
+
+    // Seed two completed-stream entries on the cluster connection. The
+    // EVAL inside BatchItemMeta::loadCompleted touches one stream key with
+    // many ARGV ids — single-slot via the hash-tagged prefix, so it must
+    // round-trip exactly once even on cluster. Previously this path
+    // pipelined N XRANGEs and silently fanned out via
+    // EagerCommandCollector — proven cluster-safe here.
+    $streamKey = KeyPrefix::make('completed');
+    $id1 = $redis->command('xadd', [$streamKey, '*', 'class', 'App\\Jobs\\Foo', 'attempts', '1']);
+    $id2 = $redis->command('xadd', [$streamKey, '*', 'class', 'App\\Jobs\\Bar', 'attempts', '2']);
+
+    expect($id1)->toBeString()->not->toBeEmpty()
+        ->and($id2)->toBeString()->not->toBeEmpty();
+    assert(is_string($id1) && is_string($id2));
+
+    // Route through the cluster connection by swapping the package's
+    // default to the cluster name for the duration of this assertion —
+    // BatchItemMeta::loadCompleted accepts the connection directly so we
+    // pass it in without bouncing through config.
+    $meta = BatchItemMeta::loadCompleted($redis, [
+        'uuid-1' => $id1,
+        'uuid-2' => $id2,
+    ]);
+
+    expect($meta)->toHaveKey($id1)
+        ->and($meta[$id1]['class'])->toBe('App\\Jobs\\Foo')
+        ->and($meta[$id1]['attempts'])->toBe(1)
+        ->and($meta)->toHaveKey($id2)
+        ->and($meta[$id2]['class'])->toBe('App\\Jobs\\Bar')
+        ->and($meta[$id2]['attempts'])->toBe(2);
+
+    $redis->command('del', [$streamKey]);
+})->group('cluster');
 
 it('runs a multi-key MGET across KeyPrefix-built keys without CROSSSLOT', function (): void {
     $redis = R::conn('cluster');
