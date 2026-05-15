@@ -72,11 +72,25 @@ final class ValueParser
             return null;
         }
 
-        if (is_scalar($decoded) || $decoded === null) {
-            return ['value' => $decoded];
+        if (! (is_scalar($decoded) || $decoded === null)) {
+            return null;
         }
 
-        return null;
+        // Strict round-trip — PHP's `unserialize()` consumes the leading
+        // scalar token and silently ignores trailing bytes, so values
+        // like `i:42;garbage;` / `s:5:"hello";junk;` / `N;;` decode
+        // cleanly to `42` / `'hello'` / `null`. Re-serialize and demand
+        // byte-equality so payload corruption surfaces as a plain-string
+        // render instead of getting laundered into "trusted" data on
+        // the modal. Floats are checked at maximum precision — every
+        // real-world float reaching this helper comes from PHP's own
+        // `serialize()` (via `Context::dehydrate()`), so the canonical
+        // representation always matches.
+        if (serialize($decoded) !== $value) {
+            return null;
+        }
+
+        return ['value' => $decoded];
     }
 
     /**

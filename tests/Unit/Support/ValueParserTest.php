@@ -94,7 +94,27 @@ it('decodes a PHP-serialized bool leaf (true + false)', function (): void {
 });
 
 it('decodes a PHP-serialized float leaf', function (): void {
-    expect(ValueParser::decodeScalar('d:3.14;'))->toBe(['value' => 3.14]);
+    // Use serialize() directly — PHP emits floats at maximum precision
+    // (e.g. `d:3.140000000000000124…;`), so a hand-written `d:3.14;`
+    // would never round-trip cleanly. Real Context::dehydrate() output
+    // always comes from serialize(), so the canonical form is the
+    // contract.
+    expect(ValueParser::decodeScalar(serialize(3.14)))->toBe(['value' => 3.14]);
+});
+
+it('rejects scalars with trailing garbage (full-input round-trip)', function (): void {
+    // PHP's unserialize() consumes the leading scalar token and ignores
+    // trailing bytes — `i:42;garbage;` decodes to 42, `N;;` decodes to
+    // null. Without the strict round-trip equality these would launder
+    // corrupt payload data into "trusted" values on the modal. Caught
+    // by codex review on the original implementation.
+    expect(ValueParser::decodeScalar('i:42;garbage;'))->toBeNull();
+    expect(ValueParser::decodeScalar('s:5:"hello";junk;'))->toBeNull();
+    expect(ValueParser::decodeScalar('d:3.14;tail;'))->toBeNull();
+    expect(ValueParser::decodeScalar('N;garbage;'))->toBeNull();
+    expect(ValueParser::decodeScalar('N;;'))->toBeNull();
+    expect(ValueParser::decodeScalar('b:1;extra;'))->toBeNull();
+    expect(ValueParser::decodeScalar('b:0;extra;'))->toBeNull();
 });
 
 it('decodes a PHP-serialized null leaf', function (): void {
