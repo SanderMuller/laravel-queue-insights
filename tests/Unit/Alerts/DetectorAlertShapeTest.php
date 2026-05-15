@@ -11,10 +11,8 @@ it('SnapshotErroredDetector sanitises multi-line exception messages in the descr
     $raw = "Connection refused\n  stacktrace line 1\n  stacktrace line 2";
 
     $detector = new SnapshotErroredDetector();
-    $issue = $detector->evaluate('redis', 'default', $raw);
+    $issue = $detector->evaluate('redis', 'default', $raw) ?? throw new RuntimeException('detector returned null');
 
-    expect($issue)->not->toBeNull();
-    assert($issue !== null);
     // Description is the operator-facing string — sanitised single-line.
     expect($issue->description)->toBe('Latest snapshot for redis:default failed: Connection refused stacktrace line 1 stacktrace line 2')
         // Typed `SnapshotErrored::$errorMessage` event payload is built off
@@ -25,10 +23,8 @@ it('SnapshotErroredDetector sanitises multi-line exception messages in the descr
 
 it('SnapshotErroredDetector substitutes a description placeholder when the message sanitises to empty', function (): void {
     $detector = new SnapshotErroredDetector();
-    $issue = $detector->evaluate('redis', 'default', "   \n\t  ");
+    $issue = $detector->evaluate('redis', 'default', "   \n\t  ") ?? throw new RuntimeException('detector returned null');
 
-    expect($issue)->not->toBeNull();
-    assert($issue !== null);
     expect($issue->description)->toBe('Latest snapshot for redis:default failed: (no message)')
         // Raw whitespace-only message is preserved in context — the
         // operator-facing placeholder lives in description only.

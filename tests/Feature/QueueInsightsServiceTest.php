@@ -83,6 +83,7 @@ it('unions Horizon supervisor queues with static snapshots and dedups on canonic
         ['connection' => 'redis-staging', 'queue' => 'premium-broadcast'],
     ]);
     config()->set('queue-insights.horizon.autodiscover', true);
+
     app()->register(FakeHorizonServiceProvider::class);
     config()->set('horizon.environments', [
         'testing' => [

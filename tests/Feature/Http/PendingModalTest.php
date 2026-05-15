@@ -288,6 +288,7 @@ it('renders Job config + structured-payload when pending payload capture wrote f
     ] as $field => $value) {
         R::conn()->command('hset', ['qmtest:pending:pending-cap-full', $field, $value]);
     }
+
     R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-cap-full']);
 
     Livewire::test(QueueInsightsDashboard::class)
@@ -320,6 +321,7 @@ it('renders Job config tiles when pending capture is metadata-only (no body)', f
     ] as $field => $value) {
         R::conn()->command('hset', ['qmtest:pending:pending-cap-meta', $field, $value]);
     }
+
     R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-cap-meta']);
 
     Livewire::test(QueueInsightsDashboard::class)
@@ -346,6 +348,7 @@ it('renders the payload-not-persisted note for a closure pending job', function 
     ] as $field => $value) {
         R::conn()->command('hset', ['qmtest:pending:pending-closure', $field, $value]);
     }
+
     R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-closure']);
 
     Livewire::test(QueueInsightsDashboard::class)

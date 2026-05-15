@@ -72,12 +72,14 @@ final class PendingPayloadSnapshot
             if (! array_key_exists($key, $payload)) {
                 continue;
             }
+
             $value = $payload[$key];
             if (is_scalar($value) || $value === null) {
                 $fields['payload_' . $key] = $value;
 
                 continue;
             }
+
             if (is_array($value)) {
                 // `backoff` can be an int list (`[1, 5, 10]`) — keep it
                 // round-trippable for the modal renderer that already
@@ -158,6 +160,7 @@ final class PendingPayloadSnapshot
 
                     continue;
                 }
+
                 $out[$key] = self::walk($inner, $redactKeys, $maxFieldBytes);
             }
 

@@ -55,7 +55,8 @@ final class RedisMemoryUsage
         }
 
         $connection = Config::string('redis_connection', 'default');
-        $cacheKey = self::CACHE_KEY_PREFIX . sha1($connection . '|' . KeyPrefix::make(''));
+        $slot = hash('sha256', $connection . '|' . KeyPrefix::make(''));
+        $cacheKey = self::CACHE_KEY_PREFIX . $slot;
 
         /** @var int|null $cached */
         $cached = Cache::get($cacheKey);
@@ -73,8 +74,8 @@ final class RedisMemoryUsage
         // warm cache on their next 10s poll.
         $store = Cache::getStore();
         if ($store instanceof LockProvider) {
-            $lock = $store->lock(self::LOCK_KEY_PREFIX . sha1($connection . '|' . KeyPrefix::make('')), $ttl);
-            if (! $lock->get()) {
+            $lock = $store->lock(self::LOCK_KEY_PREFIX . $slot, $ttl);
+            if ($lock->get() !== true) {
                 return null;
             }
 
@@ -92,11 +93,11 @@ final class RedisMemoryUsage
     {
         try {
             $bytes = $this->compute();
-        } catch (Throwable $e) {
+        } catch (Throwable $throwable) {
             Log::warning('queue-insights: redis-memory-usage compute failed', [
                 'connection' => $connection,
-                'exception' => $e::class,
-                'message' => $e->getMessage(),
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
             ]);
 
             return null;

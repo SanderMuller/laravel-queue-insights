@@ -1,6 +1,7 @@
 <?php declare(strict_types=1);
 
 use Illuminate\Contracts\Queue\Job;
+use Illuminate\Queue\CallQueuedClosure;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
@@ -439,8 +440,7 @@ it('writes payload_body under full mode and PendingJobsReader surfaces it', func
     (new RecordJobQueued())->handle(makePendingEventWithCommand($uuid, $cmd));
 
     $body = R::str('hget', 'qmtest:pending:' . $uuid, 'payload_body');
-    expect($body)->not->toBe('');
-    expect($body)->not->toBeNull();
+    expect($body)->not->toBeEmpty();
 
     $decoded = json_decode((string) $body, true);
     expect($decoded)
@@ -455,9 +455,11 @@ it('writes payload_body under full mode and PendingJobsReader surfaces it', func
     // PendingJobsReader::findByUuid should expose the payload fields on
     // the returned row so the pending-modal can pick them up.
     $row = PendingJobsReader::findByUuid($uuid);
-    expect($row)->not->toBeNull();
-    expect($row['payload_body'] ?? null)->toBe($body);
-    expect($row['payload_displayName'] ?? null)->toBe('App\\Jobs\\PendingTestJob');
+    expect($row)->not->toBeNull()
+        ->and($row['payload_body'] ?? null)
+        ->toBe($body)
+        ->and($row['payload_displayName'] ?? null)
+        ->toBe('App\Jobs\PendingTestJob');
 });
 
 it('records payload_too_large when the body exceeds pending.capture.max_payload_bytes', function (): void {
@@ -480,7 +482,7 @@ it('flags closure jobs with payload_note instead of persisting the body', functi
         'uuid' => $uuid,
         'displayName' => 'Closure',
         'data' => [
-            'commandName' => 'Illuminate\\Queue\\CallQueuedClosure',
+            'commandName' => CallQueuedClosure::class,
             'command' => 'irrelevant',
         ],
     ]);

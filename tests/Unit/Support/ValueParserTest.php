@@ -5,15 +5,19 @@ declare(strict_types=1);
 use SanderMuller\QueueInsights\Support\ValueParser;
 
 it('returns null for strings too short to be a valid serialized container', function (): void {
-    expect(ValueParser::parse(''))->toBeNull();
-    expect(ValueParser::parse('hi'))->toBeNull();
-    expect(ValueParser::parse('a:0:'))->toBeNull();
+    expect(ValueParser::parse(''))->toBeNull()
+        ->and(ValueParser::parse('hi'))
+        ->toBeNull()
+        ->and(ValueParser::parse('a:0:'))
+        ->toBeNull();
 });
 
 it('returns null for arbitrary plain strings', function (): void {
-    expect(ValueParser::parse('hello world'))->toBeNull();
-    expect(ValueParser::parse('https://example.com/path'))->toBeNull();
-    expect(ValueParser::parse('2026-05-15T12:00:00+00:00'))->toBeNull();
+    expect(ValueParser::parse('hello world'))->toBeNull()
+        ->and(ValueParser::parse('https://example.com/path'))
+        ->toBeNull()
+        ->and(ValueParser::parse('2026-05-15T12:00:00+00:00'))
+        ->toBeNull();
 });
 
 it('parses a PHP-serialized associative array', function (): void {
@@ -84,13 +88,15 @@ it('decodes a PHP-serialized scalar string leaf', function (): void {
 });
 
 it('decodes a PHP-serialized int leaf', function (): void {
-    expect(ValueParser::decodeScalar('i:42;'))->toBe(['value' => 42]);
-    expect(ValueParser::decodeScalar('i:-7;'))->toBe(['value' => -7]);
+    expect(ValueParser::decodeScalar('i:42;'))->toBe(['value' => 42])
+        ->and(ValueParser::decodeScalar('i:-7;'))
+        ->toBe(['value' => -7]);
 });
 
 it('decodes a PHP-serialized bool leaf (true + false)', function (): void {
-    expect(ValueParser::decodeScalar('b:1;'))->toBe(['value' => true]);
-    expect(ValueParser::decodeScalar('b:0;'))->toBe(['value' => false]);
+    expect(ValueParser::decodeScalar('b:1;'))->toBe(['value' => true])
+        ->and(ValueParser::decodeScalar('b:0;'))
+        ->toBe(['value' => false]);
 });
 
 it('decodes a PHP-serialized float leaf', function (): void {
@@ -109,12 +115,17 @@ it('rejects scalars with trailing garbage (full-input round-trip)', function ():
     // corrupt payload data into "trusted" values on the modal. Caught
     // by codex review on the original implementation.
     expect(ValueParser::decodeScalar('i:42;garbage;'))->toBeNull();
-    expect(ValueParser::decodeScalar('s:5:"hello";junk;'))->toBeNull();
-    expect(ValueParser::decodeScalar('d:3.14;tail;'))->toBeNull();
-    expect(ValueParser::decodeScalar('N;garbage;'))->toBeNull();
-    expect(ValueParser::decodeScalar('N;;'))->toBeNull();
-    expect(ValueParser::decodeScalar('b:1;extra;'))->toBeNull();
-    expect(ValueParser::decodeScalar('b:0;extra;'))->toBeNull();
+    expect(ValueParser::decodeScalar('s:5:"hello";junk;'))->toBeNull()
+        ->and(ValueParser::decodeScalar('d:3.14;tail;'))
+        ->toBeNull()
+        ->and(ValueParser::decodeScalar('N;garbage;'))
+        ->toBeNull()
+        ->and(ValueParser::decodeScalar('N;;'))
+        ->toBeNull()
+        ->and(ValueParser::decodeScalar('b:1;extra;'))
+        ->toBeNull()
+        ->and(ValueParser::decodeScalar('b:0;extra;'))
+        ->toBeNull();
 });
 
 it('decodes a PHP-serialized null leaf', function (): void {
@@ -122,16 +133,19 @@ it('decodes a PHP-serialized null leaf', function (): void {
 });
 
 it('returns null for a container opener — that is parse()s job', function (): void {
-    expect(ValueParser::decodeScalar('a:1:{s:1:"a";i:1;}'))->toBeNull();
-    expect(ValueParser::decodeScalar('O:8:"stdClass":0:{}'))->toBeNull();
+    expect(ValueParser::decodeScalar('a:1:{s:1:"a";i:1;}'))->toBeNull()
+        ->and(ValueParser::decodeScalar('O:8:"stdClass":0:{}'))
+        ->toBeNull();
 });
 
 it('returns null for a malformed scalar', function (): void {
-    expect(ValueParser::decodeScalar('s:notvalid'))->toBeNull();
-    expect(ValueParser::decodeScalar('i:abc;'))->toBeNull();
+    expect(ValueParser::decodeScalar('s:notvalid'))->toBeNull()
+        ->and(ValueParser::decodeScalar('i:abc;'))
+        ->toBeNull();
 });
 
 it('returns null for plain strings that just happen to start with a scalar opener', function (): void {
-    expect(ValueParser::decodeScalar('snake_case_key'))->toBeNull();
-    expect(ValueParser::decodeScalar('bonus payment'))->toBeNull();
+    expect(ValueParser::decodeScalar('snake_case_key'))->toBeNull()
+        ->and(ValueParser::decodeScalar('bonus payment'))
+        ->toBeNull();
 });

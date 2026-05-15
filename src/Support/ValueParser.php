@@ -57,6 +57,7 @@ final class ValueParser
         if (! in_array($opener, ['s', 'i', 'b', 'd', 'N'], true)) {
             return null;
         }
+
         if ($value[$len - 1] !== ';') {
             return null;
         }
@@ -72,7 +73,7 @@ final class ValueParser
             return null;
         }
 
-        if (! (is_scalar($decoded) || $decoded === null)) {
+        if (! is_scalar($decoded) && $decoded !== null) {
             return null;
         }
 
@@ -164,6 +165,7 @@ final class ValueParser
 
                 continue;
             }
+
             $out[$clean] = $value;
         }
 

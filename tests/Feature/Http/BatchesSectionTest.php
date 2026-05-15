@@ -197,6 +197,7 @@ it('hydrates completed batch items with class + attempts + chain via pipelined X
     if (! is_string($streamIdRaw) || $streamIdRaw === '') {
         throw new RuntimeException('Seeded completed-stream entry missing _id');
     }
+
     $streamId = $streamIdRaw;
     R::raw('set', 'qmtest:uuid-completed:uuid-enriched', $streamId);
 

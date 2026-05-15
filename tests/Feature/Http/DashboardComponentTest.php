@@ -209,7 +209,7 @@ it('Throughput sparkline wires Alpine hover state per bucket with a tooltip over
         // Tooltip overlay markup with x-show binding — present in DOM but hidden
         // initially via x-show + x-cloak.
         ->and($html)->toContain('x-show="hovered !== null"')
-        ->and($html)->toContain('x-text="buckets[hovered]?.label"');
+        ->and($html)->toContain('buckets[hovered].label');
 });
 
 it('enforces viewQueueInsights gate if host app defines it', function (): void {

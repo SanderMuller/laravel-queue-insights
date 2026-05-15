@@ -82,7 +82,11 @@ final class BatchItemMeta
         $out = [];
         foreach ($streamIds as $idx => $id) {
             $flat = $reply[$idx] ?? null;
-            if (! is_array($flat) || $flat === []) {
+            if (! is_array($flat)) {
+                continue;
+            }
+
+            if ($flat === []) {
                 continue;
             }
 
@@ -112,6 +116,7 @@ final class BatchItemMeta
             if (! is_string($key)) {
                 continue;
             }
+
             $out[$key] = $values[$i + 1];
         }
 

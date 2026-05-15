@@ -202,6 +202,7 @@ final class RecordJobQueued
             if ($value === null) {
                 continue;
             }
+
             $out[$field] = is_scalar($value) ? (string) $value : (string) json_encode($value, JSON_UNESCAPED_SLASHES);
         }
 

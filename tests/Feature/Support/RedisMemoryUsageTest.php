@@ -71,9 +71,10 @@ it('namespaces its cache key by connection + prefix so two contexts do not bleed
     $tenantB = (new RedisMemoryUsage())->totalBytes();
 
     // Each prefix gets its own cache slot. Without namespacing, tenant
-    // B would have returned tenant A's still-warm 1 KB total.
-    expect($tenantA)->toBeInt()->toBeGreaterThan(900);
-    expect($tenantB)->toBeInt()->toBeLessThan($tenantA);
+    // B would have returned tenant A's still-warm 1 KB total — bounding
+    // tenantB well below tenantA's lower bound proves cache slots split.
+    expect($tenantA)->toBeInt()->toBeGreaterThan(900)
+        ->and($tenantB)->toBeInt()->toBeLessThan(900);
 });
 
 it('logs at warning level and returns null when compute throws', function (): void {
@@ -82,11 +83,11 @@ it('logs at warning level and returns null when compute throws', function (): vo
     // `Redis::connection(...)` throw, which the helper must catch.
     config()->set('queue-insights.redis_connection', 'this-connection-does-not-exist');
 
-    Log::spy();
+    $logSpy = Log::spy();
 
     expect((new RedisMemoryUsage())->totalBytes())->toBeNull();
 
-    Log::shouldHaveReceived('warning')
+    $logSpy->shouldHaveReceived('warning')
         ->withArgs(fn (string $message, array $context): bool => str_contains($message, 'redis-memory-usage compute failed')
             && ($context['connection'] ?? null) === 'this-connection-does-not-exist'
             && isset($context['exception'])

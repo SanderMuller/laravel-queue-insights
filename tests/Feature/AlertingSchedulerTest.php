@@ -49,7 +49,7 @@ function fakeTask(): Event
 
 function realTask(string $command, ?string $description = null, string $expression = '0 3 * * *'): Event
 {
-    $event = new Event(app(CacheEventMutex::class), $command);
+    $event = new Event(resolve(CacheEventMutex::class), $command);
     $event->expression = $expression;
     if ($description !== null) {
         $event->description = $description;

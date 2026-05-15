@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Queue\CallQueuedClosure;
 use SanderMuller\QueueInsights\Support\PendingPayloadSnapshot;
 
 /**
@@ -37,11 +38,13 @@ function decodePayloadBody(mixed $body): mixed
 }
 
 it('returns empty array when mode is off', function (): void {
-    expect(PendingPayloadSnapshot::build(fakePayload(), 'off', [], 2048, 4096))->toBe([]);
+    expect(PendingPayloadSnapshot::build(fakePayload(), 'off', [], 2048, 4096))
+        ->toBeEmpty();
 });
 
 it('returns empty array when payload is null', function (): void {
-    expect(PendingPayloadSnapshot::build(null, 'full', [], 2048, 4096))->toBe([]);
+    expect(PendingPayloadSnapshot::build(null, 'full', [], 2048, 4096))
+        ->toBeEmpty();
 });
 
 it('writes only metadata fields in metadata mode — no payload_body', function (): void {
@@ -75,8 +78,8 @@ it('strips data.command by default in full mode (safer-default vs redact-bypass)
     $fields = PendingPayloadSnapshot::build(fakePayload(), 'full', [], 2048, 4096);
 
     $body = decodePayloadBody($fields['payload_body'] ?? null);
-    expect($body['data']['command'])->toBe('[OMITTED_BY_PENDING_CAPTURE]');
-    expect($body['data']['commandName'])->toBe('App\\Jobs\\X');
+    expect($body['data'])
+        ->toMatchArray(['command' => '[OMITTED_BY_PENDING_CAPTURE]', 'commandName' => 'App\\Jobs\\X']);
 });
 
 it('preserves data.command verbatim when include_command_body=true', function (): void {
@@ -117,7 +120,7 @@ it('keeps PHP-serialized command blobs intact past maxFieldBytes when include_co
 });
 
 it('flags a closure payload as not-persisted with a reason', function (): void {
-    $payload = fakePayload(['data' => ['commandName' => 'Illuminate\\Queue\\CallQueuedClosure', 'command' => 'irrelevant']]);
+    $payload = fakePayload(['data' => ['commandName' => CallQueuedClosure::class, 'command' => 'irrelevant']]);
 
     $fields = PendingPayloadSnapshot::build($payload, 'full', [], 2048, 4096);
 
@@ -129,9 +132,8 @@ it('flags an encrypted command (non O:/C: opener) as not-persisted', function ()
     $payload = fakePayload(['data' => ['commandName' => 'App\\Jobs\\X', 'command' => 'eyJpdiI6...encrypted...']]);
 
     $fields = PendingPayloadSnapshot::build($payload, 'full', [], 2048, 4096);
-
-    expect($fields['payload_note'])->toBe('payload_not_persisted');
-    expect($fields['payload_reason'])->toBe('closure_or_encrypted');
+    expect($fields)
+        ->toMatchArray(['payload_note' => 'payload_not_persisted', 'payload_reason' => 'closure_or_encrypted']);
 });
 
 it('returns size-exceeded error when the encoded body exceeds maxPayloadBytes', function (): void {
@@ -139,8 +141,10 @@ it('returns size-exceeded error when the encoded body exceeds maxPayloadBytes', 
 
     $fields = PendingPayloadSnapshot::build($payload, 'full', [], 8192, 1024);
 
-    expect($fields['payload_error'])->toBe('payload_too_large');
-    expect($fields)->toHaveKey('payload_size');
-    expect((int) $fields['payload_size'])->toBeGreaterThan(1024);
-    expect($fields)->not->toHaveKey('payload_body');
+    expect($fields['payload_error'])->toBe('payload_too_large')
+        ->and($fields)
+        ->toHaveKey('payload_size')
+        ->and((int) $fields['payload_size'])
+        ->toBeGreaterThan(1024)
+        ->and($fields)->not->toHaveKey('payload_body');
 });

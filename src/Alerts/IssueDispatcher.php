@@ -104,7 +104,7 @@ final readonly class IssueDispatcher
 
         $resolved = ScheduledTaskLabel::for($task, $taskKey);
 
-        $context = self::mergeTaskSummary([
+        $context = $this->mergeTaskSummary([
             'task_key' => $taskKey,
             'run_id' => $runId,
             'exception_class' => $exception instanceof Throwable ? $exception::class : null,
@@ -142,7 +142,7 @@ final readonly class IssueDispatcher
 
         $resolved = ScheduledTaskLabel::for($task, $taskKey);
 
-        $context = self::mergeTaskSummary([
+        $context = $this->mergeTaskSummary([
             'task_key' => $taskKey,
             'run_id' => $runId,
             'started_at_ms' => $startedAtMs,
@@ -179,7 +179,7 @@ final readonly class IssueDispatcher
 
         $resolved = ScheduledTaskLabel::for($task, $taskKey);
 
-        $context = self::mergeTaskSummary([
+        $context = $this->mergeTaskSummary([
             'task_key' => $taskKey,
             'expected_at_ms' => $expectedAtMs,
         ], $resolved['summary']);
@@ -459,7 +459,7 @@ final readonly class IssueDispatcher
      * @param  ?array{description: ?string, command: string, expression: string, timezone: ?string, type: 'command'|'closure'|'exec', mutexName: string}  $summary
      * @return array<string, mixed>
      */
-    private static function mergeTaskSummary(array $context, ?array $summary): array
+    private function mergeTaskSummary(array $context, ?array $summary): array
     {
         if ($summary === null) {
             return $context;
