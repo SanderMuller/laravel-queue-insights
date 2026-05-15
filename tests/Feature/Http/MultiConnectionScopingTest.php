@@ -20,6 +20,7 @@ use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Tests\Fixtures\FakeHorizonServiceProvider;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RecordingConsoleKernel;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -761,6 +762,7 @@ it('mount() accepts a Horizon-autodiscovered connection that is not in snapshots
     config()->set('queue-insights.snapshots', [
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
+    app()->register(FakeHorizonServiceProvider::class);
     config()->set('horizon.environments', [
         'testing' => [
             'sup' => ['connection' => 'horizon-only', 'queue' => 'broadcast'],
@@ -778,6 +780,7 @@ it('un-scoped dashboard auth sweep covers Horizon-autodiscovered connections', f
     config()->set('queue-insights.snapshots', [
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
+    app()->register(FakeHorizonServiceProvider::class);
     config()->set('horizon.environments', [
         'testing' => [
             'sup' => ['connection' => 'horizon-only', 'queue' => 'broadcast'],

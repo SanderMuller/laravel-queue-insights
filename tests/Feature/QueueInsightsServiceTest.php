@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Tests\Fixtures\FakeHorizonServiceProvider;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
 beforeEach(function (): void {
@@ -82,6 +83,7 @@ it('unions Horizon supervisor queues with static snapshots and dedups on canonic
         ['connection' => 'redis-staging', 'queue' => 'premium-broadcast'],
     ]);
     config()->set('queue-insights.horizon.autodiscover', true);
+    app()->register(FakeHorizonServiceProvider::class);
     config()->set('horizon.environments', [
         'testing' => [
             'staging-premiums' => [
@@ -122,6 +124,7 @@ it('applies scopeConnection filter to the merged static + Horizon set', function
         ['connection' => 'sqs', 'queue' => 'in-scope'],
         ['connection' => 'redis-staging', 'queue' => 'out-of-scope'],
     ]);
+    app()->register(FakeHorizonServiceProvider::class);
     config()->set('horizon.environments', [
         'testing' => [
             'sup' => ['connection' => 'sqs', 'queue' => 'from-horizon'],
