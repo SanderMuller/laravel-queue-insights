@@ -43,14 +43,18 @@ final class SnapshotErroredDetector
             return null;
         }
 
-        // Exception messages routinely carry newlines + framework context.
-        // `AlertText::sanitise` keeps the alert single-line + bounded so a
-        // verbose stack-trace fragment can't split log records or push
-        // past mail-subject / Slack-title limits. The raw message is still
-        // on the `snapshot:error:{c}:{q}` Redis key for log forwarding.
-        $message = AlertText::sanitise($messageRaw);
-        if ($message === '') {
-            $message = '(no message)';
+        // Sanitise the message that goes into the human-facing description
+        // so a multi-line exception render reads as a single tidy line in
+        // mail / Slack. The typed `SnapshotErrored::$errorMessage` event
+        // payload is built off `context['error_message']` (see
+        // `IssueDispatcher::fireEvent`) — that stays RAW so host listeners
+        // forwarding to Sentry / external systems still receive the full
+        // original message. Title is static and the log channel writes
+        // title-only as the message text, so the raw context value can't
+        // split a log line either.
+        $messageForDisplay = AlertText::sanitise($messageRaw);
+        if ($messageForDisplay === '') {
+            $messageForDisplay = '(no message)';
         }
 
         return new Issue(
@@ -60,9 +64,9 @@ final class SnapshotErroredDetector
             queue: $canonicalQueue,
             jobClass: null,
             title: 'Snapshot driver failed',
-            description: "Latest snapshot for {$connection}:{$canonicalQueue} failed: {$message}",
+            description: "Latest snapshot for {$connection}:{$canonicalQueue} failed: {$messageForDisplay}",
             context: [
-                'error_message' => $message,
+                'error_message' => $messageRaw,
             ],
             detectedAt: Date::now()->getTimestamp(),
         );
