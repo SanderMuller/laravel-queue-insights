@@ -292,7 +292,7 @@ it('Section C default Raw pane under full-normal renders KV table', function ():
         'payload_body' => '{"foo":"bar","baz":42}',
     ])
         ->assertSeeText('Sanitized JSON')
-        ->assertSeeText('Raw fields')
+        ->assertSeeText('Structured')
         ->assertSeeText('foo')
         ->assertSeeText('bar')
         ->assertSeeText('baz');
