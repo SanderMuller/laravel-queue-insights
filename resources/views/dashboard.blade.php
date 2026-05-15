@@ -11,7 +11,7 @@
         @if($connectionNav['should_render'])
             @php($activeTab = collect($connectionNav['tabs'])->firstWhere('active', true) ?? ($connectionNav['tabs'][0] ?? null))
             @push('header-scope')
-                <span class="text-gray-600" aria-hidden="true">/</span>
+                <span class="text-gray-400 dark:text-gray-600" aria-hidden="true">/</span>
 
                 <div class="relative" x-data="{ open: false }">
                     <button type="button"
@@ -19,8 +19,8 @@
                             x-on:keydown.escape.window="open = false"
                             x-bind:aria-expanded="open"
                             aria-haspopup="menu"
-                            class="inline-flex items-center gap-2 rounded-lg bg-white/5 px-3 py-1.5 text-sm font-medium text-white ring-1 ring-inset ring-white/10 transition hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400">
-                        <span class="text-xs uppercase tracking-wide text-gray-400">Connection</span>
+                            class="inline-flex items-center gap-2 rounded-lg bg-gray-950/[0.04] px-3 py-1.5 text-sm font-medium text-gray-900 ring-1 ring-inset ring-gray-950/10 transition hover:bg-gray-950/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 dark:bg-white/5 dark:text-white dark:ring-white/10 dark:hover:bg-white/10">
+                        <span class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Connection</span>
                         @if($activeTab !== null)
                             @if($activeTab['name'] === null)
                                 <span>{{ $activeTab['label'] }}</span>
@@ -28,7 +28,7 @@
                                 <code class="font-mono">{{ $activeTab['label'] }}</code>
                             @endif
                         @endif
-                        <svg class="size-4 text-gray-400 transition" x-bind:class="open ? 'rotate-180' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 7.22a.75.75 0 0 1 1.06 0L10 10.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
+                        <svg class="size-4 text-gray-500 transition dark:text-gray-400" x-bind:class="open ? 'rotate-180' : ''" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.22 7.22a.75.75 0 0 1 1.06 0L10 10.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 8.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd"/></svg>
                     </button>
                     <div x-show="open" x-cloak
                          x-transition.origin.top
@@ -77,7 +77,8 @@
         @if (($stats['redis_memory_bytes'] ?? null) !== null)
             @push('header-aux')
                 <span class="inline-flex items-center gap-1 text-[11px] font-medium text-gray-400"
-                      title="Sum of MEMORY USAGE across every queue-insights key on the configured Redis connection. Refreshed at most once per minute."
+                      data-qi-tip="Redis memory · queue-insights keys"
+                      data-qi-tip-detail="Sum of MEMORY USAGE across every queue-insights key on the configured Redis connection. Refreshed at most once per minute."
                       aria-label="Redis memory used by queue-insights">
                     <svg class="size-3 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                         <path d="M3 5.75A2.75 2.75 0 0 1 5.75 3h8.5A2.75 2.75 0 0 1 17 5.75v2A2.75 2.75 0 0 1 14.25 10.5h-8.5A2.75 2.75 0 0 1 3 7.75v-2Zm0 6.5A2.75 2.75 0 0 1 5.75 9.5h8.5A2.75 2.75 0 0 1 17 12.25v2A2.75 2.75 0 0 1 14.25 17h-8.5A2.75 2.75 0 0 1 3 14.25v-2Zm3 .5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0-6.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>

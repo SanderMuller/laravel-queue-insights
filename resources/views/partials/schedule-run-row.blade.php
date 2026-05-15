@@ -62,6 +62,22 @@
     <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $formatDuration($run['runtime_ms']) }}</td>
     <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['exit_code'] ?? '—' }}</td>
     <td class="px-3 py-2 align-top">
-        <span class="inline-flex items-center rounded-md py-1 pr-2 pl-1.5 text-xs font-medium ring-1 ring-inset {{ $badge['cls'] }}">{{ $badge['label'] }}</span>
+        @if($run['status'] === 'starting')
+            {{-- Aurora radar pulse — replaces the `…` glyph so the row reads
+                 as live across the dashboard. Same micro-pulse used in the
+                 queue + pending tables. --}}
+            <span class="inline-flex items-center gap-2 rounded-md py-1 pr-2 pl-2 text-xs font-medium ring-1 ring-inset bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300 ring-emerald-600/20 dark:ring-emerald-400/30">
+                <span class="relative inline-flex" aria-hidden="true">
+                    <span class="pointer-events-none absolute -inset-1.5">
+                        <span class="absolute inset-0 rounded-full ring-1 ring-emerald-500/60 dark:ring-emerald-400/60" style="animation: qi-radar-sm 2s ease-out infinite;"></span>
+                        <span class="absolute inset-0 rounded-full ring-1 ring-emerald-500/60 dark:ring-emerald-400/60" style="animation: qi-radar-sm 2s ease-out infinite; animation-delay: 1s;"></span>
+                    </span>
+                    <span class="relative inline-flex size-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>
+                </span>
+                running
+            </span>
+        @else
+            <span class="inline-flex items-center rounded-md py-1 pr-2 pl-1.5 text-xs font-medium ring-1 ring-inset {{ $badge['cls'] }}">{{ $badge['label'] }}</span>
+        @endif
     </td>
 </tr>

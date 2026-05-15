@@ -60,7 +60,7 @@
                     Chained job {{ $i + 1 }} of {{ $chainTotal }}
                     @if($i === 0)<span class="ml-1 rounded-md bg-emerald-50 dark:bg-emerald-900/40 px-1.5 py-0.5 font-medium text-emerald-700 dark:text-emerald-300 ring-1 ring-inset ring-emerald-600/20 dark:ring-emerald-400/30">next</span>@endif
                 </p>
-                <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
+                <div class="rounded-xl bg-gradient-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
                     <dl>
                         <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
                         <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $job['class'] }}</dd>

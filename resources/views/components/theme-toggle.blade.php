@@ -48,17 +48,18 @@
      x-on:keydown.down.prevent="moveBy(1)"
      x-on:keydown.left.prevent="moveBy(-1)"
      x-on:keydown.up.prevent="moveBy(-1)"
-     class="inline-flex items-center gap-0.5 rounded-full bg-white/5 p-0.5 ring-1 ring-inset ring-white/10">
+     class="inline-flex items-center gap-0.5 rounded-full bg-gray-950/[0.04] p-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-white/5 dark:ring-white/10">
 
     {{-- Light --}}
     <button type="button" role="radio" data-qi-theme-radio="light"
             x-bind:aria-checked="theme === 'light' ? 'true' : 'false'"
             x-bind:tabindex="theme === 'light' ? 0 : -1"
             x-on:click="setTheme('light')"
-            x-bind:class="theme === 'light' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+            x-bind:class="theme === 'light' ? 'bg-gray-950/[0.08] text-gray-900 dark:bg-white/10 dark:text-gray-100' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'"
             class="inline-flex size-7 items-center justify-center rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
             aria-label="Light theme"
-            title="Light">
+            data-qi-tip="Light theme"
+            data-qi-tip-detail="Always render in light mode">
         {{-- Heroicons 24×24 solid sun. The 20×20 mini variant packs 8 rays
              into a tight viewBox; at the toggle's 14 px (size-3.5) display
              size that reads as "blob with bumps". The 24×24 has longer
@@ -73,10 +74,12 @@
             x-bind:aria-checked="theme === 'system' ? 'true' : 'false'"
             x-bind:tabindex="theme === 'system' ? 0 : -1"
             x-on:click="setTheme('system')"
-            x-bind:class="theme === 'system' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+            x-bind:class="theme === 'system' ? 'bg-gray-950/[0.08] text-gray-900 dark:bg-white/10 dark:text-gray-100' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'"
             class="inline-flex size-7 items-center justify-center rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
             aria-label="System theme"
-            title="System">
+            data-qi-tip="System theme"
+            data-qi-tip-detail="Follow your OS preference"
+            data-qi-tip-resolve="theme">
         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path fill-rule="evenodd" d="M2 4.75A2.75 2.75 0 0 1 4.75 2h10.5A2.75 2.75 0 0 1 18 4.75v8.5A2.75 2.75 0 0 1 15.25 16h-3.5l.5 1.5h1.5a.75.75 0 0 1 0 1.5h-7a.75.75 0 0 1 0-1.5h1.5l.5-1.5h-3.5A2.75 2.75 0 0 1 2 13.25v-8.5Zm2.75-1.25a1.25 1.25 0 0 0-1.25 1.25v7.75c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25V4.75a1.25 1.25 0 0 0-1.25-1.25H4.75Z" clip-rule="evenodd"/>
         </svg>
@@ -87,10 +90,11 @@
             x-bind:aria-checked="theme === 'dark' ? 'true' : 'false'"
             x-bind:tabindex="theme === 'dark' ? 0 : -1"
             x-on:click="setTheme('dark')"
-            x-bind:class="theme === 'dark' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'"
+            x-bind:class="theme === 'dark' ? 'bg-gray-950/[0.08] text-gray-900 dark:bg-white/10 dark:text-gray-100' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100'"
             class="inline-flex size-7 items-center justify-center rounded-full transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
             aria-label="Dark theme"
-            title="Dark">
+            data-qi-tip="Dark theme"
+            data-qi-tip-detail="Always render in dark mode">
         <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path fill-rule="evenodd" d="M7.455 2.004a.75.75 0 0 1 .26.77 7 7 0 0 0 9.487 8.21.75.75 0 0 1 1.022.99A9 9 0 1 1 6.717 1.43a.75.75 0 0 1 .738.575Z" clip-rule="evenodd"/>
         </svg>

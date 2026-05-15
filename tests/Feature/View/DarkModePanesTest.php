@@ -123,17 +123,14 @@ it('emits dark variants on the shared filter-form toolbar (filtered pill + clear
         ->toContain('dark:hover:text-gray-100');
 });
 
-it('emits dark variants on pane-pending in-flight (amber) / pending (gray) / delayed (indigo) sub-tables', function (): void {
+it('emits dark variants on pane-pending in-flight (neutral) / pending (gray) / delayed (indigo) sub-tables', function (): void {
     $src = paneSource('pane-pending');
 
     expect($src)
         // Empty state.
         ->toContain('dark:border-white/10')
-        // In-flight (amber).
-        ->toContain('dark:text-amber-300')
-        ->toContain('dark:ring-amber-400/30')
-        ->toContain('dark:divide-amber-400/20')
-        // Pending now (gray).
+        // In-flight + Pending now share neutral chrome — liveness is
+        // carried by the per-row radar pulse, not amber surface chrome.
         ->toContain('dark:ring-white/10')
         ->toContain('dark:divide-white/10')
         // Delayed (indigo).

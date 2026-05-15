@@ -88,12 +88,12 @@
         </div>
         <dl class="flex gap-5 text-sm">
             <div class="flex items-center gap-2">
-                <span class="size-2 rounded-sm bg-emerald-500" aria-hidden="true"></span>
+                <span class="size-2 rounded-sm bg-gradient-to-b from-emerald-300 to-emerald-600" aria-hidden="true"></span>
                 <dt class="text-gray-500 dark:text-gray-300">Processed</dt>
                 <dd class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ number_format($throughputTotalProcessed) }}</dd>
             </div>
             <div class="flex items-center gap-2">
-                <span class="size-2 rounded-sm bg-red-500" aria-hidden="true"></span>
+                <span class="size-2 rounded-sm bg-gradient-to-b from-rose-300 to-rose-600" aria-hidden="true"></span>
                 <dt class="text-gray-500 dark:text-gray-300">Failed</dt>
                 <dd class="font-medium tabular-nums {{ $throughputTotalFailed > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100' }}">{{ number_format($throughputTotalFailed) }}</dd>
             </div>
@@ -109,10 +109,23 @@
     <div class="relative" x-data="{ hovered: null, buckets: @js($throughputTooltips) }">
         <svg viewBox="0 0 {{ $throughputViewW }} {{ $throughputViewH }}" preserveAspectRatio="none"
              class="block h-16 w-full">
-            <g class="text-emerald-500" fill="currentColor">
+            {{-- Aurora gradient fills — emerald deepening downward gives the
+                 bars a soft glow base. Failed bars use a rose gradient so they
+                 stay clearly distinct without the harsh flat red-500. --}}
+            <defs>
+                <linearGradient id="qi-bar-emerald" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%"   stop-color="rgb(110 231 183)"/>
+                    <stop offset="100%" stop-color="rgb(5 150 105)"/>
+                </linearGradient>
+                <linearGradient id="qi-bar-rose" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0%"   stop-color="rgb(252 165 165)"/>
+                    <stop offset="100%" stop-color="rgb(225 29 72)"/>
+                </linearGradient>
+            </defs>
+            <g fill="url(#qi-bar-emerald)">
                 {!! $buildBars('processed') !!}
             </g>
-            <g class="text-red-500" fill="currentColor">
+            <g fill="url(#qi-bar-rose)">
                 {!! $buildBars('failed') !!}
             </g>
             {{-- Hover overlay — full-column transparent rects per hour. Each
@@ -127,17 +140,25 @@
              x-cloak
              x-bind:style="`left: ${((hovered + 0.5) / {{ $throughputBars }}) * 100}%`"
              class="pointer-events-none absolute -top-2 z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md bg-gray-900 px-2.5 py-1.5 text-[11px] text-white shadow-lg ring-1 ring-white/10">
-            <p class="font-medium tabular-nums" x-text="buckets[hovered]?.label"></p>
+            {{-- Null-guard every x-text: when `hovered` is null on init (the
+                 server-rendered state), `buckets[null]?.x` returns undefined,
+                 which template-literals stringify as "undefined …". Even
+                 though x-show hides the tooltip then, Alpine still evaluates
+                 x-text on init — and the stale "undefined" text leaks into
+                 the first paint of the first real hover before the update
+                 lands. Guarding with `hovered !== null ? … : ''` keeps the
+                 text content empty until a real bucket is selected. --}}
+            <p class="font-medium tabular-nums" x-text="hovered !== null ? buckets[hovered].label : ''"></p>
             <p class="mt-0.5 flex items-center gap-2">
                 <span class="inline-flex items-center gap-1">
                     <span class="size-1.5 rounded-sm bg-emerald-400" aria-hidden="true"></span>
-                    <span class="tabular-nums" x-text="`${buckets[hovered]?.processed} processed`"></span>
+                    <span class="tabular-nums" x-text="hovered !== null ? `${buckets[hovered].processed} processed` : ''"></span>
                 </span>
                 <span class="inline-flex items-center gap-1">
                     <span class="size-1.5 rounded-sm bg-red-400" aria-hidden="true"></span>
                     <span class="tabular-nums"
                           x-bind:class="buckets[hovered]?.failedNonZero ? 'text-red-300 font-medium' : 'text-gray-400'"
-                          x-text="`${buckets[hovered]?.failed} failed`"></span>
+                          x-text="hovered !== null ? `${buckets[hovered].failed} failed` : ''"></span>
                 </span>
             </p>
             <span class="absolute left-1/2 -bottom-1 size-2 -translate-x-1/2 rotate-45 bg-gray-900"

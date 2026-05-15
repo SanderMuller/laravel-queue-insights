@@ -14,7 +14,21 @@
     <div class="lg:col-span-2">
         <x-queue-insights::throughput-sparkline :throughput="$throughput"/>
     </div>
-    <dl aria-label="Headline stats" class="grid grid-cols-3 gap-x-4 gap-y-3 rounded-xl bg-white p-5 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+    {{-- Aurora accent — emerald glow + diagonal shimmer behind the headline
+         stats panel, plus a top hairline + `live · last 60s` caption above
+         "Jobs / min". Mirrors the Aurora header chrome at a quieter
+         intensity (opacity-15 vs opacity-30) so the panel still reads as
+         secondary to the sparkline beside it. --}}
+    <dl aria-label="Headline stats" class="relative isolate overflow-hidden grid grid-cols-3 gap-x-4 gap-y-3 rounded-xl bg-white p-5 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+        @include('queue-insights::partials.aurora-bg')
+        <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" aria-hidden="true"></div>
+        <div class="col-span-3 -mb-1 flex items-center gap-2">
+            <span class="relative flex size-1.5">
+                <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                <span class="relative inline-flex size-1.5 rounded-full bg-emerald-400"></span>
+            </span>
+            <span class="text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300/80">live · last 60s</span>
+        </div>
         <div>
             <dt class="truncate text-sm font-medium text-gray-500 dark:text-gray-300">Jobs / min</dt>
             <dd class="mt-1 text-xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">{{ number_format($stats['jobs_per_minute']) }}</dd>

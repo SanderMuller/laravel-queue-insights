@@ -11,15 +11,17 @@
     <div class="rounded-lg border border-dashed border-gray-950/10 p-6 text-sm text-gray-500 dark:border-white/10 dark:text-gray-300">No pending jobs tracked.</div>
 @else
     @if(count($inFlightRows) > 0)
-        <h3 class="mb-2 text-sm font-semibold tracking-wide text-amber-700 dark:text-amber-300">In-flight <span class="font-normal text-amber-500 dark:text-amber-400 tabular-nums">({{ count($inFlightRows) }})</span></h3>
-        <div class="mb-5 rounded-lg bg-white ring-1 ring-amber-600/15 dark:bg-gray-900 dark:ring-amber-400/30">
-            <div class="grid grid-cols-12 items-center gap-4 border-b border-amber-200/60 px-4 py-2 text-sm font-medium text-amber-700/80 dark:border-amber-400/20 dark:text-amber-300">
+        {{-- Neutral chrome — liveness is already carried by the per-row radar
+             pulse, so the table itself stays calm (no amber ring/divider). --}}
+        <h3 class="mb-2 text-sm font-semibold tracking-wide text-gray-700 dark:text-gray-200">In-flight <span class="font-normal text-gray-400 dark:text-gray-400 tabular-nums">({{ count($inFlightRows) }})</span></h3>
+        <div class="mb-5 rounded-lg bg-white ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
+            <div class="grid grid-cols-12 items-center gap-4 border-b border-gray-950/5 px-4 py-2 text-sm font-medium text-gray-500 dark:border-white/10 dark:text-gray-300">
                 <div class="col-span-5">Job</div>
                 <div class="col-span-3">Queue</div>
                 <div class="col-span-2 text-right">Queued</div>
                 <div class="col-span-2 text-right">Started</div>
             </div>
-            <ul role="list" class="divide-y divide-amber-200/60 dark:divide-amber-400/20">
+            <ul role="list" class="divide-y divide-gray-950/5 dark:divide-white/10">
                 @foreach($inFlightRows as $row)
                     @include('queue-insights::partials.pending-row', ['row' => $row, 'isInFlight' => true, 'isDelayed' => false])
                 @endforeach

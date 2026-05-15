@@ -104,8 +104,8 @@ it('renders the toggle in the layout header when the theme flag is on', function
         // Outer radiogroup landed in the header flex.
         ->toContain('role="radiogroup"')
         ->toContain('aria-label="Theme"')
-        // Polling chip still renders alongside.
-        ->toContain('polling 10s');
+        // Aurora live indicator still renders alongside the toggle.
+        ->toContain('live · streaming');
 });
 
 it('omits the toggle from the layout when the theme flag is off', function (): void {
@@ -116,8 +116,8 @@ it('omits the toggle from the layout when the theme flag is off', function (): v
     expect($html)
         ->not->toContain('aria-label="Theme"')
         ->not->toContain('aria-label="Light theme"')
-        // Polling chip still renders.
-        ->toContain('polling 10s');
+        // Aurora live indicator still renders.
+        ->toContain('live · streaming');
 });
 
 it('defaults the theme flag to true so existing hosts get the toggle on upgrade', function (): void {

@@ -2,10 +2,12 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Redis\Connections\PhpRedisClusterConnection;
 use Illuminate\Redis\Connections\PredisClusterConnection;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Throwable;
 
@@ -36,12 +38,15 @@ use Throwable;
  */
 final class RedisMemoryUsage
 {
-    private const string CACHE_KEY = 'queue-insights:redis-memory-bytes';
+    private const string CACHE_KEY_PREFIX = 'queue-insights:redis-memory-bytes:';
+
+    private const string LOCK_KEY_PREFIX = 'queue-insights:redis-memory-bytes:lock:';
 
     /**
      * Bytes consumed by every key matching the package prefix, or null
      * when the feature is disabled, the connection is a Redis Cluster,
-     * or the computation failed (logged, never surfaced to the UI).
+     * or the computation failed (the throwable is logged at warning so
+     * operators can find it without leaking to the dashboard UI).
      */
     public function totalBytes(): ?int
     {
@@ -49,17 +54,51 @@ final class RedisMemoryUsage
             return null;
         }
 
-        $ttl = max(1, Config::int('dashboard.redis_memory.cache_ttl', 60));
+        $connection = Config::string('redis_connection', 'default');
+        $cacheKey = self::CACHE_KEY_PREFIX . sha1($connection . '|' . KeyPrefix::make(''));
 
         /** @var int|null $cached */
-        $cached = Cache::get(self::CACHE_KEY);
+        $cached = Cache::get($cacheKey);
         if ($cached !== null) {
             return $cached;
         }
 
+        $ttl = max(1, Config::int('dashboard.redis_memory.cache_ttl', 60));
+
+        // Atomic recompute. Without a lock, every concurrent dashboard
+        // poll after a cache miss races into its own SCAN + per-key
+        // MEMORY USAGE walk — turning one operator's refresh into N
+        // simultaneous keyspace sweeps. Non-blocking acquire so peers
+        // that lose the race return null this tick and pick up the
+        // warm cache on their next 10s poll.
+        $store = Cache::getStore();
+        if ($store instanceof LockProvider) {
+            $lock = $store->lock(self::LOCK_KEY_PREFIX . sha1($connection . '|' . KeyPrefix::make('')), $ttl);
+            if (! $lock->get()) {
+                return null;
+            }
+
+            try {
+                return $this->refresh($cacheKey, $ttl, $connection);
+            } finally {
+                $lock->release();
+            }
+        }
+
+        return $this->refresh($cacheKey, $ttl, $connection);
+    }
+
+    private function refresh(string $cacheKey, int $ttl, string $connection): ?int
+    {
         try {
             $bytes = $this->compute();
-        } catch (Throwable) {
+        } catch (Throwable $e) {
+            Log::warning('queue-insights: redis-memory-usage compute failed', [
+                'connection' => $connection,
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+            ]);
+
             return null;
         }
 
@@ -67,7 +106,7 @@ final class RedisMemoryUsage
             return null;
         }
 
-        Cache::put(self::CACHE_KEY, $bytes, $ttl);
+        Cache::put($cacheKey, $bytes, $ttl);
 
         return $bytes;
     }

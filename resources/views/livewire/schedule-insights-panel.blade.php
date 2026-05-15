@@ -91,8 +91,22 @@
             </div>
         @endif
 
-        {{-- Headline tiles --}}
-        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-4 rounded-xl bg-white dark:bg-gray-900 p-5 ring-1 ring-gray-950/5 dark:ring-white/10">
+        {{-- Headline tiles — Aurora accent mirrors the main dashboard hero:
+             emerald glow + diagonal shimmer + top hairline + `live · past 24h`
+             caption (only when the snapshot isn't stale, so the chrome doesn't
+             lie about freshness). --}}
+        <div class="relative isolate overflow-hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-4 rounded-xl bg-white dark:bg-gray-900 p-5 ring-1 ring-gray-950/5 dark:ring-white/10">
+            @unless($snapshotStale)
+                @include('queue-insights::partials.aurora-bg')
+                <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" aria-hidden="true"></div>
+                <div class="col-span-2 sm:col-span-3 lg:col-span-6 -mb-1 flex items-center gap-2">
+                    <span class="relative flex size-1.5">
+                        <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex size-1.5 rounded-full bg-emerald-400"></span>
+                    </span>
+                    <span class="text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300/80">live · past 24h</span>
+                </div>
+            @endunless
             @include('queue-insights::partials.stat-tile', ['label' => 'Runs', 'value' => number_format($headlineStats['runs_24h']), 'sub' => 'past 24h', 'tone' => 'neutral'])
             @include('queue-insights::partials.stat-tile', ['label' => 'Failed', 'value' => number_format($headlineStats['failed_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['failed_24h'] > 0 ? 'danger' : 'neutral'])
             @include('queue-insights::partials.stat-tile', ['label' => 'Skipped', 'value' => number_format($headlineStats['skipped_24h']), 'sub' => 'past 24h', 'tone' => 'neutral'])
@@ -119,7 +133,11 @@
                         @php
                             $total = $bar['success'] + $bar['failed'];
                             $pct = (int) round(($total / $maxBar) * 100);
-                            $tone = $bar['failed'] > 0 ? 'bg-red-300 dark:bg-red-400/60' : ($total > 0 ? 'bg-emerald-300 dark:bg-emerald-400/60' : 'bg-gray-200 dark:bg-gray-700');
+                            $tone = $bar['failed'] > 0
+                                ? 'bg-gradient-to-t from-rose-600 to-rose-300 dark:from-rose-500 dark:to-rose-300'
+                                : ($total > 0
+                                    ? 'bg-gradient-to-t from-emerald-600 to-emerald-300 dark:from-emerald-500 dark:to-emerald-300'
+                                    : 'bg-gray-200 dark:bg-gray-700');
                             $showLabel = ($i % 4 === 0);
                             $barHeight = max(4, (int) round($pct / 2));
                         @endphp

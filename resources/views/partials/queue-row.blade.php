@@ -44,7 +44,24 @@
             </div>
             <div>
                 <dt class="sr-only">In-flight</dt>
-                <dd class="font-semibold text-gray-900 dark:text-gray-100">{{ $q['inflight'] ?? '—' }}</dd>
+                @php
+                    $inflightNum = is_numeric($q['inflight'] ?? null) ? (int) $q['inflight'] : 0;
+                @endphp
+                <dd class="inline-flex items-center justify-center gap-3 font-semibold text-gray-900 dark:text-gray-100">
+                    @if($inflightNum > 0)
+                        {{-- Live radar micro-pulse — emerald rings echo the
+                             Aurora header chrome. Only when work is actually
+                             in-flight so the rest of the table stays quiet. --}}
+                        <span class="relative inline-flex" aria-hidden="true">
+                            <span class="pointer-events-none absolute -inset-1.5">
+                                <span class="absolute inset-0 rounded-full ring-1 ring-emerald-400/50" style="animation: qi-radar-sm 2s ease-out infinite;"></span>
+                                <span class="absolute inset-0 rounded-full ring-1 ring-emerald-400/50" style="animation: qi-radar-sm 2s ease-out infinite; animation-delay: 1s;"></span>
+                            </span>
+                            <span class="relative inline-flex size-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>
+                        </span>
+                    @endif
+                    <span>{{ $q['inflight'] ?? '—' }}</span>
+                </dd>
             </div>
             <div>
                 <dt class="sr-only">Delayed</dt>

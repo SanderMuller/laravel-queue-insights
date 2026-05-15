@@ -245,6 +245,60 @@
         html.dark #qi-time-tooltip {
             background: rgb(55 65 81);
         }
+
+        /* qi-pop — shared rich tooltip for header controls (theme/clock toggles
+           etc). Same visual language as #qi-time-tooltip but multi-line and
+           wider. Driven by `data-qi-tip` triggers + a single handler in <head>
+           below. Position:fixed so the header's overflow-hidden doesn't clip. */
+        #qi-pop {
+            position: fixed;
+            z-index: 60;
+            pointer-events: none;
+            padding: 7px 10px;
+            border-radius: 6px;
+            background: rgb(17 24 39);
+            color: white;
+            font-size: 11px;
+            line-height: 1.4;
+            box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.4), inset 0 0 0 1px rgb(255 255 255 / 0.08);
+            max-width: 240px;
+            opacity: 0;
+            transform: translateY(-2px);
+            transition: opacity 90ms ease, transform 90ms ease;
+        }
+        #qi-pop[data-shown] { opacity: 1; transform: translateY(0); }
+        #qi-pop .qi-pop-title { font-weight: 600; letter-spacing: 0.01em; }
+        #qi-pop .qi-pop-detail { color: rgb(156 163 175); margin-top: 2px; }
+        #qi-pop .qi-pop-resolved {
+            margin-top: 5px;
+            color: rgb(110 231 183);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            font-variant-numeric: tabular-nums;
+        }
+        html.dark #qi-pop { background: rgb(55 65 81); }
+
+        /* Aurora accent keyframes — defined globally so any dashboard
+           surface (header, hero panel, queue rows) can reuse them. */
+        @keyframes qi-aurora-shift {
+            0%   { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+        @keyframes qi-radar {
+            0%   { transform: scale(0.75); opacity: 0.9; }
+            100% { transform: scale(1.8);  opacity: 0;   }
+        }
+        @keyframes qi-radar-sm {
+            0%   { transform: scale(0.6); opacity: 0.9; }
+            100% { transform: scale(2.2); opacity: 0;   }
+        }
+        /* Reusable aurora-shimmer strip — diagonal emerald sweep, slow. */
+        .qi-aurora-strip {
+            background-image: linear-gradient(115deg, transparent 0%, transparent 40%, rgba(52,211,153,0.4) 50%, transparent 60%, transparent 100%);
+            background-size: 200% 100%;
+            animation: qi-aurora-shift 14s linear infinite;
+        }
     </style>
     {{--
         Inline JSON colorizer + copy-to-clipboard helpers for the Details modal.
@@ -616,6 +670,133 @@
                 bootQiTime();
             }
         })();
+
+        /*
+         * qi-pop — rich tooltip handler for header controls.
+         *
+         * Triggers carry `data-qi-tip` (title, required) and may add
+         * `data-qi-tip-detail` (secondary line) or `data-qi-tip-resolve`
+         * (`theme` | `clock`) which appends a "Currently <X>" suffix
+         * computed at show time. Surface mirrors #qi-time-tooltip.
+         */
+        (function () {
+            var TIP_ID = 'qi-pop';
+            var tip = null;
+            var currentTrigger = null;
+
+            function escapeHtml(s) {
+                return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            function resolvedSuffix(kind) {
+                try {
+                    if (kind === 'theme') {
+                        var pref = document.documentElement.dataset.theme || 'system';
+                        if (pref !== 'system') return null;
+                        var dark = document.documentElement.classList.contains('dark');
+                        return 'Currently ' + (dark ? 'dark' : 'light');
+                    }
+                    if (kind === 'clock') {
+                        var p = document.documentElement.dataset.clock || 'auto';
+                        if (p !== 'auto') return null;
+                        var h12 = new Intl.DateTimeFormat(undefined, { hour: 'numeric' })
+                            .resolvedOptions().hour12;
+                        return 'Currently ' + (h12 ? '12-hour' : '24-hour');
+                    }
+                } catch (e) {}
+                return null;
+            }
+
+            function ensureTip() {
+                if (tip) return tip;
+                tip = document.createElement('div');
+                tip.id = TIP_ID;
+                tip.setAttribute('role', 'tooltip');
+                document.body.appendChild(tip);
+                return tip;
+            }
+
+            function buildContent(el) {
+                var title = el.getAttribute('data-qi-tip') || '';
+                var detail = el.getAttribute('data-qi-tip-detail') || '';
+                var resolve = el.getAttribute('data-qi-tip-resolve');
+                var suffix = resolve ? resolvedSuffix(resolve) : null;
+                var html = '<div class="qi-pop-title">' + escapeHtml(title) + '</div>';
+                if (detail) html += '<div class="qi-pop-detail">' + escapeHtml(detail) + '</div>';
+                if (suffix) html += '<div class="qi-pop-resolved">' + escapeHtml(suffix) + '</div>';
+                return html;
+            }
+
+            function show(el) {
+                var t = ensureTip();
+                t.innerHTML = buildContent(el);
+                t.style.left = '0px';
+                t.style.top = '0px';
+                t.setAttribute('data-shown', '');
+                currentTrigger = el;
+                requestAnimationFrame(function () {
+                    if (! el.isConnected) { hide(); return; }
+                    var rect = el.getBoundingClientRect();
+                    var tw = t.offsetWidth;
+                    var th = t.offsetHeight;
+                    var left = rect.left + (rect.width / 2) - (tw / 2);
+                    left = Math.max(8, Math.min(left, window.innerWidth - tw - 8));
+                    // Prefer below the trigger — header has `overflow-hidden`,
+                    // so a tip pinned above would get clipped.
+                    var top = rect.bottom + 6;
+                    if (top + th > window.innerHeight - 8) {
+                        top = rect.top - th - 6;
+                    }
+                    t.style.left = left + 'px';
+                    t.style.top = top + 'px';
+                });
+            }
+
+            function hide() {
+                if (tip) tip.removeAttribute('data-shown');
+                currentTrigger = null;
+            }
+
+            document.addEventListener('mouseover', function (e) {
+                var el = e.target.closest && e.target.closest('[data-qi-tip]');
+                if (el) show(el);
+            });
+            document.addEventListener('mouseout', function (e) {
+                var el = e.target.closest && e.target.closest('[data-qi-tip]');
+                if (el) hide();
+            });
+            document.addEventListener('focusin', function (e) {
+                var el = e.target.closest && e.target.closest('[data-qi-tip]');
+                if (el) show(el);
+            });
+            document.addEventListener('focusout', function (e) {
+                var el = e.target.closest && e.target.closest('[data-qi-tip]');
+                if (el) hide();
+            });
+            // Click commits selection — drop the tip so the user gets visual
+            // breathing room before the next hover.
+            document.addEventListener('click', function (e) {
+                var el = e.target.closest && e.target.closest('[data-qi-tip]');
+                if (el) hide();
+            });
+            window.addEventListener('scroll', hide, true);
+
+            // Theme / clock changes rewrite the "Currently <X>" suffix — if a
+            // tip is open over the system/auto button while preference resolves
+            // change, re-render in place rather than flash off. Event-name
+            // string literals are blade-gated so the layout's "flag off" test
+            // can assert their absence.
+            @if($qiThemeEnabled)
+                window.addEventListener('qi-theme-applied', function () {
+                    if (currentTrigger && currentTrigger.isConnected) show(currentTrigger);
+                });
+            @endif
+            @if($qiClockEnabled)
+                window.addEventListener('qi-clock-applied', function () {
+                    if (currentTrigger && currentTrigger.isConnected) show(currentTrigger);
+                });
+            @endif
+        })();
     </script>
 </head>
 <body @class([
@@ -623,14 +804,31 @@
     'dark:bg-gray-950 dark:text-gray-100' => $qiThemeEnabled,
 ])>
     <div class="isolate min-h-dvh">
-        {{-- Horizon-style dark top bar — signature "infra tool" chrome. The
-             `header-scope` stack lets the dashboard inject a connection-scope
-             picker between the brand and the polling chip. --}}
-        <header class="bg-gray-900">
-            <div class="mx-auto flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4 sm:px-8 lg:max-w-7xl lg:px-10">
-                <a href="/" aria-label="Homepage" class="flex items-center gap-2.5 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400">
-                    {{-- Mark — four ascending bars on an emerald gradient, reads as "queue depth". --}}
-                    <span class="inline-flex size-8 items-center justify-center rounded-lg bg-linear-to-br from-emerald-400 to-emerald-500 text-white shadow-sm ring-1 ring-emerald-300/20">
+        {{-- Aurora top bar — asymmetric edge-lit chrome. Emerald radial
+             glow anchors the brand; radar rings pulse around the mark
+             when polling; a diagonal aurora accent drifts across the
+             bar. The `header-scope` stack lets the dashboard inject a
+             connection-scope picker between the brand and the controls;
+             liveness is read off the radar + tagline rather than a
+             polling pill. --}}
+        @php($qiPolling = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true))
+        <header class="relative border-b border-gray-950/5 bg-white dark:border-white/10 dark:bg-gray-900">
+            {{-- Aurora bg layers — kept in their own clipped wrapper so the
+                 emerald glow + diagonal accent don't bleed outside the bar,
+                 while the header itself stays non-clipping so descendant
+                 popovers (connection picker, qi-pop tooltip) can overflow.
+                 Tuned per mode: light mode uses softer emerald-200/40 stops
+                 so the glow reads against white without competing with
+                 content; dark mode keeps the bolder emerald-500/20. --}}
+            <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+                <div class="absolute -left-24 -top-16 size-72 rounded-full bg-emerald-200/40 blur-3xl dark:bg-emerald-500/20"></div>
+                <div class="qi-aurora-strip absolute inset-0 opacity-20 dark:opacity-30"></div>
+            </div>
+
+            <div class="relative mx-auto flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4 sm:px-8 lg:max-w-7xl lg:px-10">
+                <a href="/" aria-label="Homepage" class="relative flex items-center gap-3 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400">
+                    <span class="relative inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-300 to-emerald-600 text-white shadow-lg shadow-emerald-500/30 ring-1 ring-emerald-200/30">
+                        {{-- Mark — four ascending bars on an emerald gradient, reads as "queue depth". --}}
                         <svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                             <rect x="1" y="10" width="2.5" height="5" rx="0.75"/>
                             <rect x="5" y="7" width="2.5" height="8" rx="0.75"/>
@@ -638,16 +836,14 @@
                             <rect x="13" y="1" width="2.5" height="14" rx="0.75"/>
                         </svg>
                     </span>
-                    <span class="text-base font-semibold tracking-tight text-white">Queue Insights</span>
+                    <span class="flex flex-col leading-tight">
+                        <span class="text-base font-semibold tracking-tight text-gray-900 dark:text-white">Queue Insights</span>
+                        <span class="text-[10px] uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300/80">{{ $qiPolling ? 'live · streaming' : 'static · polling off' }}</span>
+                    </span>
                 </a>
 
                 @stack('header-scope')
 
-                @php($qiPolling = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true))
-                {{-- Right-edge controls: theme toggle + polling chip. Wrapped
-                     in `ml-auto` so they hug the right side regardless of
-                     header-scope stack contents. Toggle only renders when
-                     the theme flag is on (Phase 6 flips the default to true). --}}
                 <div class="ml-auto flex flex-col items-end gap-1">
                     <div class="flex items-center gap-2">
                         @if($qiClockEnabled)
@@ -656,19 +852,11 @@
                         @if($qiThemeEnabled)
                             <x-queue-insights::theme-toggle/>
                         @endif
-                        <div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
-                            <span class="relative flex size-2">
-                                @if($qiPolling)
-                                    <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                @endif
-                                <span class="relative inline-flex size-2 rounded-full {{ $qiPolling ? 'bg-emerald-400' : 'bg-gray-500' }}"></span>
-                            </span>
-                            <span>{{ $qiPolling ? 'Active · polling 10s' : 'Static · polling off' }}</span>
-                        </div>
                     </div>
                     @stack('header-aux')
                 </div>
             </div>
+
         </header>
         <main class="mx-auto max-w-7xl px-6 py-8 sm:px-8 lg:px-10">
             {{ $slot ?? '' }}

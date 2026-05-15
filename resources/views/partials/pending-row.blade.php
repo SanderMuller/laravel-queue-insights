@@ -51,20 +51,37 @@
     wire-action="openPending"
     :wire-arg="$row['uuid'] ?? null"
     :aria-label="'Open ' . $stateLabel . ' job details'">
-    <div class="col-span-5 min-w-0">
-        <p class="truncate font-mono text-sm">
-            @if($namespace !== '')<span class="text-gray-400 dark:text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span>
-        </p>
-        <p class="mt-0.5 flex items-center gap-1.5">
-            @if($fullUuid !== null)
-                <span class="min-w-0 truncate font-mono text-xs text-gray-400 dark:text-gray-400" title="{{ $fullUuid }}">#{{ $fullUuid }}</span>
-            @endif
+    <div class="col-span-5 flex min-w-0 items-start gap-3">
+        {{-- Leading state indicator — three flavors:
+              · in-flight → emerald radar pulse (Aurora micro-pulse)
+              · delayed   → indigo clock icon (snoozing until availableAt)
+              · pending   → static emerald dot (queued, no worker yet)
+             A fixed-width slot keeps the class-name column aligned across rows. --}}
+        <span class="relative mt-[5px] flex size-3 shrink-0 items-center justify-center" aria-hidden="true">
             @if($isInFlight)
-                <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-900/40 px-1.5 py-0.5 font-sans text-[10px] font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
-                    <span aria-hidden="true" class="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"></span>
-                    running
+                <span class="pointer-events-none absolute -inset-1">
+                    <span class="absolute inset-0 rounded-full ring-1 ring-emerald-500/60 dark:ring-emerald-400/60" style="animation: qi-radar-sm 2s ease-out infinite;"></span>
+                    <span class="absolute inset-0 rounded-full ring-1 ring-emerald-500/60 dark:ring-emerald-400/60" style="animation: qi-radar-sm 2s ease-out infinite; animation-delay: 1s;"></span>
                 </span>
+                <span class="relative inline-flex size-1.5 rounded-full bg-emerald-500 dark:bg-emerald-400"></span>
             @elseif($isDelayed)
+                {{-- Heroicons mini clock — "snoozing until availableAt". --}}
+                <svg class="size-3 text-indigo-500 dark:text-indigo-300" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm.75-13a.75.75 0 0 0-1.5 0v5c0 .2.08.39.22.53l3 3a.75.75 0 1 0 1.06-1.06l-2.78-2.78V5Z" clip-rule="evenodd"/>
+                </svg>
+            @else
+                <span class="inline-flex size-1.5 rounded-full bg-emerald-500/60 dark:bg-emerald-400/60"></span>
+            @endif
+        </span>
+        <div class="min-w-0 flex-1">
+            <p class="truncate font-mono text-sm">
+                @if($namespace !== '')<span class="text-gray-400 dark:text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span>
+            </p>
+            <p class="mt-0.5 flex items-center gap-1.5">
+                @if($fullUuid !== null)
+                    <span class="min-w-0 truncate font-mono text-xs text-gray-400 dark:text-gray-400" title="{{ $fullUuid }}">#{{ $fullUuid }}</span>
+                @endif
+                @if($isDelayed)
                 @php
                     $delaySeconds = max(0, $availableAt - $queuedAt);
                     $delayHuman = $delaySeconds > 0
@@ -115,6 +132,7 @@
                 @include('queue-insights::partials.retry-chip', ['attempts' => $attempts, 'context' => 'pickup'])
             @endif
         </p>
+        </div>
     </div>
     <div class="col-span-3 min-w-0">
         <p class="truncate text-sm text-gray-500 dark:text-gray-300">{{ $row['connection'] ?? '—' }}</p>
