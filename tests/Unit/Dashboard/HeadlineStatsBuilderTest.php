@@ -57,6 +57,14 @@ it('build returns null max_wait_ms when no queue carries a numeric percentile', 
     expect($stats['max_wait_ms'])->toBeNull();
 });
 
+it('build leaves redis_memory_bytes null when the opt-in flag is off', function (): void {
+    config()->set('queue-insights.dashboard.redis_memory.enabled', false);
+
+    $stats = makeHeadlineStatsBuilder()->build([], [], []);
+
+    expect($stats['redis_memory_bytes'])->toBeNull();
+});
+
 it('build picks max p95_ms across class rows for max_runtime_ms', function (): void {
     $classes = [
         ['class' => 'A', 'p95_ms' => 1200],
