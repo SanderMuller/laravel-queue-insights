@@ -163,8 +163,13 @@ it('BatchItemMeta::loadCompleted bulk-fetches stream entries via a single Lua EV
     // pipelined N XRANGEs and silently fanned out via
     // EagerCommandCollector — proven cluster-safe here.
     $streamKey = KeyPrefix::make('completed');
-    $id1 = $redis->command('xadd', [$streamKey, '*', 'class', 'App\\Jobs\\Foo', 'attempts', '1']);
-    $id2 = $redis->command('xadd', [$streamKey, '*', 'class', 'App\\Jobs\\Bar', 'attempts', '2']);
+    // phpredis cluster requires field/value pairs as an associative array (3rd
+    // arg) and Predis cluster's XADD positional arity differs from non-cluster.
+    // Route through Lua so a single seed path works on both — same pattern
+    // production uses (RecordJobProcessed::xaddApprox).
+    $xaddScript = "return redis.call('XADD', KEYS[1], '*', unpack(ARGV))";
+    $id1 = RedisEval::exec($redis, $xaddScript, 1, $streamKey, 'class', 'App\\Jobs\\Foo', 'attempts', '1');
+    $id2 = RedisEval::exec($redis, $xaddScript, 1, $streamKey, 'class', 'App\\Jobs\\Bar', 'attempts', '2');
 
     expect($id1)->toBeString()->not->toBeEmpty()
         ->and($id2)->toBeString()->not->toBeEmpty();
