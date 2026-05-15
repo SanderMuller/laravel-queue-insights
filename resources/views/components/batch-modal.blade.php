@@ -187,14 +187,11 @@
                                         default => 'Pending job',
                                     };
 
-                                    // Forward-chain summary decoded into the shape the
-                                    // chain-chip-forward partial expects. Skipped (`null`)
-                                    // for non-completed statuses since the chain summary is
-                                    // only written to the stream row at completion.
-                                    $rawChain = is_string($item['chain'] ?? null) ? $item['chain'] : '';
-                                    $chain = $rawChain !== ''
-                                        ? \SanderMuller\QueueInsights\Support\RowEnricher::decodeChain($rawChain)
-                                        : null;
+                                    // Forward-chain summary — already decoded into the
+                                    // chain-chip-forward shape by BatchItemMeta at hydrate
+                                    // time, so a 5000-item poll doesn't re-decode 5000
+                                    // JSON blobs every 10s.
+                                    $chain = is_array($item['chain'] ?? null) ? $item['chain'] : null;
 
                                     [$icon, $iconCls] = match ($status) {
                                         'completed' => ['✓', 'text-emerald-600 dark:text-emerald-400'],

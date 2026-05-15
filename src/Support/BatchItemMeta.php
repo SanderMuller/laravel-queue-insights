@@ -23,13 +23,19 @@ use Throwable;
 final class BatchItemMeta
 {
     /**
-     * Pipelined XRANGE across the aggregate `qi:completed` stream — one
-     * Redis round-trip total for the whole batch. Returns
-     * `streamId => meta`, with missing / aged-out entries simply absent so
-     * callers can `?? null` per uuid.
+     * Bulk-fetch completed-stream entries via a single EVAL — one round-trip
+     * total regardless of batch size or Redis topology. The previous
+     * implementation pipelined N XRANGE calls, which silently fanned out
+     * to N synchronous round-trips on cluster connections (RedisPipeline
+     * downgrades to `EagerCommandCollector` for cluster — see its docblock).
+     *
+     * Lua returns a flat `{field, value, field, value, ...}` list per
+     * stream id (predis + phpredis both deliver it as a numerically
+     * indexed list), which `flatListToMap()` folds back into an assoc
+     * field map for `completedFromFields()`.
      *
      * @param  array<string, string>  $streamIdsByUuid  uuid => streamId
-     * @return array<string, array{class: ?string, attempts: int, chain: ?string, parent_uuid: ?string, processed_at: ?int}>
+     * @return array<string, array{class: ?string, attempts: int, chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>}, parent_uuid: ?string, processed_at: ?int}>
      */
     public static function loadCompleted(Connection $redis, array $streamIdsByUuid): array
     {
@@ -38,38 +44,53 @@ final class BatchItemMeta
         }
 
         $streamIds = array_values(array_unique($streamIdsByUuid));
-        $streamKey = KeyPrefix::make('completed');
 
-        $results = RedisPipeline::run($redis, static function (mixed $client) use ($streamKey, $streamIds): void {
-            foreach ($streamIds as $id) {
-                // XRANGE with the same id for start + end returns 0 or 1
-                // entries — the targeted lookup. Cluster-safe via the
-                // EagerCommandCollector path (single key per call).
-                $client->xrange($streamKey, $id, $id);
-            }
-        });
+        $reply = RedisEval::exec(
+            $redis,
+            LuaScripts::batchFetchCompletedMeta(),
+            1,
+            KeyPrefix::make('completed'),
+            ...$streamIds,
+        );
+
+        if (! is_array($reply)) {
+            return [];
+        }
 
         $out = [];
         foreach ($streamIds as $idx => $id) {
-            $entries = $results[$idx] ?? null;
-            if (! is_array($entries) || $entries === []) {
+            $flat = $reply[$idx] ?? null;
+            if (! is_array($flat) || $flat === []) {
                 continue;
             }
 
-            $first = $entries[array_key_first($entries)] ?? null;
-            if (! is_array($first)) {
+            $out[$id] = self::completedFromFields(self::flatListToMap($flat));
+        }
+
+        return $out;
+    }
+
+    /**
+     * Fold a Redis Lua flat `{field, value, field, value, ...}` list into a
+     * `{field => value}` map. Non-string keys are silently dropped — Lua
+     * tables coming back as flat lists are always string-keyed in Redis's
+     * reply protocol, but the guard catches a misbehaving custom driver
+     * returning mixed-type entries.
+     *
+     * @param  array<int|string, mixed>  $flat
+     * @return array<string, mixed>
+     */
+    private static function flatListToMap(array $flat): array
+    {
+        $values = array_values($flat);
+        $out = [];
+        $count = count($values);
+        for ($i = 0; $i + 1 < $count; $i += 2) {
+            $key = $values[$i];
+            if (! is_string($key)) {
                 continue;
             }
-
-            // Normalize across both XRANGE reply shapes:
-            //   phpredis  → {id => {field => value}}        first = field map directly
-            //   predis    → [[id, [field, value, ...]]]     first = [id, field_map]
-            // Without this, predis hosts silently lose every enriched field.
-            $fields = (array_is_list($first) && count($first) === 2 && is_array($first[1]))
-                ? $first[1]
-                : $first;
-
-            $out[$id] = self::completedFromFields($fields);
+            $out[$key] = $values[$i + 1];
         }
 
         return $out;
@@ -117,7 +138,7 @@ final class BatchItemMeta
 
     /**
      * @param  array<int|string, mixed>  $fields  stream-entry field map
-     * @return array{class: ?string, attempts: int, chain: ?string, parent_uuid: ?string, processed_at: ?int}
+     * @return array{class: ?string, attempts: int, chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>}, parent_uuid: ?string, processed_at: ?int}
      */
     private static function completedFromFields(array $fields): array
     {
@@ -136,12 +157,17 @@ final class BatchItemMeta
             $processedAt = (int) $processedAtRaw;
         }
 
+        // Decode the chain summary at hydrate time so the batch-modal
+        // template doesn't `json_decode()` per row on every 10s poll for
+        // a large open batch. Result is the same typed shape the template
+        // already consumed via `RowEnricher::decodeChain`.
+        $chainRaw = isset($fields['chain']) && is_string($fields['chain']) ? $fields['chain'] : '';
+        $chain = $chainRaw !== '' ? RowEnricher::decodeChain($chainRaw) : null;
+
         return [
             'class' => isset($fields['class']) && is_string($fields['class']) ? $fields['class'] : null,
             'attempts' => isset($fields['attempts']) && is_numeric($fields['attempts']) ? (int) $fields['attempts'] : 0,
-            'chain' => isset($fields['chain']) && is_string($fields['chain']) && $fields['chain'] !== ''
-                ? $fields['chain']
-                : null,
+            'chain' => $chain,
             'parent_uuid' => isset($fields['parent_uuid']) && is_string($fields['parent_uuid']) && $fields['parent_uuid'] !== ''
                 ? $fields['parent_uuid']
                 : null,

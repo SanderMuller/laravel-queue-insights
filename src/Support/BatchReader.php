@@ -167,7 +167,7 @@ final class BatchReader
      *   stream_id: ?string,
      *   failed_id: ?int,
      *   attempts: int,
-     *   chain: ?string,
+     *   chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>},
      *   parent_uuid: ?string,
      * }>
      */
@@ -236,8 +236,8 @@ final class BatchReader
     }
 
     /**
-     * @param  array{class: ?string, attempts: int, chain: ?string, parent_uuid: ?string, processed_at: ?int}|null  $meta
-     * @return array{uuid: string, status: 'completed', class: ?string, timestamp: ?int, stream_id: string, failed_id: null, attempts: int, chain: ?string, parent_uuid: ?string}
+     * @param  array{class: ?string, attempts: int, chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>}, parent_uuid: ?string, processed_at: ?int}|null  $meta
+     * @return array{uuid: string, status: 'completed', class: ?string, timestamp: ?int, stream_id: string, failed_id: null, attempts: int, chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>}, parent_uuid: ?string}
      */
     private static function completedItemRow(string $uuid, string $streamId, ?array $meta): array
     {
@@ -256,7 +256,7 @@ final class BatchReader
 
     /**
      * @param  array{class: ?string, failed_at: ?int, attempts: int, parent_uuid: ?string}|null  $meta
-     * @return array{uuid: string, status: 'failed', class: ?string, timestamp: ?int, stream_id: null, failed_id: int, attempts: int, chain: ?string, parent_uuid: ?string}
+     * @return array{uuid: string, status: 'failed', class: ?string, timestamp: ?int, stream_id: null, failed_id: int, attempts: int, chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>}, parent_uuid: ?string}
      */
     private static function failedItemRow(string $uuid, int $failedId, ?array $meta): array
     {
@@ -285,7 +285,7 @@ final class BatchReader
      * at queue time. `attempts` lands in the hash via `markInFlight` only,
      * so a still-pending job reports attempts=0.
      *
-     * @return array{uuid: string, status: 'in_flight'|'pending', class: ?string, timestamp: ?int, stream_id: null, failed_id: null, attempts: int, chain: ?string, parent_uuid: ?string}
+     * @return array{uuid: string, status: 'in_flight'|'pending', class: ?string, timestamp: ?int, stream_id: null, failed_id: null, attempts: int, chain: ?array{next_class: string, remaining: int, chain_connection: ?string, chain_queue: ?string, jobs: list<array<string, mixed>>}, parent_uuid: ?string}
      */
     private static function pendingOrInFlightItemRow(Connection $redis, string $uuid): array
     {

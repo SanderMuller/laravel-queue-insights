@@ -26,6 +26,8 @@ final class LuaScripts
 
     private static ?string $rewriteScheduleSnapshot = null;
 
+    private static ?string $batchFetchCompletedMeta = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
@@ -74,6 +76,11 @@ final class LuaScripts
     public static function rewriteScheduleSnapshot(): string
     {
         return self::$rewriteScheduleSnapshot ??= self::load(__DIR__ . '/Lua/RewriteScheduleSnapshot.lua');
+    }
+
+    public static function batchFetchCompletedMeta(): string
+    {
+        return self::$batchFetchCompletedMeta ??= self::load(__DIR__ . '/Lua/BatchFetchCompletedMeta.lua');
     }
 
     private static function load(string $path): string
