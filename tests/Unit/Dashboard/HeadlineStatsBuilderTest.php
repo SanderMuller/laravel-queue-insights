@@ -1,6 +1,12 @@
 <?php declare(strict_types=1);
 
 use SanderMuller\QueueInsights\Dashboard\HeadlineStatsBuilder;
+use SanderMuller\QueueInsights\Support\RedisMemoryUsage;
+
+function makeHeadlineStatsBuilder(): HeadlineStatsBuilder
+{
+    return new HeadlineStatsBuilder(new RedisMemoryUsage());
+}
 
 it('build derives jobs/min and past-hour totals from the latest throughput bucket', function (): void {
     $throughput = [
@@ -9,7 +15,7 @@ it('build derives jobs/min and past-hour totals from the latest throughput bucke
         ['timestamp' => 3, 'processed' => 360, 'failed' => 7],
     ];
 
-    $stats = (new HeadlineStatsBuilder())->build($throughput, [], []);
+    $stats = makeHeadlineStatsBuilder()->build($throughput, [], []);
 
     expect($stats['jobs_per_minute'])->toBe(6) // round(360 / 60)
         ->and($stats['jobs_past_hour'])->toBe(360)
@@ -18,7 +24,7 @@ it('build derives jobs/min and past-hour totals from the latest throughput bucke
 });
 
 it('build returns zeros across the throughput stats when the series is empty', function (): void {
-    $stats = (new HeadlineStatsBuilder())->build([], [], []);
+    $stats = makeHeadlineStatsBuilder()->build([], [], []);
 
     expect($stats['jobs_per_minute'])->toBe(0)
         ->and($stats['jobs_past_hour'])->toBe(0)
@@ -35,7 +41,7 @@ it('build picks max wait_p95_ms across queues and ignores non-numeric entries', 
         ['queue' => 'e'],
     ];
 
-    $stats = (new HeadlineStatsBuilder())->build([], $queues, []);
+    $stats = makeHeadlineStatsBuilder()->build([], $queues, []);
 
     expect($stats['max_wait_ms'])->toBe(540);
 });
@@ -46,7 +52,7 @@ it('build returns null max_wait_ms when no queue carries a numeric percentile', 
         ['queue' => 'b'],
     ];
 
-    $stats = (new HeadlineStatsBuilder())->build([], $queues, []);
+    $stats = makeHeadlineStatsBuilder()->build([], $queues, []);
 
     expect($stats['max_wait_ms'])->toBeNull();
 });
@@ -58,7 +64,7 @@ it('build picks max p95_ms across class rows for max_runtime_ms', function (): v
         ['class' => 'C', 'p95_ms' => null],
     ];
 
-    $stats = (new HeadlineStatsBuilder())->build([], [], $classes);
+    $stats = makeHeadlineStatsBuilder()->build([], [], $classes);
 
     expect($stats['max_runtime_ms'])->toBe(8400);
 });

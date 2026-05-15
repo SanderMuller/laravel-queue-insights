@@ -354,6 +354,21 @@ return [
         'clock' => [
             'enabled' => env('QUEUE_INSIGHTS_CLOCK_TOGGLE', true),
         ],
+        // Opt-in "Redis memory" headline tile. When enabled, the dashboard
+        // sums `MEMORY USAGE` across every key under `key_prefix` and renders
+        // the total as a 7th KPI in the persistent hero. Result is cached for
+        // `redis_memory.cache_ttl` seconds so the SCAN + per-key MEMORY USAGE
+        // cost is paid at most once per minute, not on every 10s poll.
+        //
+        // Off by default — the SCAN cost scales with this package's keyspace
+        // size and the per-key MEMORY USAGE call is O(N) of the value's
+        // sample. Hosts with very large pending/completed retention should
+        // measure before enabling. Cluster topologies iterate every master,
+        // multiplying the cost by node count.
+        'redis_memory' => [
+            'enabled' => env('QUEUE_INSIGHTS_REDIS_MEMORY_TILE', false),
+            'cache_ttl' => 60,
+        ],
     ],
 
     /*

@@ -7,6 +7,7 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisClientPrefix;
 use SanderMuller\QueueInsights\Support\RedisEval;
 
 /**
@@ -204,7 +205,7 @@ final class QueueInsightsMigrateAliasesCommand extends Command
         // KEYS returns the underlying full key including that prefix.
         // Subsequent ZRANGE / ZADD / DEL calls re-apply the prefix, so we
         // strip it here before handing keys to the migration loop.
-        $clientPrefix = $this->clientPrefix($redis);
+        $clientPrefix = RedisClientPrefix::resolve($redis);
 
         $out = [];
         foreach ($reply as $key) {
@@ -224,24 +225,6 @@ final class QueueInsightsMigrateAliasesCommand extends Command
         }
 
         return $out;
-    }
-
-    /**
-     * Resolve the Redis-client prefix (`database.redis.options.prefix`,
-     * default `laravel-database-`). Laravel's Redis manager applies this
-     * automatically on writes; we need to strip it after `KEYS` because
-     * the reply carries the underlying full key and a subsequent ZRANGE
-     * would re-apply the prefix, missing the key.
-     *
-     * Reads from config rather than introspecting the client so the lookup
-     * is driver-agnostic and statically typed.
-     */
-    private function clientPrefix(RedisConnection $redis): string
-    {
-        $name = $redis->getName() ?? Config::string('redis_connection', 'default');
-        $prefix = config("database.redis.{$name}.options.prefix", config('database.redis.options.prefix'));
-
-        return is_string($prefix) ? $prefix : '';
     }
 
     /**
