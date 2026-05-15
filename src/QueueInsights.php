@@ -304,7 +304,14 @@ final class QueueInsights
      * the requested uuid sits outside the capped 50-row aggregate windows.
      * Returns the same row shape as `allPendingJobs()`/`allInFlightJobs()`.
      *
+     * Marked `@phpstan-impure` because callers (notably the auto-follow path
+     * in `DashboardData::followDrainedPendingModal`) deliberately probe the
+     * pending hash twice in one render to catch a retry race — the second
+     * read can return a different value than the first.
+     *
      * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}|null
+     *
+     * @phpstan-impure
      */
     public function findPendingByUuid(string $uuid): ?array
     {

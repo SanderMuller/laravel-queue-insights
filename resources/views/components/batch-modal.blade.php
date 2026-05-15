@@ -161,7 +161,6 @@
                                     $status = $item['status'];
                                     $klass = $item['class'] ?? null;
                                     $klassLabel = is_string($klass) && $klass !== '' ? $klass : (string) $item['uuid'];
-                                    $shortUuid = substr((string) $item['uuid'], -8);
                                     $ts = $item['timestamp'] ?? null;
 
                                     [$icon, $iconCls] = match ($status) {
@@ -208,7 +207,7 @@
                                             @endif
                                         </p>
                                         <div class="mt-1 flex flex-wrap items-center gap-x-2 text-gray-400 dark:text-gray-400">
-                                            <span class="font-mono">…{{ $shortUuid }}</span>
+                                            <span class="break-all font-mono">{{ $item['uuid'] }}</span>
                                             @if(is_int($ts))
                                                 <x-queue-insights::qi-time :at="$ts"/>
                                             @endif

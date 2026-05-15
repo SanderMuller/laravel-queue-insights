@@ -72,6 +72,8 @@
 
         @include('queue-insights::partials.snapshot-watchdog-banner')
 
+        @include('queue-insights::partials.horizon-not-running-banner')
+
         @include('queue-insights::partials.alerts-strip')
 
         {{-- Inline scope strip — visible across every tab whenever the global
@@ -125,6 +127,12 @@
         <x-queue-insights::batch-modal :batch="$selectedBatch"/>
     @endif
 
+    {{-- Each item modal falls back to <stale-modal> when the selection id is
+        set but the backing record resolved to null (stream entry trimmed,
+        failed_jobs row pruned, pending tracking disabled). Without the
+        fallback a batch-item click on an aged-out row reads as a dead no-op
+        — the real modal's @if gate stays false and nothing mounts. --}}
+
     @if($selectedPayload !== null)
         <x-queue-insights::details-modal
             :payload="$selectedPayload"
@@ -132,13 +140,19 @@
             :capture-mode="$captureMode"
             :expanded-batch-id="$expandedBatchId"
             :chain-back-top="$chainBackTop"/>
+    @elseif($selectedPayloadId !== null)
+        <x-queue-insights::stale-modal kind="completed"/>
     @endif
 
     @if($selectedFailed !== null)
         <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
+    @elseif($selectedFailedId !== null)
+        <x-queue-insights::stale-modal kind="failed"/>
     @endif
 
     @if($pendingEnabled && $selectedPendingUuid !== null)
         <x-queue-insights::pending-modal :pending="$selectedPending" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
+    @elseif($selectedPendingUuid !== null)
+        <x-queue-insights::stale-modal kind="pending"/>
     @endif
 </div>

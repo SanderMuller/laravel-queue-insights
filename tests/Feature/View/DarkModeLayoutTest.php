@@ -34,7 +34,10 @@ it('omits the FOIT head script and color-scheme meta when theme.enabled is false
 
     expect($html)
         ->not->toContain('color-scheme')
-        ->not->toContain('localStorage.getItem(KEY)')
+        // Theme-specific localStorage key. The clock-toggle FOIT script
+        // (a sibling, independently gated) also reads localStorage, so the
+        // generic `localStorage.getItem(KEY)` check isn't theme-specific.
+        ->not->toContain("var KEY = 'qi-theme'")
         ->not->toContain("'qi-theme-applied'")
         ->not->toContain("'qi-theme-change'")
         // Body should NOT carry the dark surface classes when the flag is off.

@@ -187,9 +187,76 @@ it('clicking a batch row mounts the batch modal with identity + items list', fun
         ->assertSeeHtml('aria-labelledby="qi-batch-modal-title"')
         // Identity hero shows the seeded batch name.
         ->assertSee('ImportCustomers')
-        // Items list shows both seeded uuid suffixes.
-        ->assertSee('…uuid-aaa')
-        ->assertSee('…uuid-bbb');
+        // Items list shows each seeded uuid in full (no truncation — the
+        // row has the width for it).
+        ->assertSee('uuid-aaa')
+        ->assertSee('uuid-bbb');
+});
+
+it('falls back to the stale modal when openPayload targets a trimmed completed entry', function (): void {
+    // A batch-item click routes to openPayload(streamId). When the global
+    // completed stream has trimmed that entry past the read window the
+    // resolved payload is null — without the fallback the click reads as a
+    // dead no-op. The dashboard mounts <stale-modal> instead.
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', '1700000000-0')
+        ->assertSeeHtml('aria-labelledby="qi-stale-modal-title"')
+        ->assertSee('Completed job no longer available')
+        // A mounted stale modal still inerts the dashboard behind it.
+        ->assertSeeHtml('x-bind:inert="true"')
+        ->call('closePayload')
+        ->assertDontSeeHtml('aria-labelledby="qi-stale-modal-title"')
+        ->assertSeeHtml('x-bind:inert="false"');
+});
+
+it('falls back to the stale modal when openFailed targets a pruned failed_jobs row', function (): void {
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', 999999)
+        ->assertSeeHtml('aria-labelledby="qi-stale-modal-title"')
+        ->assertSee('Failed job no longer available')
+        ->call('closeFailed')
+        ->assertDontSeeHtml('aria-labelledby="qi-stale-modal-title"');
+});
+
+it('stale modal binds escape on the dialog with stopPropagation so it does not also close the batch modal underneath', function (): void {
+    // Codex review #2: the stale modal previously used
+    // `x-on:keydown.escape.window`. The batch modal binds its own
+    // window-level escape handler, so a single Escape keypress would
+    // fire both listeners and tear down BOTH modals in lockstep —
+    // defeating the "close item modal, return to batch view" stacking
+    // pattern. The fixed binding is on the dialog element (NOT window)
+    // and stops propagation so the bubbled keydown never reaches the
+    // batch modal's window handler.
+    $html = Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPayload', 'stale-stream-id')
+        ->html();
+
+    expect($html)
+        ->toContain('$event.stopPropagation()')
+        // The naive window-level binding must NOT be regenerated. Pin
+        // both the `.window` modifier AND the bare close-action call
+        // so a future refactor can't silently regress to either shape.
+        ->not->toContain('x-on:keydown.escape.window="$wire.closePayload')
+        ->not->toContain('x-on:keydown.escape="$wire.closePayload');
+});
+
+it('a batch item whose completed entry was trimmed opens the stale modal over the batch modal', function (): void {
+    seedBatchRow('batch-stale-item');
+    R::raw('zadd', 'qmtest:batches:index', Date::now()->getTimestamp(), 'batch-stale-item');
+    R::raw('rpush', 'qmtest:batch:batch-stale-item:uuids', 'trimmed-uuid');
+    // The uuid-completed index survives (7-day TTL) but the completed-stream
+    // entry it points at has already been trimmed past the read window.
+    R::raw('set', 'qmtest:uuid-completed:trimmed-uuid', '1700000000-5');
+
+    Livewire::test(QueueInsightsDashboard::class, ['expandedBatchId' => 'batch-stale-item'])
+        // The item renders as completed → routes to openPayload(streamId).
+        ->assertSeeHtml("openPayload('1700000000-5')")
+        ->call('openPayload', '1700000000-5')
+        ->assertSeeHtml('aria-labelledby="qi-stale-modal-title"')
+        ->assertSee('Completed job no longer available')
+        // The batch modal stays mounted underneath — closing the stale modal
+        // returns the operator to the batch view they came from.
+        ->assertSeeHtml('aria-labelledby="qi-batch-modal-title"');
 });
 
 it('does not freeze the dashboard inert when expandedBatchId is set but batches.enabled is false', function (): void {

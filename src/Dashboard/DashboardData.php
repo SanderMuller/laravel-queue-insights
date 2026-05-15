@@ -16,6 +16,7 @@ use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
+use SanderMuller\QueueInsights\Support\HorizonNotRunning;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
@@ -73,6 +74,7 @@ final readonly class DashboardData
         'connectionNav',
         'activeIssues',
         'snapshotCommandDead',
+        'horizonNotRunning',
         'queues',
         'totalDepth',
         'totalInFlight',
@@ -111,7 +113,9 @@ final readonly class DashboardData
         'selectedQueueConnection',
         'selectedQueueName',
         'selectedPayload',
+        'selectedPayloadId',
         'selectedFailed',
+        'selectedFailedId',
         'payloadTab',
         'throughput',
         'stats',
@@ -144,6 +148,7 @@ final readonly class DashboardData
         private QueueRowsBuilder $queueRowsBuilder,
         private ActiveIssuesProvider $activeIssues,
         private SnapshotWatchdog $watchdog,
+        private HorizonNotRunning $horizonNotRunning,
         private ConnectionNavBuilder $connectionNav,
     ) {}
 
@@ -159,6 +164,14 @@ final readonly class DashboardData
 
         $scope = $component->scopeConnection;
 
+        // Job drained while its pending/in-flight modal stayed open — follow
+        // the uuid to its terminal surface so the modal swaps in place to the
+        // completed / failed view instead of degrading to the "no longer
+        // pending" empty state. Runs before the selection resolvers below so
+        // the re-pointed `selectedPayloadId` / `selectedFailedId` mount in
+        // this same render pass.
+        $this->followDrainedPendingModal($component);
+
         $queues = $this->queueRowsBuilder->build($component->expandedQueueKey, $scope);
         $classes = $this->classRowsBuilder->build($scope);
 
@@ -170,6 +183,23 @@ final readonly class DashboardData
         $throughput = $this->svc->hourlyThroughput(24, $scope);
 
         $selectedPayload = $this->modals->selectedPayload($component->selectedPayloadId, $recentCompleted);
+
+        // Class-filter bypass for `selectedPayloadId`. The primary read
+        // above is class-filtered to drive the Completed table, but the
+        // selection id can be set independently of the active class filter
+        // — `followDrainedPendingModal` can re-point a drained pending
+        // modal to any uuid's completed surface, and a future deep link
+        // could do the same. Without this fallback, the operator sees the
+        // stale modal's "no longer available" empty state even though the
+        // entry is alive and only hidden by an unrelated class filter.
+        if ($selectedPayload === null
+            && $component->selectedPayloadId !== null
+            && $component->selectedClass !== null
+        ) {
+            $unfilteredCompleted = $this->svc->recentCompleted(self::RECENT_FETCH_LIMIT, null, $completedReadConnection);
+            $selectedPayload = $this->modals->selectedPayload($component->selectedPayloadId, $unfilteredCompleted);
+        }
+
         $selectedFailed = $this->resolveSelectedFailed($component, $recentFailed);
 
         // Decorate the selected rows with the per-job wait sample. Modals
@@ -212,6 +242,7 @@ final readonly class DashboardData
 
         $filterOptions = $this->filterOptionsBuilder->build($classes, $scope);
 
+        $batchesEnabled = Config::bool('batches.enabled', true);
         $batches = BatchReader::sectionRows($this->svc, $component->expandedBatchId, $scope);
 
         $pendingEnabled = Config::bool('pending.enabled', true);
@@ -246,22 +277,20 @@ final readonly class DashboardData
 
         $selectedBatch = $this->modals->selectedBatch($component->expandedBatchId, $batches, $scope);
 
-        // Drive `inert` from the same booleans that actually mount the
-        // modals — codex review #1. Routing it off raw selection ids
-        // froze the dashboard when an id was set but the modal never
-        // mounted (config flip, aged-out row, ?batch= URL with batches
-        // disabled).
-        // All four conditions key off the resolved selection objects, NOT
-        // the component's raw id state. A bookmarked `?batch=` URL with the
-        // batch already aged out (or batches disabled), or a stale
-        // pendingUuid pointing at a job that's already drained, leaves the
-        // raw id set but `selectedPending`/`selectedBatch` null. If we
-        // gated `inert` on the raw ids the dashboard would freeze with no
-        // modal mounted (codex review).
-        $hasOpenModal = $selectedPayload !== null
-            || $selectedFailed !== null
-            || $selectedPending !== null
-            || $selectedBatch !== null;
+        // Drive `inert` from the exact `@if` conditions that mount each
+        // modal in dashboard.blade.php — codex review #1. Every selection id
+        // that's set now mounts *something*: the real modal when the record
+        // resolves, or `<stale-modal>` when it aged out (trimmed stream
+        // entry, pruned failed_jobs row, pending tracking disabled). So the
+        // completed / failed / pending terms key off the raw id — not the
+        // resolved object, which would leave `inert` false while a stale
+        // modal is visibly mounted. The batch term keeps its `batchesEnabled`
+        // guard: a `?batch=` URL with batches disabled mounts no modal at
+        // all, so the dashboard must stay interactive.
+        $hasOpenModal = $component->selectedPayloadId !== null
+            || $component->selectedFailedId !== null
+            || $component->selectedPendingUuid !== null
+            || ($batchesEnabled && $component->expandedBatchId !== '');
 
         // Server-side pagination — see paginate() for the per-axis logic.
         $completedAll = $this->buildCompletedFilter($component)->apply(RowEnricher::completed($recentCompleted));
@@ -301,6 +330,7 @@ final readonly class DashboardData
             'connectionNav' => $this->connectionNav->build($scope),
             'activeIssues' => $this->activeIssues->get($scope),
             'snapshotCommandDead' => $this->watchdog->isSnapshotCommandDead($scope),
+            'horizonNotRunning' => $this->horizonNotRunning->isNotRunning(),
             'queues' => $queues,
             'totalDepth' => $aggregates['total_depth'],
             'totalInFlight' => $aggregates['total_inflight'],
@@ -341,7 +371,12 @@ final readonly class DashboardData
             'selectedQueueConnection' => QueueScopeKey::decompose($component->selectedQueue)['connection'] ?? '',
             'selectedQueueName' => QueueScopeKey::decompose($component->selectedQueue)['queue'] ?? '',
             'selectedPayload' => $selectedPayload,
+            // Raw selection ids surfaced alongside the resolved objects so
+            // dashboard.blade.php can fall back to <stale-modal> when an id
+            // is set but its record aged out (resolved object is null).
+            'selectedPayloadId' => $component->selectedPayloadId,
             'selectedFailed' => $selectedFailed,
+            'selectedFailedId' => $component->selectedFailedId,
             'payloadTab' => $component->payloadTab,
             'throughput' => $throughput,
             'stats' => $this->headlineStatsBuilder->build($throughput, $queues, $classes),
@@ -350,7 +385,7 @@ final readonly class DashboardData
             'canRetry' => $canRetry,
             'bulkRetryCount' => $bulkRetryCount,
             'batches' => $batches,
-            'batchesEnabled' => Config::bool('batches.enabled', true),
+            'batchesEnabled' => $batchesEnabled,
             'expandedBatchId' => $component->expandedBatchId,
             'selectedBatch' => $selectedBatch,
             'selectedPending' => $selectedPending,
@@ -371,6 +406,80 @@ final readonly class DashboardData
             'silencedFailedPaginator' => $silencedFailedPaginator,
             'silencedCompletedPaginator' => $silencedCompletedPaginator,
         ];
+    }
+
+    /**
+     * Swap a drained pending/in-flight modal to its terminal surface.
+     *
+     * When the operator keeps the pending modal open and a worker finishes
+     * the job, `RecordJobProcessed` / `RecordJobFailed` delete the
+     * `qi:pending:{uuid}` hash — the modal would otherwise degrade to the
+     * "no longer pending" empty state on the next poll. Instead, follow the
+     * uuid to whichever surface it landed on (completed stream / failed_jobs
+     * row) and re-point the component's selection so the modal swaps in
+     * place to the completed / failed view.
+     *
+     * No-op while the job is still pending or in-flight (the hash is
+     * present), when chain-lineage is disabled (no uuid index to follow),
+     * and when the uuid has aged out of every retention window — the
+     * existing empty-state fallback stands in those cases.
+     */
+    private function followDrainedPendingModal(QueueInsightsDashboard $component): void
+    {
+        $uuid = $component->selectedPendingUuid;
+
+        if ($uuid === null) {
+            return;
+        }
+
+        // Still pending / in-flight — the hash is intact, leave the modal be.
+        // `findPendingByUuid` is the same per-uuid lookup `ModalResolver`
+        // falls back to, so a job inside or outside the visible window is
+        // treated identically here.
+        if ($this->svc->findPendingByUuid($uuid) !== null) {
+            return;
+        }
+
+        // The `uuid-completed` / `uuid-failed` indexes UuidResolver follows
+        // are only written when chain-lineage is enabled. Skip the Redis
+        // probes entirely when it's off — the modal keeps its empty-state
+        // fallback.
+        if (! Config::bool('chain_lineage.enabled', true)) {
+            return;
+        }
+
+        $target = UuidResolver::resolve($uuid);
+
+        // null  → aged out of every retention window; keep the empty state.
+        // pending → a race re-created the hash between the lookup above and
+        //           the resolve; leave the pending modal selection intact.
+        if ($target === null || $target['type'] === 'pending') {
+            return;
+        }
+
+        // Retry-race guard: `uuid-completed` / `uuid-failed` indexes outlive
+        // the pending hash by their lineage TTL. If an operator retries the
+        // failed row in the gap between the pre-check above and
+        // `UuidResolver::resolve()`, the resolver — which checks the terminal
+        // indexes BEFORE the live pending hash — returns `'completed'` /
+        // `'failed'` even though the uuid has been re-queued and is pending
+        // again. Re-probe the pending hash at decision time so the live
+        // retried job is never yanked to its stale terminal modal.
+        if ($this->svc->findPendingByUuid($uuid) !== null) {
+            return;
+        }
+
+        // Re-point the selection. `selectedPendingUuid` is cleared so the
+        // pending modal unmounts; the completed / failed id drives the
+        // matching modal in this same render pass. The chain back stack is
+        // intentionally untouched — this is an automatic in-place swap of a
+        // drained job, not a user `↰ From` navigation step.
+        $component->selectedPendingUuid = null;
+
+        match ($target['type']) {
+            'completed' => $component->selectedPayloadId = (string) $target['id'],
+            'failed' => $component->selectedFailedId = (int) $target['id'],
+        };
     }
 
     /**

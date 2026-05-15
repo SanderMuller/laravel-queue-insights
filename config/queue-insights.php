@@ -59,6 +59,21 @@ return [
      | `{connection, queue}` pair).
      */
     'horizon' => [
+        /*
+         | Tri-state — controls the config-walk autodiscovery only (static
+         | `snapshots[]` and listener-driven tracking are never gated):
+         |
+         |   false     never autodiscover.
+         |   true      autodiscover ONLY when Horizon's service provider is
+         |             loaded in the running app — i.e. Horizon is actually
+         |             the queue runtime here. On Vapor/SQS, where Horizon is
+         |             configured but not the runtime (the idiomatic setup
+         |             excludes its provider), this skips the supervisor
+         |             queues that would never get a snapshot.
+         |   'force'   autodiscover from `config/horizon.php` regardless of
+         |             whether the provider is loaded. Set
+         |             QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force.
+         */
         'autodiscover' => env('QUEUE_INSIGHTS_HORIZON_AUTODISCOVER', true),
         /*
          | Which `horizon.environments.<env>` block to read. `null` (default)
@@ -327,6 +342,17 @@ return [
         // internal/specs/dashboard-dark-mode.md for rationale.
         'theme' => [
             'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
+        ],
+        // 12-hour / 24-hour clock toggle. When enabled, the dashboard
+        // header renders a tri-state segmented control (12h / auto / 24h)
+        // and a head script applies the chosen preference to every
+        // `<time data-qi-time>` element via `hour12` on `Intl.DateTimeFormat`.
+        // `auto` follows the browser locale (en-US → AM/PM, en-GB → 24h,
+        // and honours the OS 24-hour-toggle on modern browsers). Persisted
+        // client-side via `localStorage['qi-clock']`. Default-on; disable
+        // here if the host wants to force a single clock format.
+        'clock' => [
+            'enabled' => env('QUEUE_INSIGHTS_CLOCK_TOGGLE', true),
         ],
     ],
 

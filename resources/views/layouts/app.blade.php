@@ -1,4 +1,5 @@
 @php($qiThemeEnabled = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.theme.enabled', false))
+@php($qiClockEnabled = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.clock.enabled', true))
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -86,6 +87,51 @@
                 // `dark` class + `data-theme` dataset. Re-apply from
                 // localStorage after each navigation so the theme survives
                 // the connection-scope picker and any other in-app link.
+                window.addEventListener('livewire:navigated', function () {
+                    apply(readPref());
+                });
+            })();
+        </script>
+    @endif
+    @if($qiClockEnabled)
+        {{-- Clock-format init — same single-owner pattern as the theme
+             script above. Owns localStorage['qi-clock'] +
+             `documentElement.dataset.clock`. Toggle dispatches
+             `qi-clock-change`; this script applies the preference and
+             dispatches `qi-clock-applied` for the qi-time hydrator to
+             rebuild its `Intl.DateTimeFormat`. Three values: '12h' (force
+             AM/PM), '24h' (force 24-hour), 'auto' (follow browser locale —
+             en-US → AM/PM, en-GB / OS 24-hour toggle → 24-hour). --}}
+        <script>
+            (function () {
+                var KEY = 'qi-clock';
+                var ALLOWED = { '12h': 1, '24h': 1, 'auto': 1 };
+                var root = document.documentElement;
+
+                function readPref() {
+                    try {
+                        var v = localStorage.getItem(KEY);
+                        return ALLOWED[v] ? v : 'auto';
+                    } catch (e) { return 'auto'; }
+                }
+                function apply(pref) {
+                    root.dataset.clock = pref;
+                    window.dispatchEvent(new CustomEvent('qi-clock-applied', {
+                        detail: { preference: pref },
+                    }));
+                }
+
+                apply(readPref());
+
+                window.addEventListener('qi-clock-change', function (e) {
+                    var pref = (e && e.detail && ALLOWED[e.detail]) ? e.detail : 'auto';
+                    try { localStorage.setItem(KEY, pref); } catch (err) {}
+                    apply(pref);
+                });
+
+                // wire:navigate replaces <html> attributes; re-apply from
+                // localStorage after each navigation so the preference
+                // survives in-app links. Mirrors the theme-init handler.
                 window.addEventListener('livewire:navigated', function () {
                     apply(readPref());
                 });
@@ -309,12 +355,33 @@
          * timezone-agnostic) — only the tooltip is added.
          */
         (function () {
-            var ABS_FMT = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' };
+            var BASE_FMT = { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' };
             var localFormatter, utcFormatter;
-            try {
-                localFormatter = new Intl.DateTimeFormat(undefined, ABS_FMT);
-                utcFormatter = new Intl.DateTimeFormat(undefined, Object.assign({ timeZone: 'UTC' }, ABS_FMT));
-            } catch (e) {
+
+            // Build the pair of formatters honouring the active clock
+            // preference (`documentElement.dataset.clock` — owned by the
+            // clock-init head script). 'auto' (or missing) leaves `hour12`
+            // unset so the locale's default applies; '12h' / '24h' force
+            // the chosen cycle. Rebuilt on `qi-clock-applied` so a toggle
+            // click flows through to every <time> element.
+            function readClockOpts() {
+                var pref = (document.documentElement.dataset.clock || 'auto');
+                var opts = Object.assign({}, BASE_FMT);
+                if (pref === '12h') { opts.hour12 = true; }
+                else if (pref === '24h') { opts.hour12 = false; }
+                return opts;
+            }
+            function buildFormatters() {
+                var opts = readClockOpts();
+                try {
+                    localFormatter = new Intl.DateTimeFormat(undefined, opts);
+                    utcFormatter = new Intl.DateTimeFormat(undefined, Object.assign({ timeZone: 'UTC' }, opts));
+                    return true;
+                } catch (e) {
+                    return false;
+                }
+            }
+            if (! buildFormatters()) {
                 return; // ancient browser — leave server-rendered text alone
             }
 
@@ -448,6 +515,22 @@
             });
             window.addEventListener('scroll', hideTip, true);
 
+            // Clock-preference change → rebuild formatters with the new
+            // `hour12` setting and re-stamp every visible <time> element.
+            // The `_qiTimeHydrated` cache is cleared so hydrateAll re-runs
+            // the absolute-format rewrite for already-hydrated nodes.
+            window.addEventListener('qi-clock-applied', function () {
+                if (! buildFormatters()) return;
+                document.querySelectorAll('time[data-qi-time]').forEach(function (el) {
+                    el._qiTimeHydrated = null;
+                });
+                hydrateAll(document);
+                // Refresh the tooltip in place when one is currently shown.
+                if (tip && tip.hasAttribute('data-shown') && currentTrigger) {
+                    showTip(currentTrigger);
+                }
+            });
+
             function registerLivewireHook() {
                 if (! window.Livewire || ! window.Livewire.hook) return;
                 Livewire.hook('morph.updated', function (payload) {
@@ -510,6 +593,9 @@
                      header-scope stack contents. Toggle only renders when
                      the theme flag is on (Phase 6 flips the default to true). --}}
                 <div class="ml-auto flex items-center gap-2">
+                    @if($qiClockEnabled)
+                        <x-queue-insights::clock-toggle/>
+                    @endif
                     @if($qiThemeEnabled)
                         <x-queue-insights::theme-toggle/>
                     @endif
