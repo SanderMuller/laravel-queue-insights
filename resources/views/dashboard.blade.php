@@ -68,6 +68,25 @@
             @endpush
         @endif
 
+        {{-- Redis memory chip — opt-in (`dashboard.redis_memory.enabled`).
+             Renders only when totalBytes() returns a non-null value, so the
+             chip stays hidden under cluster topologies or when the operator
+             hasn't opted in. Sits below the polling chip in the header so
+             it doesn't compete for hero real estate. Tooltip explains the
+             cache cadence; aria-label gives screen readers the same. --}}
+        @if (($stats['redis_memory_bytes'] ?? null) !== null)
+            @push('header-aux')
+                <span class="inline-flex items-center gap-1 text-[11px] font-medium text-gray-400"
+                      title="Sum of MEMORY USAGE across every queue-insights key on the configured Redis connection. Refreshed at most once per minute."
+                      aria-label="Redis memory used by queue-insights">
+                    <svg class="size-3 text-gray-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                        <path d="M3 5.75A2.75 2.75 0 0 1 5.75 3h8.5A2.75 2.75 0 0 1 17 5.75v2A2.75 2.75 0 0 1 14.25 10.5h-8.5A2.75 2.75 0 0 1 3 7.75v-2Zm0 6.5A2.75 2.75 0 0 1 5.75 9.5h8.5A2.75 2.75 0 0 1 17 12.25v2A2.75 2.75 0 0 1 14.25 17h-8.5A2.75 2.75 0 0 1 3 14.25v-2Zm3 .5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0-6.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/>
+                    </svg>
+                    <span class="tabular-nums">{{ \Illuminate\Support\Number::fileSize($stats['redis_memory_bytes'], maxPrecision: 1) }}</span>
+                </span>
+            @endpush
+        @endif
+
         <x-queue-insights::flash-banner/>
 
         @include('queue-insights::partials.snapshot-watchdog-banner')

@@ -9,20 +9,6 @@
      * Required scope vars:
      *   $throughput, $stats, $totalDepth, $totalInFlight, $fmtMs
      */
-    $fmtBytes = static function (?int $bytes): string {
-        if ($bytes === null) {
-            return '—';
-        }
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-        $i = 0;
-        $value = (float) $bytes;
-        while ($value >= 1024 && $i < count($units) - 1) {
-            $value /= 1024;
-            $i++;
-        }
-
-        return ($i === 0 ? number_format($value) : number_format($value, $value >= 100 ? 0 : 1)) . ' ' . $units[$i];
-    };
 @endphp
 <div class="grid grid-cols-1 gap-4 lg:grid-cols-3">
     <div class="lg:col-span-2">
@@ -53,11 +39,5 @@
             <dt class="truncate text-sm font-medium text-gray-500 dark:text-gray-300">p95 wait</dt>
             <dd class="mt-1 text-xl font-semibold tracking-tight tabular-nums {{ $stats['max_wait_ms'] !== null && $stats['max_wait_ms'] > 5_000 ? 'text-amber-700 dark:text-amber-300' : 'text-gray-900 dark:text-gray-100' }}">{{ $fmtMs($stats['max_wait_ms']) }}</dd>
         </div>
-        @if (($stats['redis_memory_bytes'] ?? null) !== null)
-            <div>
-                <dt class="truncate text-sm font-medium text-gray-500 dark:text-gray-300" title="Sum of MEMORY USAGE across every queue-insights key. Refreshed at most once per minute.">Redis memory</dt>
-                <dd class="mt-1 text-xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">{{ $fmtBytes($stats['redis_memory_bytes']) }}</dd>
-            </div>
-        @endif
     </dl>
 </div>

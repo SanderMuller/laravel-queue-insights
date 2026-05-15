@@ -648,22 +648,25 @@
                      in `ml-auto` so they hug the right side regardless of
                      header-scope stack contents. Toggle only renders when
                      the theme flag is on (Phase 6 flips the default to true). --}}
-                <div class="ml-auto flex items-center gap-2">
-                    @if($qiClockEnabled)
-                        <x-queue-insights::clock-toggle/>
-                    @endif
-                    @if($qiThemeEnabled)
-                        <x-queue-insights::theme-toggle/>
-                    @endif
-                    <div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
-                        <span class="relative flex size-2">
-                            @if($qiPolling)
-                                <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                            @endif
-                            <span class="relative inline-flex size-2 rounded-full {{ $qiPolling ? 'bg-emerald-400' : 'bg-gray-500' }}"></span>
-                        </span>
-                        <span>{{ $qiPolling ? 'Active · polling 10s' : 'Static · polling off' }}</span>
+                <div class="ml-auto flex flex-col items-end gap-1">
+                    <div class="flex items-center gap-2">
+                        @if($qiClockEnabled)
+                            <x-queue-insights::clock-toggle/>
+                        @endif
+                        @if($qiThemeEnabled)
+                            <x-queue-insights::theme-toggle/>
+                        @endif
+                        <div class="flex items-center gap-2 rounded-full bg-white/5 px-3 py-1 text-xs font-medium text-gray-300 ring-1 ring-inset ring-white/10">
+                            <span class="relative flex size-2">
+                                @if($qiPolling)
+                                    <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                                @endif
+                                <span class="relative inline-flex size-2 rounded-full {{ $qiPolling ? 'bg-emerald-400' : 'bg-gray-500' }}"></span>
+                            </span>
+                            <span>{{ $qiPolling ? 'Active · polling 10s' : 'Static · polling off' }}</span>
+                        </div>
                     </div>
+                    @stack('header-aux')
                 </div>
             </div>
         </header>
