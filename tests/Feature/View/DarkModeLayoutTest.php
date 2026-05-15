@@ -53,10 +53,11 @@ it('emits tailwind.config darkMode + safelist unconditionally', function (): voi
     config()->set('queue-insights.dashboard.theme.enabled', false);
     expect(renderQiLayout())
         ->toContain("darkMode: 'class'")
+        // Horizon-style palette: keys blue, strings amber, numbers / null /
+        // booleans purple. Safelist drops the legacy green + orange entries.
         ->toContain("'dark:text-blue-300'")
-        ->toContain("'dark:text-green-300'")
-        ->toContain("'dark:text-purple-300'")
-        ->toContain("'dark:text-orange-300'");
+        ->toContain("'dark:text-amber-300'")
+        ->toContain("'dark:text-purple-300'");
 
     config()->set('queue-insights.dashboard.theme.enabled', true);
     expect(renderQiLayout())
@@ -72,9 +73,8 @@ it('emits dual-class JSON colorizer spans unconditionally', function (): void {
 
     expect($html)
         ->toContain('text-blue-700 dark:text-blue-300')
-        ->toContain('text-green-700 dark:text-green-300')
-        ->toContain('text-purple-700 dark:text-purple-300')
-        ->toContain('text-orange-700 dark:text-orange-300');
+        ->toContain('text-amber-700 dark:text-amber-300')
+        ->toContain('text-purple-700 dark:text-purple-300');
 });
 
 it('emits html.dark CSS overrides for the inline style block unconditionally', function (): void {

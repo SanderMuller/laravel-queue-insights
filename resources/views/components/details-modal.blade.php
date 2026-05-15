@@ -26,9 +26,16 @@
         ? $captureMode
         : (\SanderMuller\QueueInsights\Enums\CaptureMode::tryFrom(is_string($captureMode) ? $captureMode : 'off') ?? \SanderMuller\QueueInsights\Enums\CaptureMode::Off);
     $sectionBKeys = ['payload_displayName', 'payload_maxTries', 'payload_timeout', 'payload_backoff', 'payload_note', 'payload_reason', 'payload_error', 'payload_size'];
-    $hasSectionB = ! empty(array_intersect($sectionBKeys, array_keys($payload)));
     $sectionCBodyRaw = $payload['payload_body'] ?? null;
     $sectionCBody = is_string($sectionCBodyRaw) ? (json_decode($sectionCBodyRaw, true) ?? $sectionCBodyRaw) : null;
+    // Section B (the right-column hero) now sources Job-Config + tags from
+    // EITHER the narrow `payload_*` capture-mode fields OR the decoded full
+    // body — so it renders whenever either is available, not just the legacy
+    // `payload_*` set. Without this widening, full-capture-with-no-`payload_*`
+    // fixtures (the path the structured-payload tests cover) would hide the
+    // hero even though the body carries all the data needed.
+    $hasSectionB = ! empty(array_intersect($sectionBKeys, array_keys($payload)))
+        || (is_array($sectionCBody) && ! empty(array_intersect(['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'], array_keys($sectionCBody))));
 
     // Duration — humanize with short form + keep raw ms in gray.
     $durationRaw = $payload['duration_ms'] ?? '';
@@ -139,12 +146,35 @@
                     || $sectionCBody !== null
                     || $captureMode !== \SanderMuller\QueueInsights\Enums\CaptureMode::Full;
             @endphp
+            @php
+                // Split the class FQCN into a faded namespace + bold leaf so
+                // the modal title reads `App\Jobs\` faded into BillingJob.
+                // Matches the rhythm of the completed-list row header.
+                $classFqcn = is_string($payload['class'] ?? null) && $payload['class'] !== ''
+                    ? $payload['class']
+                    : null;
+                $classNs = '';
+                $classLeaf = '';
+                if ($classFqcn !== null) {
+                    $lastBackslash = strrpos($classFqcn, '\\');
+                    $classNs = $lastBackslash !== false ? substr($classFqcn, 0, $lastBackslash + 1) : '';
+                    $classLeaf = $lastBackslash !== false ? substr($classFqcn, $lastBackslash + 1) : $classFqcn;
+                }
+            @endphp
             <div class="grid md:grid-cols-[20rem_1fr]">
-                {{-- Left rail — identity + metadata description list. --}}
+                {{-- Left rail — class title + metadata description list. --}}
                 <div data-section="base" class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    {{-- Class FQCN as the modal title — namespace fades to
+                        a soft secondary, the base-class leaf gets bold weight
+                        so the focus is on the job name, not the namespace. --}}
+                    @if($classFqcn !== null)
+                        <p class="mb-4 break-all font-mono text-sm">@if($classNs !== '')<span class="text-gray-400 dark:text-gray-500">{{ $classNs }}</span>@endif<span class="font-semibold text-gray-900 dark:text-gray-100">{{ $classLeaf }}</span></p>
+                    @else
+                        <p class="mb-4 font-mono text-sm text-gray-400 dark:text-gray-500">—</p>
+                    @endif
+
                     <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">Metadata</p>
-                    <p class="break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $payload['class'] ?? '—' }}</p>
-                    <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                    <div class="flex flex-wrap items-center gap-1.5 text-xs">
                         <x-queue-insights::meta-pill label="Connection" :value="$payload['connection'] ?? null"/>
                         <x-queue-insights::meta-pill label="Queue" :value="$payload['queue'] ?? null"/>
                     </div>
@@ -234,10 +264,8 @@
                 <div class="min-w-0 space-y-6 p-5">
                     @php
                         $displayName = $payload['payload_displayName'] ?? null;
-                        // Status-branch banners are visually identical across all variants —
-                        // they're alert states, not data layout. Variants only re-skin the
-                        // happy-path config render + the payload section. Footer/empty-state
-                        // sit outside the picker.
+                        // Status-branch banners (closure / encoding / size) keep the same
+                        // markup as before — alert states, not data layout.
                         $statusBranch = null;
                         if ($hasSectionB) {
                             if ($hasStatusNote) {
@@ -246,6 +274,61 @@
                                 $statusBranch = 'encoding';
                             } elseif ($hasStatusSizeOverflow) {
                                 $statusBranch = 'size';
+                            }
+                        }
+
+                        // Job-config pills and tag chips are sourced from the decoded
+                        // payload body when full-capture is on, falling back to the
+                        // narrower `payload_*` capture-mode fields under metadata mode.
+                        // The pills land on the hero so the payload tabs below stay
+                        // focused on job-specific data.
+                        $configPills = [];
+                        if (is_array($sectionCBody)) {
+                            $sourceMap = [
+                                'maxTries' => $sectionCBody['maxTries'] ?? null,
+                                'maxExceptions' => $sectionCBody['maxExceptions'] ?? null,
+                                'timeout' => $sectionCBody['timeout'] ?? null,
+                                'backoff' => $sectionCBody['backoff'] ?? null,
+                                'retryUntil' => $sectionCBody['retryUntil'] ?? null,
+                                'failOnTimeout' => $sectionCBody['failOnTimeout'] ?? null,
+                            ];
+                        } else {
+                            $sourceMap = [
+                                'maxTries' => $payload['payload_maxTries'] ?? null,
+                                'timeout' => $payload['payload_timeout'] ?? null,
+                                'backoff' => $backoffDisplay,
+                            ];
+                        }
+                        foreach ($sourceMap as $configKey => $configVal) {
+                            if ($configVal === null || $configVal === '') {
+                                continue;
+                            }
+                            if ($configKey === 'backoff' && is_array($configVal)) {
+                                $configPills[$configKey] = implode(', ', array_map(fn ($v): string => (string) $v, $configVal)) . ' s';
+                            } elseif ($configKey === 'timeout' && is_numeric($configVal)) {
+                                $configPills[$configKey] = ((int) $configVal) . ' s';
+                            } elseif (is_bool($configVal)) {
+                                $configPills[$configKey] = $configVal ? 'true' : 'false';
+                            } else {
+                                $configPills[$configKey] = (string) $configVal;
+                            }
+                        }
+
+                        $jobTags = is_array($sectionCBody) && is_array($sectionCBody['tags'] ?? null)
+                            ? array_values(array_filter(
+                                $sectionCBody['tags'],
+                                fn (mixed $t): bool => is_scalar($t) && (string) $t !== '',
+                            ))
+                            : [];
+
+                        // Body passed to the payload tabs — config keys + tags stripped
+                        // so the Structured / JSON renders stay focused on job-specific
+                        // payload data. Keys outside this list (uuid, data, displayName,
+                        // attempts, etc.) flow through unchanged.
+                        $sectionCBodyFiltered = $sectionCBody;
+                        if (is_array($sectionCBodyFiltered)) {
+                            foreach (['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'] as $stripKey) {
+                                unset($sectionCBodyFiltered[$stripKey]);
                             }
                         }
                     @endphp
@@ -261,36 +344,36 @@
                                 @include('queue-insights::partials.details-modal-status-encoding')
                             @elseif($statusBranch === 'size')
                                 @include('queue-insights::partials.details-modal-status-size', ['size' => $payload['payload_size'] ?? null])
-                            @elseif($hasJobConfigCards)
+                            @elseif($configPills !== [] || $jobTags !== [] || ($displayName !== null && $displayName !== $classFqcn))
+                                {{-- Class FQCN moved to the left rail as the modal title;
+                                    the hero carries config pills + tags. displayName only
+                                    shows up here when it diverges from the class FQCN (a
+                                    job that overrode `displayName()` to include subject
+                                    context — e.g. `SendEmail (user@example.com)`). --}}
                                 <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
                                     <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job Config</p>
-                                    @if($displayName)
-                                        <p class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $displayName }}</p>
+
+                                    @if($displayName !== null && $displayName !== $classFqcn)
+                                        <p class="mt-1 break-all font-mono text-sm text-gray-700 dark:text-gray-300">{{ $displayName }}</p>
                                     @endif
 
-                                    @php
-                                        $hasPills = isset($payload['payload_maxTries']) || isset($payload['payload_timeout']) || $backoffDisplay !== null;
-                                    @endphp
-                                    @if($hasPills)
-                                        <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                                            @if(isset($payload['payload_maxTries']))
+                                    @if($configPills !== [])
+                                        <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                                            @foreach($configPills as $pillKey => $pillVal)
                                                 <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
-                                                    <span class="text-gray-500 dark:text-gray-400">maxTries</span>
-                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $payload['payload_maxTries'] ?: '—' }}</span>
+                                                    <span class="text-gray-500 dark:text-gray-400">{{ $pillKey }}</span>
+                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $pillVal }}</span>
                                                 </span>
-                                            @endif
-                                            @if(isset($payload['payload_timeout']))
-                                                <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
-                                                    <span class="text-gray-500 dark:text-gray-400">timeout</span>
-                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $payload['payload_timeout'] ?: '—' }}</span>
-                                                </span>
-                                            @endif
-                                            @if($backoffDisplay !== null)
-                                                <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
-                                                    <span class="text-gray-500 dark:text-gray-400">backoff</span>
-                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $backoffDisplay }}</span>
-                                                </span>
-                                            @endif
+                                            @endforeach
+                                        </div>
+                                    @endif
+
+                                    @if($jobTags !== [])
+                                        <div class="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
+                                            <span class="text-gray-500 dark:text-gray-400">tags</span>
+                                            @foreach($jobTags as $tag)
+                                                <span class="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-700 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:text-gray-200 dark:ring-white/10">{{ (string) $tag }}</span>
+                                            @endforeach
                                         </div>
                                     @endif
                                 </div>
@@ -304,7 +387,9 @@
                          the modal reads as documentation rather than a control panel. --}}
                     @if($sectionCBody !== null)
                         @php
-                            $payloadJsonString = is_array($sectionCBody) ? json_encode($sectionCBody, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBody;
+                            // Use the filtered body for both tabs so config + tags don't
+                            // double up between the hero header and the payload section.
+                            $payloadJsonString = is_array($sectionCBodyFiltered) ? json_encode($sectionCBodyFiltered, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBodyFiltered;
                         @endphp
 
                         <section data-section="payload">
@@ -342,7 +427,7 @@
                                      id="qi-panel-raw"
                                      aria-labelledby="qi-tab-raw"
                                      class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                                    <x-queue-insights::structured-payload :payload="$sectionCBody"/>
+                                    <x-queue-insights::structured-payload :payload="$sectionCBodyFiltered"/>
                                 </div>
                             @endif
                         </section>

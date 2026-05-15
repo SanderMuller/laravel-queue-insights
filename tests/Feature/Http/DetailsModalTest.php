@@ -322,23 +322,25 @@ it('Section C flip to JSON tab renders the colorizer pane with data-json-highlig
         ->assertSeeText('"bar"');
 });
 
-it('Section C Raw pane groups standard Laravel queue-payload fields into Job Config / Execution / Tags / Other', function (): void {
+it('Section C Raw pane groups standard Laravel queue-payload fields into Execution / Other (Job Config + Tags moved to hero)', function (): void {
     config()->set('queue-insights.capture.payloads', 'full');
 
     $payload = [
         'uuid' => 'ffffffff-1111-2222-3333-444444444444',
         'displayName' => 'App\\Jobs\\Example',
-        // Job-config group
+        // Job-config group — now surfaced in the hero header pills, NOT in
+        // the Structured tab. The Structured tab gets a filtered body that
+        // strips these keys so the payload section stays job-specific.
         'maxTries' => 3,
         'maxExceptions' => null,
         'timeout' => 60,
         'backoff' => [1, 5, 10],
-        // Execution group
+        // Execution group — stays in the Structured tab.
         'attempts' => 1,
         'pushedAt' => 1716200000,
-        // Tags group
+        // Tags — also moved to the hero, no longer in the Structured tab.
         'tags' => ['App\\Models\\User:42', 'App\\Models\\Video:7'],
-        // Catchall "Other fields"
+        // Catchall "Other fields" — stays in the Structured tab.
         'customField' => 'customValue',
     ];
 
@@ -357,18 +359,19 @@ it('Section C Raw pane groups standard Laravel queue-payload fields into Job Con
 
     Livewire::test(QueueInsightsDashboard::class)
         ->call('openPayload', $id)
-        // Default tab is Raw.
-        ->assertSee('Job config')
+        // Hero header carries Job Config pills + tags.
+        ->assertSee('Job Config')
         ->assertSee('maxTries')
         ->assertSee('timeout')
-        ->assertSee('60 s') // timeout unit suffix
+        ->assertSee('60 s') // timeout pill unit suffix
         ->assertSee('backoff')
         ->assertSee('1, 5, 10 s') // backoff array rendered as comma-list with unit
+        ->assertSee('tags')
+        ->assertSee('App\\Models\\User:42')
+        // Structured tab keeps Execution + Other.
         ->assertSee('Execution')
         ->assertSee('attempts')
         ->assertSee('pushedAt')
-        ->assertSee('Tags')
-        ->assertSee('App\\Models\\User:42')
         ->assertSee('Other fields')
         ->assertSee('customField')
         ->assertSee('customValue');

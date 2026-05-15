@@ -161,8 +161,42 @@
                                 @php
                                     $status = $item['status'];
                                     $klass = $item['class'] ?? null;
-                                    $klassLabel = is_string($klass) && $klass !== '' ? $klass : (string) $item['uuid'];
+                                    $hasClass = is_string($klass) && $klass !== '';
+                                    $uuid = is_string($item['uuid'] ?? null) ? $item['uuid'] : '';
                                     $ts = $item['timestamp'] ?? null;
+                                    $attempts = is_int($item['attempts'] ?? null) ? $item['attempts'] : 0;
+                                    $parentUuid = is_string($item['parent_uuid'] ?? null) && $item['parent_uuid'] !== ''
+                                        ? $item['parent_uuid']
+                                        : null;
+
+                                    // Split FQCN into faded namespace + bold leaf so the row
+                                    // matches the completed-list rhythm. When class wasn't
+                                    // captured (older stream entry / pending hash expired),
+                                    // fall back to a status-appropriate placeholder so the
+                                    // identifier doesn't end up duplicated on both lines.
+                                    $namespace = '';
+                                    $shortName = '';
+                                    if ($hasClass) {
+                                        $lastBackslash = strrpos($klass, '\\');
+                                        $namespace = $lastBackslash !== false ? substr($klass, 0, $lastBackslash + 1) : '';
+                                        $shortName = $lastBackslash !== false ? substr($klass, $lastBackslash + 1) : $klass;
+                                    }
+
+                                    $classPlaceholder = match ($status) {
+                                        'completed' => 'Completed job',
+                                        'failed' => 'Failed job',
+                                        'in_flight' => 'In-flight job',
+                                        default => 'Pending job',
+                                    };
+
+                                    // Forward-chain summary decoded into the shape the
+                                    // chain-chip-forward partial expects. Skipped (`null`)
+                                    // for non-completed statuses since the chain summary is
+                                    // only written to the stream row at completion.
+                                    $rawChain = is_string($item['chain'] ?? null) ? $item['chain'] : '';
+                                    $chain = $rawChain !== ''
+                                        ? \SanderMuller\QueueInsights\Support\RowEnricher::decodeChain($rawChain)
+                                        : null;
 
                                     [$icon, $iconCls] = match ($status) {
                                         'completed' => ['✓', 'text-emerald-600 dark:text-emerald-400'],
@@ -180,9 +214,16 @@
                                         $itemAction = ['method' => 'openPayload', 'arg' => $item['stream_id']];
                                     } elseif ($status === 'failed' && is_int($item['failed_id'] ?? null)) {
                                         $itemAction = ['method' => 'openFailed', 'arg' => (int) $item['failed_id']];
-                                    } elseif (($status === 'pending' || $status === 'in_flight') && is_string($item['uuid'] ?? null) && $item['uuid'] !== '') {
-                                        $itemAction = ['method' => 'openPending', 'arg' => $item['uuid']];
+                                    } elseif (($status === 'pending' || $status === 'in_flight') && $uuid !== '') {
+                                        $itemAction = ['method' => 'openPending', 'arg' => $uuid];
                                     }
+
+                                    // Retry chip uses the same partial as the Completed
+                                    // list — `pickup` context for in-flight (mid-run
+                                    // attempt), `completed` for completed (final retry that
+                                    // succeeded). Failed jobs share the pickup wording —
+                                    // attempts at the moment of archival.
+                                    $retryContext = $status === 'completed' ? 'completed' : 'pickup';
                                 @endphp
                                 <li @class([
                                         'flex items-start gap-3 bg-white dark:bg-gray-900 p-3 text-xs',
@@ -197,9 +238,17 @@
                                     @endif>
                                     <span aria-hidden="true" class="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-gray-950/[0.04] text-[11px] font-semibold tabular-nums text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">{{ $i + 1 }}</span>
                                     <div class="min-w-0 flex-1">
+                                        {{-- Line 1: status icon + class (or placeholder).
+                                            FQCN renders with the namespace faded so the
+                                            class leaf reads first — same rhythm as the
+                                            completed-list row. --}}
                                         <p class="flex items-center gap-1.5">
-                                            <span class="{{ $iconCls }} font-mono">{{ $icon }}</span>
-                                            <span class="truncate font-mono font-medium text-gray-900 dark:text-gray-100">{{ $klassLabel }}</span>
+                                            <span aria-hidden="true" class="{{ $iconCls }} font-mono">{{ $icon }}</span>
+                                            @if($hasClass)
+                                                <span class="truncate font-mono">@if($namespace !== '')<span class="text-gray-400 dark:text-gray-400">{{ $namespace }}</span>@endif<span class="font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span></span>
+                                            @else
+                                                <span class="truncate font-medium text-gray-500 dark:text-gray-400">{{ $classPlaceholder }}</span>
+                                            @endif
                                             @if($status === 'in_flight')
                                                 <span class="shrink-0 inline-flex items-center gap-1 rounded bg-amber-50 dark:bg-amber-900/40 px-1 py-px font-sans text-[10px] font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
                                                     <span aria-hidden="true" class="inline-block size-1 animate-pulse rounded-full bg-amber-500"></span>
@@ -207,8 +256,24 @@
                                                 </span>
                                             @endif
                                         </p>
-                                        <div class="mt-1 flex flex-wrap items-center gap-x-2 text-gray-400 dark:text-gray-400">
-                                            <span class="break-all font-mono">{{ $item['uuid'] }}</span>
+                                        {{-- Line 2: short identifier + chips + timestamp.
+                                            Chips reuse the partials the Completed/Failed
+                                            lists already render so the visual language is
+                                            consistent across surfaces. --}}
+                                        <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-gray-400 dark:text-gray-400">
+                                            <span class="break-all font-mono text-[11px]">{{ $uuid }}</span>
+                                            @if($attempts > 1)
+                                                @include('queue-insights::partials.retry-chip', ['attempts' => $attempts, 'context' => $retryContext])
+                                            @endif
+                                            @if($chain !== null)
+                                                @include('queue-insights::partials.chain-chip-forward', ['chain' => $chain])
+                                            @endif
+                                            @if($parentUuid !== null)
+                                                <span class="inline-flex items-center gap-1 rounded-md bg-gray-950/[0.04] dark:bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10" title="Queued by parent {{ $parentUuid }}">
+                                                    <span aria-hidden="true">↰</span>
+                                                    <span>chained</span>
+                                                </span>
+                                            @endif
                                             @if(is_int($ts))
                                                 <x-queue-insights::qi-time :at="$ts"/>
                                             @endif

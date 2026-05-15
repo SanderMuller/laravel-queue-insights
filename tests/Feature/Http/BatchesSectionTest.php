@@ -147,8 +147,14 @@ it('renders the per-uuid item list in enqueue order when expanded', function ():
         // shows the short uuid suffix and a click target wired to openPayload.
         ->assertSeeHtml('wire:click="openPayload(\'1700000000-0\')"')
         ->assertSeeHtml("wire:click=\"openFailed({$failedId})\"")
-        ->assertSee('App\\Jobs\\BetaJob')
-        ->assertSee('App\\Jobs\\GammaJob');
+        // Class FQCNs render as namespace-faded + leaf-bold spans
+        // (matches the completed-list row rhythm), so the FQCN is not a
+        // contiguous substring in the HTML. Assert on the leaf and namespace
+        // separately, then pin the leaf to the bold wrapper so a stray
+        // payload text occurrence can't false-positive.
+        ->assertSee('App\\Jobs\\')
+        ->assertSeeHtml('>BetaJob</span>')
+        ->assertSeeHtml('>GammaJob</span>');
 });
 
 it('renders an in-flight batch item with running chip when the pending hash carries state=in_flight', function (): void {

@@ -169,10 +169,14 @@
         tailwind.config = {
             darkMode: 'class',
             safelist: [
+                // JSON colorizer palette — Horizon-style: amber strings,
+                // purple numbers + null + booleans, blue keys. Class strings
+                // exist only inside `<script>` literals in highlightJson()
+                // below, so they need explicit safelisting under the CDN's
+                // JIT extractor (which doesn't scan inline script bodies).
                 'text-blue-700',  'dark:text-blue-300',
-                'text-green-700', 'dark:text-green-300',
+                'text-amber-700', 'dark:text-amber-300',
                 'text-purple-700','dark:text-purple-300',
-                'text-orange-700','dark:text-orange-300',
             ],
         };
     </script>
@@ -255,6 +259,12 @@
     --}}
     <script>
         function highlightJson(src) {
+            // Horizon-style palette: keys stay blue (parallels with the
+            // serialized-properties dt/dd convention), strings are amber,
+            // numbers / null / true / false land on purple. SECURITY: the
+            // HTML-escape pass MUST stay ahead of the token-wrapping
+            // replacements (see §3 of the spec) — reordering opens
+            // payload content as raw markup.
             return src
                 .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
                 .replace(
@@ -263,10 +273,10 @@
                         if (str) {
                             return colon
                                 ? '<span class="text-blue-700 dark:text-blue-300">' + str + '</span>' + colon
-                                : '<span class="text-green-700 dark:text-green-300">' + str + '</span>';
+                                : '<span class="text-amber-700 dark:text-amber-300">' + str + '</span>';
                         }
                         if (kw)  { return '<span class="text-purple-700 dark:text-purple-300">' + kw + '</span>'; }
-                        if (num) { return '<span class="text-orange-700 dark:text-orange-300">' + num + '</span>'; }
+                        if (num) { return '<span class="text-purple-700 dark:text-purple-300">' + num + '</span>'; }
                         return m;
                     }
                 );
@@ -275,7 +285,22 @@
         function registerQueueInsightsHook() {
             var colorize = function (payload) {
                 var el = payload && payload.el ? payload.el : document;
-                el.querySelectorAll('[data-json-highlight]').forEach(function (node) {
+
+                // Collect both the morph-root itself (when the JSON pane is
+                // the newly-inserted root node — Livewire 4 fires `morph.added`
+                // with payload.el set to the inserted element directly, and
+                // `querySelectorAll` only matches descendants) AND any
+                // descendants. Without this, opening the details modal mounts
+                // the pre as the root insertion and the colorizer skips it.
+                var nodes = [];
+                if (el.nodeType === 1 && el.matches && el.matches('[data-json-highlight]')) {
+                    nodes.push(el);
+                }
+                if (el.querySelectorAll) {
+                    el.querySelectorAll('[data-json-highlight]').forEach(function (n) { nodes.push(n); });
+                }
+
+                nodes.forEach(function (node) {
                     var src = node.textContent;
                     // Full-string idempotency guard — expando property, not data-attribute,
                     // to keep the ~16KB body string out of serialized DOM dumps.
@@ -296,6 +321,17 @@
             // JSON pane.
             Livewire.hook('morph.updated', colorize);
             Livewire.hook('morph.added', colorize);
+
+            // Initial sweep — deep-linked modal opens (?s_rid=/?s_tk=) ship
+            // the JSON pane in the server-rendered HTML before Livewire
+            // boots, so neither morph hook fires for them. Without this
+            // sweep the colorizer only kicks in after the user triggers a
+            // re-morph (close + reopen). Guarded for the Node-based XSS
+            // test that loads this function under a DOM shim without
+            // `document`.
+            if (typeof document !== 'undefined') {
+                colorize({ el: document });
+            }
         }
 
         // Dual-branch guard — works whether script runs before or after Livewire bootstrap.

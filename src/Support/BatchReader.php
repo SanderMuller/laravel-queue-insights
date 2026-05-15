@@ -6,7 +6,6 @@ use Carbon\CarbonInterface;
 use Illuminate\Bus\Batch;
 use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\QueueInsights;
 use Throwable;
@@ -146,11 +145,18 @@ final class BatchReader
      * indexes via two MGETs (one round-trip each), then back-fills the
      * remaining uuids from the per-uuid pending hash.
      *
+     * Per-item enrichment fields (class / attempts / chain / parent_uuid)
+     * mirror what `recentCompleted()` rows carry on the Completed list, so
+     * the batch-modal items can render with the same two-line + chips layout
+     * the operator already knows from the main jobs table.
+     *
      * The per-uuid `class`/`queued_at`/`failed_at` lookups for failed items
      * go through a single `whereIn` against `failed_jobs` so a 100-uuid batch
-     * is one DB query, not 100. For pending items, each uuid is a single
-     * HGETALL — bounded by the per-batch uuid cap (default 5000) and gated
-     * to the expanded row by render().
+     * is one DB query, not 100. Completed items batch into one pipelined
+     * XRANGE call across the aggregate `qi:completed` stream so a batch with
+     * 100 completed members costs one Redis round-trip, not 100. Pending
+     * items each cost one HGETALL — bounded by the per-batch uuid cap
+     * (default 5000) and gated to the expanded row by render().
      *
      * @param  list<string>  $uuids
      * @return list<array{
@@ -160,6 +166,9 @@ final class BatchReader
      *   timestamp: ?int,
      *   stream_id: ?string,
      *   failed_id: ?int,
+     *   attempts: int,
+     *   chain: ?string,
+     *   parent_uuid: ?string,
      * }>
      */
     public static function batchItems(array $uuids): array
@@ -185,14 +194,21 @@ final class BatchReader
         // First pass: collect failed-row ids so we can issue ONE failed_jobs
         // SELECT covering all failed uuids in this batch.
         $failedIds = [];
+        $completedStreamIds = [];
         foreach ($uuids as $i => $uuid) {
             $raw = $failedVals[$i] ?? null;
             if (is_numeric($raw)) {
                 $failedIds[$uuid] = (int) $raw;
             }
+
+            $streamId = $completedVals[$i] ?? null;
+            if (is_string($streamId) && $streamId !== '') {
+                $completedStreamIds[$uuid] = $streamId;
+            }
         }
 
-        $failedMeta = self::loadFailedMeta(array_values($failedIds));
+        $failedMeta = BatchItemMeta::loadFailed(array_values($failedIds));
+        $completedMeta = BatchItemMeta::loadCompleted($redis, $completedStreamIds);
 
         $rows = [];
         foreach ($uuids as $i => $uuid) {
@@ -202,7 +218,7 @@ final class BatchReader
 
             $streamId = $completedVals[$i] ?? null;
             if (is_string($streamId) && $streamId !== '') {
-                $rows[] = self::completedItemRow($uuid, $streamId);
+                $rows[] = self::completedItemRow($uuid, $streamId, $completedMeta[$streamId] ?? null);
 
                 continue;
             }
@@ -220,23 +236,27 @@ final class BatchReader
     }
 
     /**
-     * @return array{uuid: string, status: 'completed', class: null, timestamp: null, stream_id: string, failed_id: null}
+     * @param  array{class: ?string, attempts: int, chain: ?string, parent_uuid: ?string, processed_at: ?int}|null  $meta
+     * @return array{uuid: string, status: 'completed', class: ?string, timestamp: ?int, stream_id: string, failed_id: null, attempts: int, chain: ?string, parent_uuid: ?string}
      */
-    private static function completedItemRow(string $uuid, string $streamId): array
+    private static function completedItemRow(string $uuid, string $streamId, ?array $meta): array
     {
         return [
             'uuid' => $uuid,
             'status' => 'completed',
-            'class' => null,
-            'timestamp' => null,
+            'class' => $meta['class'] ?? null,
+            'timestamp' => $meta['processed_at'] ?? null,
             'stream_id' => $streamId,
             'failed_id' => null,
+            'attempts' => $meta['attempts'] ?? 0,
+            'chain' => $meta['chain'] ?? null,
+            'parent_uuid' => $meta['parent_uuid'] ?? null,
         ];
     }
 
     /**
-     * @param  array{class: ?string, failed_at: ?int}|null  $meta
-     * @return array{uuid: string, status: 'failed', class: ?string, timestamp: ?int, stream_id: null, failed_id: int}
+     * @param  array{class: ?string, failed_at: ?int, attempts: int, parent_uuid: ?string}|null  $meta
+     * @return array{uuid: string, status: 'failed', class: ?string, timestamp: ?int, stream_id: null, failed_id: int, attempts: int, chain: ?string, parent_uuid: ?string}
      */
     private static function failedItemRow(string $uuid, int $failedId, ?array $meta): array
     {
@@ -247,6 +267,13 @@ final class BatchReader
             'timestamp' => $meta['failed_at'] ?? null,
             'stream_id' => null,
             'failed_id' => $failedId,
+            'attempts' => $meta['attempts'] ?? 0,
+            // Failed jobs don't carry a decoded chain summary on the index
+            // row — the chain is buried inside the serialised command on
+            // `failed_jobs.payload`. The failed-modal still surfaces it; the
+            // batch item just doesn't pre-render a chain chip.
+            'chain' => null,
+            'parent_uuid' => $meta['parent_uuid'] ?? null,
         ];
     }
 
@@ -255,9 +282,10 @@ final class BatchReader
      * once `RecordJobProcessing` has run, so a batched job that's actively
      * running renders as in_flight rather than pending. Class / queued_at /
      * started_at come from the same hash; null when pending.enabled=false
-     * at queue time.
+     * at queue time. `attempts` lands in the hash via `markInFlight` only,
+     * so a still-pending job reports attempts=0.
      *
-     * @return array{uuid: string, status: 'in_flight'|'pending', class: ?string, timestamp: ?int, stream_id: null, failed_id: null}
+     * @return array{uuid: string, status: 'in_flight'|'pending', class: ?string, timestamp: ?int, stream_id: null, failed_id: null, attempts: int, chain: ?string, parent_uuid: ?string}
      */
     private static function pendingOrInFlightItemRow(Connection $redis, string $uuid): array
     {
@@ -268,6 +296,10 @@ final class BatchReader
         $queuedAt = isset($hash['queued_at']) && is_numeric($hash['queued_at']) ? (int) $hash['queued_at'] : null;
         $startedAt = isset($hash['started_at']) && is_numeric($hash['started_at']) ? (int) $hash['started_at'] : null;
         $isInFlight = isset($hash['state']) && $hash['state'] === 'in_flight';
+        $attempts = isset($hash['attempts']) && is_numeric($hash['attempts']) ? (int) $hash['attempts'] : 0;
+        $parentUuid = isset($hash['parent_uuid']) && is_string($hash['parent_uuid']) && $hash['parent_uuid'] !== ''
+            ? $hash['parent_uuid']
+            : null;
 
         return [
             'uuid' => $uuid,
@@ -279,6 +311,11 @@ final class BatchReader
             'timestamp' => $isInFlight ? ($startedAt ?? $queuedAt) : $queuedAt,
             'stream_id' => null,
             'failed_id' => null,
+            'attempts' => $attempts,
+            // Pending items don't have a forward-chain summary yet — the
+            // chain summary is written to the stream row on completion.
+            'chain' => null,
+            'parent_uuid' => $parentUuid,
         ];
     }
 
@@ -462,49 +499,5 @@ final class BatchReader
         $values = $redis->command('mget', [$keys]);
 
         return is_array($values) ? array_values($values) : [];
-    }
-
-    /**
-     * Load class + failed_at for the given failed_jobs row ids in one SELECT.
-     * Returns null entries instead of dropping rows so the caller can still
-     * render a placeholder if the row was deleted out from under us.
-     *
-     * @param  list<int>  $ids
-     * @return array<int, array{class: ?string, failed_at: ?int}>
-     */
-    private static function loadFailedMeta(array $ids): array
-    {
-        if ($ids === []) {
-            return [];
-        }
-
-        try {
-            $rows = DB::table('failed_jobs')->whereIn('id', $ids)->get(['id', 'payload', 'failed_at']);
-        } catch (Throwable) {
-            return [];
-        }
-
-        $out = [];
-        foreach ($rows as $row) {
-            $payload = is_string($row->payload ?? null) ? json_decode($row->payload, true) : null;
-            $class = is_array($payload) && isset($payload['displayName']) && is_string($payload['displayName'])
-                ? $payload['displayName']
-                : null;
-
-            $failedAt = null;
-            if (isset($row->failed_at) && (is_string($row->failed_at) || is_numeric($row->failed_at))) {
-                $ts = strtotime((string) $row->failed_at);
-                $failedAt = $ts === false ? null : $ts;
-            }
-
-            $rowId = $row->id ?? null;
-            if (! is_numeric($rowId)) {
-                continue;
-            }
-
-            $out[(int) $rowId] = ['class' => $class, 'failed_at' => $failedAt];
-        }
-
-        return $out;
     }
 }
