@@ -238,12 +238,14 @@ final class SprayJobsCommand extends Command
      * dispatched so the In-flight tab is non-empty in the demo without
      * needing `php artisan queue:work` running.
      *
-     * Reads back the most recent pending uuids across all configured
-     * queues, picks N at random, and stamps `state=in_flight` +
-     * `started_at` onto their hashes — exactly the fields
-     * `RecordJobProcessing` would write when a real worker pops the
-     * payload. The pending-modal reads these fields and shows the
-     * Running-for state hero against them.
+     * Scans every `pending-zset:{conn}:{queue}` key (not just one
+     * hard-coded combo — the demo runs `QUEUE_CONNECTION=database`
+     * while PreviewSeeder writes `redis` rows, so the right uuids
+     * live in different zsets), picks N at random, and stamps
+     * `state=in_flight` + `started_at` + `attempts` onto each hash.
+     * Each row's `inflight-zset:{conn}:{queue}` write uses the
+     * hash's own connection + queue fields, mirroring exactly what
+     * `RecordJobProcessing` would do on a real worker pop.
      *
      * Synthetic by design — once a real worker runs in the demo the
      * dispatcher's natural flow takes over.
@@ -253,30 +255,60 @@ final class SprayJobsCommand extends Command
         $this->line('  · simulating ' . $target . ' in-flight rows (no worker required)');
         $redis = Redis::connection(QiConfig::string('redis_connection', 'default'));
 
-        $uuids = $redis->command('zrevrange', [KeyPrefix::make('pending-zset:redis:default'), 0, max(20, $target * 4)]);
-        $uuids = is_array($uuids)
-            ? array_values(array_filter($uuids, static fn ($v): bool => is_string($v) && $v !== ''))
-            : [];
+        // Scan all pending zsets — `keys` is fine for a demo-scale
+        // dataset; production code would use `scan` to avoid blocking
+        // the Redis server.
+        $pattern = KeyPrefix::make('pending-zset:*');
+        $autoPrefix = (string) (config('database.redis.options.prefix') ?? '');
+        $zsetKeys = $redis->command('keys', [$pattern]);
+        $zsetKeys = is_array($zsetKeys) ? $zsetKeys : [];
 
-        if ($uuids === []) {
+        $candidates = [];
+        foreach ($zsetKeys as $rawKey) {
+            $stripped = is_string($rawKey) && str_starts_with($rawKey, $autoPrefix)
+                ? substr($rawKey, strlen($autoPrefix))
+                : (string) $rawKey;
+            $uuids = $redis->command('zrevrange', [$stripped, 0, max(20, $target * 4)]);
+            if (! is_array($uuids)) {
+                continue;
+            }
+            foreach ($uuids as $uuid) {
+                if (! is_string($uuid) || $uuid === '') {
+                    continue;
+                }
+                $candidates[] = $uuid;
+            }
+        }
+
+        $candidates = array_values(array_unique($candidates));
+
+        if ($candidates === []) {
             $this->warn('  ! no pending rows to mark in-flight (check QUEUE_INSIGHTS_PENDING_ENABLED + your queue connection)');
 
             return;
         }
 
-        shuffle($uuids);
-        $picked = array_slice($uuids, 0, $target);
+        shuffle($candidates);
+        $picked = array_slice($candidates, 0, $target);
         $now = time();
 
         foreach ($picked as $uuid) {
-            $startedAt = $now - random_int(5, 120);
             $hashKey = KeyPrefix::make('pending:' . $uuid);
+            // Read back the hash's own connection + queue so the
+            // inflight-zset write lands on the correct shard — bare
+            // `redis:default` would mis-route rows dispatched against
+            // `database` or any non-default queue name.
+            $conn = $redis->command('hget', [$hashKey, 'connection']);
+            $queue = $redis->command('hget', [$hashKey, 'queue']);
+            if (! is_string($conn) || $conn === '' || ! is_string($queue) || $queue === '') {
+                continue;
+            }
+
+            $startedAt = $now - random_int(5, 120);
             $redis->command('hset', [$hashKey, 'state', 'in_flight']);
             $redis->command('hset', [$hashKey, 'started_at', (string) $startedAt]);
             $redis->command('hset', [$hashKey, 'attempts', (string) random_int(1, 2)]);
-            // Mirror RecordJobProcessing's inflight-zset write so the
-            // In-flight cross-queue aggregator sees the row.
-            $redis->command('zadd', [KeyPrefix::make('inflight-zset:redis:default'), $startedAt, $uuid]);
+            $redis->command('zadd', [KeyPrefix::make("inflight-zset:{$conn}:{$queue}"), $startedAt, $uuid]);
         }
     }
 
