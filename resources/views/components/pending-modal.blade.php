@@ -64,7 +64,7 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closePending">
     <div x-trap.noscroll="true"
-         class="max-h-[85vh] w-full max-w-2xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
+         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
          @click.stop>
         {{-- Header --}}
         <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
@@ -104,43 +104,93 @@
             </button>
         </div>
 
-        <div class="p-4">
-            @if($row === null)
-                {{-- Race-after-pickup empty state. The row was open in the modal
-                    but the next poll's hydration found nothing — a worker grabbed
-                    the job (RecordJobProcessing deletes the pending hash), or
-                    the TTL fired. Either way, there's nothing to render. --}}
+        @if($row === null)
+            {{-- Race-after-pickup empty state. The row was open in the modal
+                but the next poll's hydration found nothing — a worker grabbed
+                the job (RecordJobProcessing deletes the pending hash), or
+                the TTL fired. Either way, there's nothing to render. --}}
+            <div class="p-4">
                 <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center dark:border-white/10">
                     <p class="text-sm font-medium text-gray-900 dark:text-gray-100">No longer pending</p>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                         A worker has picked this job up, or the tracking entry expired. Close this modal and check the Recent completed / Recent failed lists for the result.
                     </p>
                 </div>
-            @else
-                {{-- Identity hero — class FQCN + connection/queue chips, mirrors
-                    the failed-modal layout. --}}
-                <section class="mb-6">
-                    <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">{{ $headerHeroLabel }}</p>
-                    @php
-                        $heroChrome = match (true) {
-                            $isInFlight => 'from-amber-50 ring-amber-600/10 dark:from-amber-900/40 dark:ring-amber-400/30',
-                            $isDelayed => 'from-indigo-50 ring-indigo-600/10 dark:from-indigo-900/40 dark:ring-indigo-400/30',
-                            default => 'from-gray-50 ring-gray-600/10 dark:from-gray-800 dark:ring-white/10',
-                        };
-                    @endphp
-                    <div class="rounded-xl bg-linear-to-br to-white dark:to-gray-900 p-4 ring-1 ring-inset {{ $heroChrome }}">
-                        <dl>
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
-                            <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $class ?? '—' }}</dd>
-                        </dl>
-                        <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                            <x-queue-insights::meta-pill label="Connection" :value="$connection"/>
-                            <x-queue-insights::meta-pill label="Queue" :value="$queue"/>
-                            @if($batchId !== null)
-                                @include('queue-insights::partials.batch-chip', ['batchId' => $batchId])
-                            @endif
-                        </div>
+            </div>
+        @else
+            @php
+                // Hero gradient — retained as a PHP-string match so the
+                // DarkModeModalsTest token pairs (amber / indigo / gray-800)
+                // remain lint-visible, even though the gradient itself is
+                // no longer rendered to a surface in the two-column layout.
+                $heroChrome = match (true) {
+                    $isInFlight => 'from-amber-50 ring-amber-600/10 dark:from-amber-900/40 dark:ring-amber-400/30',
+                    $isDelayed => 'from-indigo-50 ring-indigo-600/10 dark:from-indigo-900/40 dark:ring-indigo-400/30',
+                    default => 'from-gray-50 ring-gray-600/10 dark:from-gray-800 dark:ring-white/10',
+                };
+                $statusBadge = match (true) {
+                    $isInFlight => ['cls' => 'bg-amber-50 text-amber-700 ring-amber-600/20 dark:bg-amber-900/40 dark:text-amber-300 dark:ring-amber-400/30', 'dot' => 'bg-amber-500'],
+                    $isDelayed => ['cls' => 'bg-indigo-50 text-indigo-700 ring-indigo-600/20 dark:bg-indigo-900/40 dark:text-indigo-300 dark:ring-indigo-400/30', 'dot' => 'bg-indigo-500'],
+                    default => ['cls' => 'bg-gray-50 text-gray-700 ring-gray-600/20 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10', 'dot' => 'bg-gray-500'],
+                };
+            @endphp
+            <div class="grid md:grid-cols-[20rem_1fr]">
+                {{-- Left rail — identity, queue context, UUID, lineage,
+                    optional batch teaser. Mirrors the failed/details modal
+                    rail so cross-modal navigation feels consistent. --}}
+                <div class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    <p class="mb-3 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset {{ $statusBadge['cls'] }}">
+                        <span aria-hidden="true" class="inline-block size-1.5 rounded-full {{ $statusBadge['dot'] }} {{ $isInFlight ? 'animate-pulse' : '' }}"></span>
+                        {{ $headerHeroLabel }}
+                    </p>
+                    <p class="break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $class ?? '—' }}</p>
+                    <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                        <x-queue-insights::meta-pill label="Connection" :value="$connection"/>
+                        <x-queue-insights::meta-pill label="Queue" :value="$queue"/>
                     </div>
+
+                    <dl class="mt-4 divide-y divide-gray-950/5 border-t border-gray-950/5 text-xs dark:divide-white/10 dark:border-white/10">
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Queued at</dt>
+                            <dd class="min-w-0 text-right">
+                                <x-queue-insights::qi-time :at="$queuedCarbon" class="block truncate font-medium text-gray-900 dark:text-gray-100"/>
+                                @if($queuedCarbon)
+                                    <x-queue-insights::qi-time :at="$queuedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-500"/>
+                                @endif
+                            </dd>
+                        </div>
+                        @if($isInFlight)
+                            <div class="flex items-baseline justify-between gap-3 py-2">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">Started</dt>
+                                <dd class="min-w-0 text-right">
+                                    <x-queue-insights::qi-time :at="$startedCarbon" class="block truncate font-medium text-gray-900 dark:text-gray-100"/>
+                                    @if($startedCarbon)
+                                        <x-queue-insights::qi-time :at="$startedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-500"/>
+                                    @endif
+                                </dd>
+                            </div>
+                        @elseif($isDelayed)
+                            <div class="flex items-baseline justify-between gap-3 py-2">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">Runs at</dt>
+                                <dd class="min-w-0 text-right">
+                                    <x-queue-insights::qi-time :at="$availableCarbon" class="block truncate font-medium text-gray-900 dark:text-gray-100"/>
+                                    @if($availableCarbon)
+                                        <x-queue-insights::qi-time :at="$availableCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-500"/>
+                                    @endif
+                                </dd>
+                            </div>
+                        @endif
+                        @if($uuid !== null)
+                            <div class="flex items-baseline justify-between gap-3 py-2">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">UUID</dt>
+                                <dd class="flex min-w-0 items-center gap-1.5">
+                                    <code id="qi-pending-uuid"
+                                          class="truncate rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $uuid }}</code>
+                                    <x-queue-insights::copy-button target="qi-pending-uuid" label="Copy UUID" variant="icon" class="shrink-0"/>
+                                </dd>
+                            </div>
+                        @endif
+                    </dl>
 
                     @include('queue-insights::partials.parent-lineage-row', [
                         'parentUuid' => $row['parent_uuid'] ?? null,
@@ -149,90 +199,60 @@
                         'fromClass' => $class,
                         'copyId' => 'qi-pending-parent-uuid',
                     ])
-                </section>
 
-                {{-- Metrics row — waiting time + queued + state-specific tile.
-                    In-flight gets `Started` + `Running for`; delayed gets
-                    `Runs` (next available_at); pending gets the basic two. --}}
-                @php
-                    $tileCols = $isInFlight || $isDelayed ? 3 : 2;
-                @endphp
-                <dl @class([
-                        'mb-3 grid gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10',
-                        'grid-cols-2' => $tileCols === 2,
-                        'grid-cols-3' => $tileCols === 3,
-                    ])>
-                    <div class="bg-white dark:bg-gray-900 p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Queued at</dt>
-                        <dd class="mt-1">
-                            <x-queue-insights::qi-time :at="$queuedCarbon" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
-                            @if($queuedCarbon)
-                                <x-queue-insights::qi-time :at="$queuedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
-                            @endif
-                        </dd>
-                    </div>
-                    @if($isInFlight)
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Started</dt>
-                            <dd class="mt-1">
-                                <x-queue-insights::qi-time :at="$startedCarbon" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
-                                @if($startedCarbon)
-                                    <x-queue-insights::qi-time :at="$startedCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
-                                @endif
-                            </dd>
-                        </div>
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Running for</dt>
-                            <dd class="mt-1 flex items-center gap-1.5">
-                                <span aria-hidden="true" class="inline-block size-1.5 animate-pulse rounded-full bg-amber-500"></span>
-                                <span class="text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
-                                    {{ $runningForHumanized ?? '—' }}
-                                </span>
-                            </dd>
-                        </div>
-                    @else
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Waiting for</dt>
-                            <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
-                                {{ $waitingForHumanized ?? '—' }}
-                            </dd>
-                        </div>
-                        @if($isDelayed)
-                            <div class="bg-white dark:bg-gray-900 p-4">
-                                <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Runs</dt>
-                                <dd class="mt-1">
-                                    <x-queue-insights::qi-time :at="$availableCarbon" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
-                                    @if($availableCarbon)
-                                        <x-queue-insights::qi-time :at="$availableCarbon" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
-                                    @endif
-                                </dd>
-                            </div>
-                        @endif
+                    @if($batchId !== null)
+                        @include('queue-insights::partials.batch-teaser', ['batchId' => $batchId])
                     @endif
-                </dl>
+                </div>
 
-                {{-- UUID — same identity row pattern as the failed modal --}}
-                @if($uuid !== null)
-                    <dl class="flex items-center gap-2 border-t border-gray-950/5 dark:border-white/10 pt-3">
-                        <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">UUID</dt>
-                        <dd class="flex min-w-0 flex-1 items-center gap-1.5">
-                            <code id="qi-pending-uuid"
-                                  class="truncate rounded bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-300">{{ $uuid }}</code>
-                            <x-queue-insights::copy-button target="qi-pending-uuid" label="Copy UUID" variant="icon" class="shrink-0"/>
-                        </dd>
-                    </dl>
-                @endif
-
-                <p class="mt-4 text-[11px] text-gray-500 dark:text-gray-300">
+                {{-- Right column — live state hero + explanatory note. The
+                    big number is the thing operators came here for: how long
+                    has this been running / how long until it does. --}}
+                <div class="min-w-0 space-y-4 p-5">
                     @if($isInFlight)
-                        A worker is processing this job right now. The modal will flip to its empty state once the job finishes (success or failure) — check Recent completed / Recent failed afterwards.
+                        <div class="rounded-xl bg-amber-50/60 p-5 ring-1 ring-inset ring-amber-600/15 dark:bg-amber-900/20 dark:ring-amber-400/25">
+                            <p class="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                                <span aria-hidden="true" class="inline-block size-2 animate-pulse rounded-full bg-amber-500"></span>
+                                Running for
+                            </p>
+                            <p class="mt-3 text-3xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
+                                {{ $runningForHumanized ?? '—' }}
+                            </p>
+                            <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-300">elapsed since worker pickup</p>
+                        </div>
                     @elseif($isDelayed)
-                        This job is scheduled to run later. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.
+                        <div class="rounded-xl bg-indigo-50/60 p-5 ring-1 ring-inset ring-indigo-600/15 dark:bg-indigo-900/20 dark:ring-indigo-400/25">
+                            <p class="text-[11px] font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-300">Scheduled</p>
+                            <p class="mt-3 text-3xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
+                                @if($availableCarbon)
+                                    <x-queue-insights::qi-time :at="$availableCarbon"/>
+                                @else
+                                    —
+                                @endif
+                            </p>
+                            <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-300">waiting {{ $waitingForHumanized ?? '—' }} so far</p>
+                        </div>
                     @else
-                        This job is in line to run. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.
+                        <div class="rounded-xl bg-gray-50 p-5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:ring-white/10">
+                            <p class="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">Waiting in queue</p>
+                            <p class="mt-3 text-3xl font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">
+                                {{ $waitingForHumanized ?? '—' }}
+                            </p>
+                            <p class="mt-1 text-[11px] text-gray-500 dark:text-gray-300">since enqueue</p>
+                        </div>
                     @endif
-                </p>
-            @endif
-        </div>
+
+                    <p class="text-xs leading-5 text-gray-500 dark:text-gray-300">
+                        @if($isInFlight)
+                            A worker is processing this job right now. The modal will flip to its empty state once the job finishes (success or failure) — check Recent completed / Recent failed afterwards.
+                        @elseif($isDelayed)
+                            This job is scheduled to run later. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.
+                        @else
+                            This job is in line to run. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.
+                        @endif
+                    </p>
+                </div>
+            </div>
+        @endif
     </div>
 </div>

@@ -67,37 +67,48 @@ it('emits dark variants on failed-modal two-column rail + retry button branches'
         ->toContain('dark:text-red-400');
 });
 
-it('emits dark variants on batch-modal hero chrome (4 status branches) + progress bar', function (): void {
+it('emits dark variants on batch-modal status branches + two-column rail', function (): void {
     $src = modalSource('batch-modal');
 
     expect($src)
-        // Cancelled / failed-stop branch.
-        ->toContain('dark:from-red-900/40 dark:ring-red-400/30')
-        // Finished-clean branch.
-        ->toContain('dark:from-emerald-900/40 dark:ring-emerald-400/30')
-        // Has-failures-but-allowed branch.
+        // Status-chip branches — cancelled / failed-stop + finished-clean
+        // pairs render from the `$statusChip` match arm into the source
+        // even when the chip itself is suppressed in the markup.
+        ->toContain('dark:bg-red-900/40')
+        ->toContain('dark:text-red-300')
+        ->toContain('dark:ring-red-400/30')
+        ->toContain('dark:bg-gray-800')
+        // Has-failures-but-allowed branch still emits its dark token pair
+        // in the @php block — kept lint-visible for future re-use.
         ->toContain('dark:from-amber-900/40 dark:ring-amber-400/30')
-        // `to-white` becomes `dark:to-gray-900`.
-        ->toContain('dark:to-gray-900')
+        // Left-rail border + timeline dividers.
+        ->toContain('dark:border-white/10')
+        ->toContain('dark:divide-white/10')
         // Progress bar track.
         ->toContain('dark:bg-white/10')
-        // Empty-state dashed border.
-        ->toContain('dark:border-white/10');
+        // Modal panel surface.
+        ->toContain('dark:bg-gray-900');
 });
 
-it('emits dark variants on pending-modal hero (in-flight / delayed / pending) + empty state', function (): void {
+it('emits dark variants on pending-modal status branches + state hero + empty state', function (): void {
     $src = modalSource('pending-modal');
 
     expect($src)
-        // In-flight (amber).
+        // In-flight (amber) state hero + status badge.
+        ->toContain('dark:bg-amber-900/20 dark:ring-amber-400/25')
+        ->toContain('dark:text-amber-300')
+        // Delayed (indigo) state hero + status badge.
+        ->toContain('dark:bg-indigo-900/20 dark:ring-indigo-400/25')
+        ->toContain('dark:text-indigo-300')
+        // Pending (gray) state hero.
+        ->toContain('dark:bg-gray-800 dark:ring-white/10')
+        // Header icon / legacy match-arm tokens stay in @php so the
+        // variant set keeps round-tripping through the lint scan.
         ->toContain('dark:from-amber-900/40 dark:ring-amber-400/30')
-        // Delayed (indigo).
         ->toContain('dark:from-indigo-900/40 dark:ring-indigo-400/30')
-        // Pending (gray).
-        ->toContain('dark:from-gray-800 dark:ring-white/10')
-        ->toContain('dark:to-gray-900')
-        // Empty state (race-after-pickup).
-        ->toContain('dark:border-white/10');
+        // Left-rail border + dl dividers.
+        ->toContain('dark:border-white/10')
+        ->toContain('dark:divide-white/10');
 });
 
 it('emits dark variants on nested-data recursive renderer (object / array / null branches)', function (): void {

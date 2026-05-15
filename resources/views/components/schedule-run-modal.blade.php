@@ -129,7 +129,7 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closeRunModal">
     <div x-trap.noscroll="true"
-         class="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
+         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
          @click.stop>
         @if($run === null)
             {{-- Expired empty state --}}
@@ -175,103 +175,111 @@
                 </div>
             </div>
 
-            <div class="overflow-auto p-4 max-h-[calc(85vh-3.5rem)]">
-                {{-- Metadata grid --}}
-                <section data-section="schedule-run-meta" class="mb-6">
-                    <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Metadata</p>
-                    <dl class="grid grid-cols-2 sm:grid-cols-4 gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10">
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Host</dt>
-                            <dd class="mt-1 break-all font-mono text-sm text-gray-900 dark:text-gray-100">{{ $run['host_id'] }}</dd>
+            <div class="grid md:grid-cols-[20rem_1fr]">
+                {{-- Left rail — run metadata description list + skip reason
+                    (short, fits the rail). Mirrors the failed/details modal
+                    rail for cross-modal visual consistency. --}}
+                <div data-section="schedule-run-meta" class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">Run</p>
+                    <dl class="divide-y divide-gray-950/5 border-t border-gray-950/5 text-xs dark:divide-white/10 dark:border-white/10">
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Host</dt>
+                            <dd class="min-w-0 break-all text-right font-mono font-medium text-gray-900 dark:text-gray-100">{{ $run['host_id'] }}</dd>
                         </div>
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Started</dt>
-                            <dd class="mt-1 text-sm text-gray-900 dark:text-gray-100">
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Started</dt>
+                            <dd class="min-w-0 text-right font-medium text-gray-900 dark:text-gray-100">
                                 <x-queue-insights::qi-time :at="$run['started_at_ms']"/>
                             </dd>
                         </div>
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Runtime</dt>
-                            <dd class="mt-1 text-sm tabular-nums text-gray-900 dark:text-gray-100">{{ $formatDuration($run['runtime_ms']) }}</dd>
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="text-gray-500 dark:text-gray-400">Runtime</dt>
+                            <dd class="text-right font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $formatDuration($run['runtime_ms']) }}</dd>
                         </div>
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Exit</dt>
-                            <dd class="mt-1 text-sm tabular-nums text-gray-900 dark:text-gray-100">{{ $run['exit_code'] ?? '—' }}</dd>
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="text-gray-500 dark:text-gray-400">Exit</dt>
+                            <dd class="text-right font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $run['exit_code'] ?? '—' }}</dd>
+                        </div>
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Run ID</dt>
+                            <dd class="flex min-w-0 items-center gap-1.5">
+                                <code id="qi-schedule-run-id"
+                                      class="truncate rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $run['run_id'] }}</code>
+                                <x-queue-insights::copy-button target="qi-schedule-run-id" label="Copy run id" variant="icon" class="shrink-0"/>
+                            </dd>
                         </div>
                     </dl>
+
                     @if($run['recovered_from_hung'])
-                        <p class="mt-2 inline-flex items-center gap-1.5 rounded-md bg-amber-50 dark:bg-amber-900/40 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
+                        <p class="mt-3 inline-flex items-center gap-1.5 rounded-md bg-amber-50 dark:bg-amber-900/40 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
                             ⏳→{{ $badge['label'] }}
-                            <span>recovered from a previously-marked hung state</span>
+                            <span>recovered from hung</span>
                         </p>
                     @endif
 
-                    {{-- Run id + UUID copy --}}
-                    <dl class="mt-3 flex items-center gap-2 border-t border-gray-950/5 dark:border-white/10 pt-3">
-                        <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Run ID</dt>
-                        <dd class="flex min-w-0 flex-1 items-center gap-1.5">
-                            <code id="qi-schedule-run-id"
-                                  class="truncate rounded bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-300">{{ $run['run_id'] }}</code>
-                            <x-queue-insights::copy-button target="qi-schedule-run-id" label="Copy run id" variant="icon" class="shrink-0"/>
-                        </dd>
-                    </dl>
-                </section>
-
-                {{-- Skip reason --}}
-                @if($run['status'] === 'skipped' && $run['skip_reason'] !== null)
-                    <section data-section="schedule-run-skip" class="mb-6">
-                        <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Skip reason</p>
-                        <div class="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/5 dark:ring-white/10">
-                            <p class="font-medium text-gray-900 dark:text-gray-100">{{ $run['skip_reason'] }}
-                                <span class="ml-1 text-[10px] font-normal text-gray-400 dark:text-gray-400">(best guess — deduced at skip time)</span>
-                            </p>
-                            <p class="mt-1 leading-snug">{{ $skipReasonExplanation($run['skip_reason']) }}</p>
-                        </div>
-                    </section>
-                @endif
-
-                {{-- Exception --}}
-                @if(is_array($run['exception']) && isset($run['exception']['class']))
-                    <section data-section="schedule-run-exception" class="mb-6">
-                        <div class="mb-2 flex items-center justify-between gap-3">
-                            <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Exception</p>
-                        </div>
-                        <div class="rounded-xl bg-red-50 dark:bg-red-900/40 p-4 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
-                            <p class="break-all font-mono text-sm font-medium text-red-900 dark:text-red-200">{{ $run['exception']['class'] }}</p>
-                            @if(is_string($run['exception']['message'] ?? null))
-                                <p class="mt-1 text-sm text-red-800 dark:text-red-200">{{ $run['exception']['message'] }}</p>
-                            @endif
-                            @if(is_string($run['exception']['file'] ?? null))
-                                <p class="mt-2 break-all font-mono text-[11px] text-red-700 dark:text-red-300">
-                                    at {{ $run['exception']['file'] }}@if(isset($run['exception']['line'])):{{ $run['exception']['line'] }}@endif
+                    @if($run['status'] === 'skipped' && $run['skip_reason'] !== null)
+                        <section data-section="schedule-run-skip" class="mt-4">
+                            <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Skip reason</p>
+                            <div class="rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/5 dark:ring-white/10">
+                                <p class="font-medium text-gray-900 dark:text-gray-100">{{ $run['skip_reason'] }}
+                                    <span class="ml-1 text-[10px] font-normal text-gray-400 dark:text-gray-400">(best guess — deduced at skip time)</span>
                                 </p>
-                            @endif
-                            @if(is_string($run['exception']['trace_tail'] ?? null) && $run['exception']['trace_tail'] !== '')
-                                <pre class="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white/40 dark:bg-black/30 p-3 font-mono text-[11px] leading-5 text-red-900 dark:text-red-200">{{ $run['exception']['trace_tail'] }}</pre>
-                            @endif
-                        </div>
-                    </section>
-                @endif
-
-                {{-- Output --}}
-                @if($run['has_output'])
-                    @if($isClosure)
-                        <section data-section="schedule-run-output-closure" class="mb-6">
-                            <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Output</p>
-                            <p class="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-2 text-[11px] text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/5 dark:ring-white/10">
-                                Closure tasks can't capture output — use <code class="rounded bg-white dark:bg-gray-900 px-1 font-mono">Log::info(...)</code> inside the closure.
-                            </p>
-                        </section>
-                    @elseif(is_string($output) && $output !== '')
-                        <section data-section="schedule-run-output" class="mb-6">
-                            <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Output</p>
-                            <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-50 dark:bg-gray-800 p-3 font-mono text-[11px] leading-5 text-gray-900 dark:text-gray-100 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">{{ $output }}</pre>
+                                <p class="mt-1 leading-snug">{{ $skipReasonExplanation($run['skip_reason']) }}</p>
+                            </div>
                         </section>
                     @endif
-                @endif
+                </div>
 
-                {{-- Correlated jobs --}}
-                @include('queue-insights::partials.schedule-correlated-jobs', ['uuids' => $run['correlated_jobs']])
+                {{-- Right column — exception (focal), output, correlated
+                    jobs. The thing operators opened a run modal to read. --}}
+                <div class="min-w-0 space-y-6 p-5">
+                    @if(is_array($run['exception']) && isset($run['exception']['class']))
+                        <section data-section="schedule-run-exception">
+                            <div class="mb-2 flex items-center justify-between gap-3">
+                                <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Exception</p>
+                            </div>
+                            <div class="rounded-xl bg-red-50 dark:bg-red-900/40 p-4 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
+                                <p class="break-all font-mono text-sm font-medium text-red-900 dark:text-red-200">{{ $run['exception']['class'] }}</p>
+                                @if(is_string($run['exception']['message'] ?? null))
+                                    <p class="mt-1 text-sm text-red-800 dark:text-red-200">{{ $run['exception']['message'] }}</p>
+                                @endif
+                                @if(is_string($run['exception']['file'] ?? null))
+                                    <p class="mt-2 break-all font-mono text-[11px] text-red-700 dark:text-red-300">
+                                        at {{ $run['exception']['file'] }}@if(isset($run['exception']['line'])):{{ $run['exception']['line'] }}@endif
+                                    </p>
+                                @endif
+                                @if(is_string($run['exception']['trace_tail'] ?? null) && $run['exception']['trace_tail'] !== '')
+                                    <pre class="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white/40 dark:bg-black/30 p-3 font-mono text-[11px] leading-5 text-red-900 dark:text-red-200">{{ $run['exception']['trace_tail'] }}</pre>
+                                @endif
+                            </div>
+                        </section>
+                    @endif
+
+                    @if($run['has_output'])
+                        @if($isClosure)
+                            <section data-section="schedule-run-output-closure">
+                                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Output</p>
+                                <p class="rounded-lg bg-gray-50 dark:bg-gray-800 px-3 py-2 text-[11px] text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/5 dark:ring-white/10">
+                                    Closure tasks can't capture output — use <code class="rounded bg-white dark:bg-gray-900 px-1 font-mono">Log::info(...)</code> inside the closure.
+                                </p>
+                            </section>
+                        @elseif(is_string($output) && $output !== '')
+                            <section data-section="schedule-run-output">
+                                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Output</p>
+                                <pre class="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-gray-50 dark:bg-gray-800 p-3 font-mono text-[11px] leading-5 text-gray-900 dark:text-gray-100 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">{{ $output }}</pre>
+                            </section>
+                        @endif
+                    @endif
+
+                    {{-- Correlated jobs --}}
+                    @include('queue-insights::partials.schedule-correlated-jobs', ['uuids' => $run['correlated_jobs']])
+
+                    @if(! is_array($run['exception']) && ! $run['has_output'] && $run['correlated_jobs'] === [] && ! ($run['status'] === 'skipped' && $run['skip_reason'] !== null))
+                        <div class="rounded-lg bg-gray-50 px-4 py-6 text-center text-xs text-gray-500 ring-1 ring-inset ring-gray-950/5 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10">
+                            This run finished cleanly — no exception, no captured output, no correlated jobs.
+                        </div>
+                    @endif
+                </div>
             </div>
 
             <pre id="qi-schedule-run-markdown" class="hidden" aria-hidden="true">{{ $runMarkdown }}</pre>
