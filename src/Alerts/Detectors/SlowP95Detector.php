@@ -70,7 +70,7 @@ final class SlowP95Detector
             connection: '',
             queue: '',
             jobClass: $class,
-            title: 'Job class p95 duration exceeded',
+            title: 'Job class p95 duration exceeded: ' . class_basename($class),
             description: "{$class} p95 duration {$p95}ms ≥ threshold {$threshold}ms.",
             context: [
                 'p95_ms' => $p95,

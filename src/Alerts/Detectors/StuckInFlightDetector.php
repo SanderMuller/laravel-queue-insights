@@ -70,6 +70,17 @@ final class StuckInFlightDetector
             return null;
         }
 
+        $context = [
+            'age_seconds' => $age,
+            'threshold_seconds' => $thresholdSeconds,
+            'oldest_uuid' => $uuid,
+            'started_at' => $startedAt,
+        ];
+
+        if (is_string($jobClass) && $jobClass !== '') {
+            $context['oldest_class'] = $jobClass;
+        }
+
         return new Issue(
             rule: self::RULE,
             severity: $this->severity(),
@@ -78,13 +89,7 @@ final class StuckInFlightDetector
             jobClass: null,
             title: 'Stuck in-flight job',
             description: "Oldest in-flight job on {$connection}:{$canonicalQueue} has been running {$age}s.",
-            context: [
-                'age_seconds' => $age,
-                'threshold_seconds' => $thresholdSeconds,
-                'oldest_uuid' => $uuid,
-                'oldest_class' => $jobClass ?? '',
-                'started_at' => $startedAt,
-            ],
+            context: $context,
             detectedAt: $now,
         );
     }

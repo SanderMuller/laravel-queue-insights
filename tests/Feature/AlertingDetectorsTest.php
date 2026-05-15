@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\IssueDetector;
 use SanderMuller\QueueInsights\Contracts\QueueSnapshotDriver;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
@@ -238,6 +239,52 @@ it('does not fire StuckInFlight when in-flight zset is empty', function (): void
     Artisan::call('queue-insights:snapshot');
 
     Event::assertNotDispatched(StuckInFlight::class);
+});
+
+it('OldestPending Issue omits oldest_class from context when the pending hash has no class field', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $oldAvailableAt = Date::now()->getTimestamp() - 600;
+    Redis::connection('default')->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), $oldAvailableAt, 'class-less-uuid']);
+    // No `hset pending:class-less-uuid class ...` — simulating a hash that
+    // dropped its class field (TTL pruning) or was never written by a
+    // foreign producer. The detector must still fire but the resulting
+    // context must NOT carry an empty `oldest_class` slot.
+
+    /** @var IssueDetector $detector */
+    $detector = resolve(IssueDetector::class);
+    $issues = $detector->detectForSnapshot('sqsq', 'work', 0);
+
+    $oldest = array_values(array_filter($issues, fn (Issue $i): bool => $i->rule === 'oldest_pending'));
+    expect($oldest)->toHaveCount(1)
+        ->and(array_key_exists('oldest_class', $oldest[0]->context))->toBeFalse();
+});
+
+it('StuckInFlight Issue omits oldest_class from context when the pending hash has no class field', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.stuck_inflight.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $startedAt = Date::now()->getTimestamp() - 300;
+    Redis::connection('default')->command('zadd', [KeyPrefix::make('inflight-zset:sqsq:work'), $startedAt, 'class-less-uuid']);
+
+    /** @var IssueDetector $detector */
+    $detector = resolve(IssueDetector::class);
+    $issues = $detector->detectForSnapshot('sqsq', 'work', 0);
+
+    $stuck = array_values(array_filter($issues, fn (Issue $i): bool => $i->rule === 'stuck_inflight'));
+    expect($stuck)->toHaveCount(1)
+        ->and(array_key_exists('oldest_class', $stuck[0]->context))->toBeFalse();
 });
 
 it('fires SnapshotErrored when the driver throws (catch path)', function (): void {

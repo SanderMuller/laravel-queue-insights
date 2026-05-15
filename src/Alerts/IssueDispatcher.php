@@ -465,12 +465,12 @@ final readonly class IssueDispatcher
             return $context;
         }
 
-        $description = ScheduledTaskLabel::sanitise($summary['description']);
+        $description = AlertText::sanitise($summary['description']);
         if ($description !== '') {
             $context['task_description'] = $description;
         }
 
-        $command = ScheduledTaskLabel::sanitise($summary['command']);
+        $command = AlertText::sanitise($summary['command']);
         if ($command !== '') {
             // `CommandLabel::short` strips the absolute PHP-binary prefix so
             // `'/Users/.../Herd/bin/php' 'artisan' 'reports:export'` reads as
@@ -479,12 +479,12 @@ final readonly class IssueDispatcher
             $context['task_command'] = CommandLabel::short($command);
         }
 
-        $expression = ScheduledTaskLabel::sanitise($summary['expression']);
+        $expression = AlertText::sanitise($summary['expression']);
         if ($expression !== '') {
             $context['task_expression'] = $expression;
         }
 
-        $timezone = ScheduledTaskLabel::sanitise($summary['timezone']);
+        $timezone = AlertText::sanitise($summary['timezone']);
         if ($timezone !== '') {
             $context['task_timezone'] = $timezone;
         }

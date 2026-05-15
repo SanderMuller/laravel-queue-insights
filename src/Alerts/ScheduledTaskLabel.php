@@ -85,54 +85,16 @@ final class ScheduledTaskLabel
      */
     private static function label(?array $summary, string $taskKey): string
     {
-        $description = self::sanitise($summary['description'] ?? null);
+        $description = AlertText::sanitise($summary['description'] ?? null);
         if ($description !== '') {
             return $description;
         }
 
-        $command = self::sanitise($summary['command'] ?? null);
+        $command = AlertText::sanitise($summary['command'] ?? null);
         if ($command !== '') {
             return CommandLabel::short($command);
         }
 
         return substr($taskKey, 0, 12);
-    }
-
-    /**
-     * Strip control characters, collapse whitespace runs, and trim — so a
-     * hostile `description` like `"   "` or one containing `\n` cannot blank
-     * the alert title or split a log line into multiple records.
-     *
-     * Caps length at 200 chars so a pathological description doesn't push
-     * the mail subject / Slack title past channel-side limits.
-     */
-    public static function sanitise(?string $value): string
-    {
-        if (! is_string($value) || $value === '') {
-            return '';
-        }
-
-        // `\p{C}` matches all Unicode "other" (control) characters incl. CR/LF
-        // and zero-width separators. `u` flag is mandatory for the class.
-        $stripped = preg_replace('/\p{C}+/u', ' ', $value);
-        if (! is_string($stripped)) {
-            return '';
-        }
-
-        $collapsed = preg_replace('/\s+/u', ' ', $stripped);
-        if (! is_string($collapsed)) {
-            return '';
-        }
-
-        $trimmed = trim($collapsed);
-        if ($trimmed === '') {
-            return '';
-        }
-
-        if (mb_strlen($trimmed) > 200) {
-            return mb_substr($trimmed, 0, 197) . '...';
-        }
-
-        return $trimmed;
     }
 }

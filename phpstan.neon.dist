@@ -79,6 +79,7 @@ parameters:
         -
             identifier: staticMethod.internalClass
             paths:
+                - tests/Unit/Alerts/
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Unit/Prometheus/
@@ -87,6 +88,7 @@ parameters:
         -
             identifier: return.internalClass
             paths:
+                - tests/Unit/Alerts/
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Feature/AlertingNotificationsTest.php
@@ -97,6 +99,7 @@ parameters:
         -
             identifier: new.internalClass
             paths:
+                - tests/Unit/Alerts/
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Feature/AlertingNotificationsTest.php
@@ -115,6 +118,7 @@ parameters:
                 - tests/Feature/AlertingTest.php
                 - tests/Feature/Alerts/
                 - tests/Feature/Http/AlertsDashboardTest.php
+                - tests/Unit/Alerts/
                 - tests/Unit/Dashboard/
                 - tests/Unit/Prometheus/
                 - tests/Feature/Prometheus/

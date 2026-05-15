@@ -75,6 +75,22 @@ final class OldestPendingDetector
             return null;
         }
 
+        $context = [
+            'age_seconds' => $age,
+            'threshold_seconds' => $thresholdSeconds,
+            'oldest_uuid' => $uuid,
+            'available_at' => $availableAt,
+        ];
+
+        // Only surface oldest_class when we resolved one — an empty value
+        // renders as a bare `oldest_class:` row in mail/Slack which adds
+        // noise without helping triage. The typed `OldestPendingAging`
+        // event falls back to '' via `ctxString` when the key is absent,
+        // so omitting it here is event-payload-safe.
+        if (is_string($jobClass) && $jobClass !== '') {
+            $context['oldest_class'] = $jobClass;
+        }
+
         return new Issue(
             rule: self::RULE,
             severity: $this->severity(),
@@ -83,13 +99,7 @@ final class OldestPendingDetector
             jobClass: null,
             title: 'Oldest pending job aging',
             description: "Oldest pending job on {$connection}:{$canonicalQueue} has been waiting {$age}s.",
-            context: [
-                'age_seconds' => $age,
-                'threshold_seconds' => $thresholdSeconds,
-                'oldest_uuid' => $uuid,
-                'oldest_class' => $jobClass ?? '',
-                'available_at' => $availableAt,
-            ],
+            context: $context,
             detectedAt: $now,
         );
     }

@@ -5,6 +5,7 @@ namespace SanderMuller\QueueInsights\Alerts\Detectors;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Alerts\AlertText;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
@@ -42,6 +43,16 @@ final class SnapshotErroredDetector
             return null;
         }
 
+        // Exception messages routinely carry newlines + framework context.
+        // `AlertText::sanitise` keeps the alert single-line + bounded so a
+        // verbose stack-trace fragment can't split log records or push
+        // past mail-subject / Slack-title limits. The raw message is still
+        // on the `snapshot:error:{c}:{q}` Redis key for log forwarding.
+        $message = AlertText::sanitise($messageRaw);
+        if ($message === '') {
+            $message = '(no message)';
+        }
+
         return new Issue(
             rule: self::RULE,
             severity: $this->severity(),
@@ -49,9 +60,9 @@ final class SnapshotErroredDetector
             queue: $canonicalQueue,
             jobClass: null,
             title: 'Snapshot driver failed',
-            description: "Latest snapshot for {$connection}:{$canonicalQueue} failed: {$messageRaw}",
+            description: "Latest snapshot for {$connection}:{$canonicalQueue} failed: {$message}",
             context: [
-                'error_message' => $messageRaw,
+                'error_message' => $message,
             ],
             detectedAt: Date::now()->getTimestamp(),
         );

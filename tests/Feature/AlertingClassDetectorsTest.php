@@ -93,6 +93,48 @@ it('fires JobClassFailureRateExceeded when ratio crosses threshold and total >= 
         && $e->severity === 'warning');
 });
 
+it('failure-rate Issue title appends the short class name for operator triage', function (): void {
+    noopSnapshotConfig();
+    config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 1);
+    config()->set('queue-insights.alerts.rules.failure_rate.ratio', 0.10);
+
+    seedClass('App\\Jobs\\BillingJob', processed: 80, failed: 20);
+
+    /** @var IssueDetector $detector */
+    $detector = resolve(IssueDetector::class);
+    $issues = $detector->detectClassScoped('App\\Jobs\\BillingJob');
+
+    $titles = array_map(fn (Issue $i): string => $i->title, $issues);
+    expect($titles)->toContain('Job class failure rate exceeded: BillingJob');
+});
+
+it('slow-p95 Issue title appends the short class name for operator triage', function (): void {
+    noopSnapshotConfig();
+    config()->set('queue-insights.alerts.rules.slow_p95.enabled', true);
+    config()->set('queue-insights.alerts.rules.slow_p95.class_threshold_ms', [
+        'App\\Jobs\\SlowJob' => 100,
+    ]);
+    config()->set('queue-insights.alerts.rules.failure_rate.enabled', false);
+
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('classes'), Date::now()->getTimestamp(), 'App\\Jobs\\SlowJob']);
+
+    // Seed the duration-samples LIST that SlowP95Detector reads (lrange).
+    // 20 samples at 500ms — p95 lands at 500ms, well above the 100ms
+    // class threshold so the detector fires.
+    $samplesKey = KeyPrefix::make('duration:samples:App\\Jobs\\SlowJob');
+    foreach (range(1, 20) as $_) {
+        $redis->command('rpush', [$samplesKey, '500']);
+    }
+
+    /** @var IssueDetector $detector */
+    $detector = resolve(IssueDetector::class);
+    $issues = $detector->detectClassScoped('App\\Jobs\\SlowJob');
+
+    $titles = array_map(fn (Issue $i): string => $i->title, $issues);
+    expect($titles)->toContain('Job class p95 duration exceeded: SlowJob');
+});
+
 it('does not fire failure rate when total is below min_jobs', function (): void {
     noopSnapshotConfig();
     config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 50);

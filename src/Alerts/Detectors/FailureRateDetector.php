@@ -69,7 +69,7 @@ final class FailureRateDetector
             connection: '',
             queue: '',
             jobClass: $class,
-            title: 'Job class failure rate exceeded',
+            title: 'Job class failure rate exceeded: ' . class_basename($class),
             description: "{$class} failure rate {$percent}% over {$total} jobs this hour.",
             context: [
                 'failed' => $failed,
