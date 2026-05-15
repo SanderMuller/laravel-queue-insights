@@ -666,18 +666,65 @@ LUA,
         // dropped into the same table are preserved.
         DB::table('failed_jobs')->where('uuid', 'like', 'preview-uuid-%')->delete();
 
+        // Helper — builds a failed-job payload JSON that mirrors the
+        // shape Laravel itself pushes (data.commandName/command, top-level
+        // `illuminate:log:context` from ContextServiceProvider, tags).
+        // The serialized command lets the failed-modal's
+        // SerializedCommandReader extract instance properties; the
+        // Context block lets the structured-payload + ValueParser path
+        // show decoded request_id / tenant_id / user_id inline rather
+        // than `s:N:"…"` literals.
+        $previewFailedPayload = static function (string $uuid, string $class, int $attempts, int $maxTries, array $extraData = [], array $contextOverride = []): string {
+            $context = $contextOverride !== [] ? $contextOverride : [
+                'request_id' => serialize('preview-req-' . substr($uuid, -8)),
+                'tenant_id' => serialize(random_int(10, 30)),
+                'user_id' => serialize(random_int(1_000, 9_999)),
+                'dispatcher' => serialize('queue-insights preview'),
+            ];
+
+            return (string) json_encode([
+                'uuid' => $uuid,
+                'displayName' => $class,
+                'job' => 'Illuminate\\Queue\\CallQueuedHandler@call',
+                'maxTries' => $maxTries,
+                'maxExceptions' => null,
+                'failOnTimeout' => false,
+                'backoff' => null,
+                'timeout' => 60,
+                'retryUntil' => null,
+                'attempts' => $attempts,
+                'data' => [
+                    'commandName' => $class,
+                    'command' => 'O:' . strlen($class) . ':"' . $class . '":0:{}',
+                    ...$extraData,
+                ],
+                'illuminate:log:context' => [
+                    'data' => $context,
+                    'hidden' => [],
+                ],
+                'tags' => ['preview', 'failed', 'demo'],
+            ], JSON_UNESCAPED_SLASHES);
+        };
+
         $rows = [
             [
                 'uuid' => 'preview-uuid-failed-report',
                 'connection' => 'sqs',
                 'queue' => 'reports',
-                'payload' => json_encode([
-                    'uuid' => 'preview-uuid-failed-report',
-                    'displayName' => 'App\\Jobs\\GenerateReport',
-                    'attempts' => 3,
-                    'maxTries' => 3,
-                    'data' => ['batchId' => 'preview-batch-001'],
-                ]),
+                'payload' => $previewFailedPayload(
+                    'preview-uuid-failed-report',
+                    'App\\Jobs\\GenerateReport',
+                    3,
+                    3,
+                    extraData: ['batchId' => 'preview-batch-001'],
+                    contextOverride: [
+                        'request_id' => serialize('preview-req-report-8a3f'),
+                        'tenant_id' => serialize(17),
+                        'user_id' => serialize(2_481),
+                        'batch_purpose' => serialize('monthly_invoice_run'),
+                        'dispatcher' => serialize('queue-insights preview'),
+                    ],
+                ),
                 'exception' => "RuntimeException: Database connection timeout\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subMinutes(8)->format('Y-m-d H:i:s'),
             ],
@@ -685,12 +732,12 @@ LUA,
                 'uuid' => 'preview-uuid-failed-welcome',
                 'connection' => 'redis',
                 'queue' => 'mail',
-                'payload' => json_encode([
-                    'uuid' => 'preview-uuid-failed-welcome',
-                    'displayName' => 'App\\Jobs\\SendWelcomeEmail',
-                    'attempts' => 2,
-                    'maxTries' => 3,
-                ]),
+                'payload' => $previewFailedPayload(
+                    'preview-uuid-failed-welcome',
+                    'App\\Jobs\\SendWelcomeEmail',
+                    2,
+                    3,
+                ),
                 'exception' => "Swift_TransportException: SMTP server refused connection\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subMinutes(20)->format('Y-m-d H:i:s'),
             ],
@@ -699,12 +746,20 @@ LUA,
                 'uuid' => 'preview-uuid-failed-child',
                 'connection' => 'redis',
                 'queue' => 'mail',
-                'payload' => json_encode([
-                    'uuid' => 'preview-uuid-failed-child',
-                    'displayName' => 'App\\Jobs\\NotifyImportFinished',
-                    'attempts' => 1,
-                    'maxTries' => 1,
-                ]),
+                'payload' => $previewFailedPayload(
+                    'preview-uuid-failed-child',
+                    'App\\Jobs\\NotifyImportFinished',
+                    1,
+                    1,
+                    contextOverride: [
+                        'request_id' => serialize('preview-req-import-9c11'),
+                        'tenant_id' => serialize(22),
+                        'user_id' => serialize(7_204),
+                        'parent_job' => serialize('App\\Jobs\\ProcessImport'),
+                        'csv_row_count' => serialize(481),
+                        'dispatcher' => serialize('queue-insights preview'),
+                    ],
+                ),
                 'exception' => "InvalidArgumentException: Malformed CSV row 482\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subHour()->format('Y-m-d H:i:s'),
             ],
@@ -719,12 +774,19 @@ LUA,
                 'uuid' => 'preview-uuid-silenced-vendor-1',
                 'connection' => 'redis',
                 'queue' => 'webhooks',
-                'payload' => json_encode([
-                    'uuid' => 'preview-uuid-silenced-vendor-1',
-                    'displayName' => 'App\\Jobs\\PingThirdPartyVendor',
-                    'attempts' => 3,
-                    'maxTries' => 3,
-                ]),
+                'payload' => $previewFailedPayload(
+                    'preview-uuid-silenced-vendor-1',
+                    'App\\Jobs\\PingThirdPartyVendor',
+                    3,
+                    3,
+                    contextOverride: [
+                        'request_id' => serialize('preview-req-vendor-2d4e'),
+                        'vendor' => serialize('payments.example.com'),
+                        'endpoint' => serialize('POST /webhooks/customer.updated'),
+                        'timeout_ms' => serialize(5000),
+                        'dispatcher' => serialize('queue-insights preview'),
+                    ],
+                ),
                 'exception' => "GuzzleHttp\\Exception\\ConnectException: cURL error 28: Operation timed out after 5000 ms\n#0 /preview/Stack.php(1): preview()\n#1 {main}",
                 'failed_at' => $now->copy()->subMinutes(4)->format('Y-m-d H:i:s'),
             ],
@@ -1026,6 +1088,21 @@ LUA,
                 'commandName' => $class,
                 'command' => 'O:' . strlen($class) . ':"' . $class . '":0:{}',
             ],
+            // Top-level Context — same shape `ContextServiceProvider::boot`
+            // attaches at JobQueueing time. Values are PHP-serialized
+            // scalars because that's what `Context::dehydrate()` returns;
+            // the dashboard's `ValueParser::decodeScalar` unwraps them
+            // inline on the modal so operators see the actual values.
+            'illuminate:log:context' => [
+                'data' => [
+                    'request_id' => serialize('preview-' . substr($uuid, 0, 8)),
+                    'tenant_id' => serialize(random_int(10, 30)),
+                    'user_id' => serialize(random_int(1_000, 9_999)),
+                    'dispatcher' => serialize('queue-insights preview'),
+                ],
+                'hidden' => [],
+            ],
+            'tags' => ['preview', 'demo'],
         ], JSON_UNESCAPED_SLASHES) ?: '{}';
 
         $row['payload_displayName'] = $class;
@@ -1109,6 +1186,17 @@ LUA,
         if ($attempts !== null) {
             $fields['attempts'] = (string) $attempts;
         }
+
+        // Pending payload capture — production hosts get these fields
+        // written by `RecordJobQueued` when `pending.capture.payloads =
+        // full`. The preview mirrors that here so every preview pending
+        // / in-flight row's modal renders the structured-payload section
+        // (with the decoded `illuminate:log:context` tree) instead of a
+        // bare metadata stub.
+        $fields = $this->enrichWithPayloadFields(['class' => $class, 'uuid' => $uuid] + $fields)
+            // The enricher writes `payload_*` keys onto the row; strip
+            // back the helper inputs (class/uuid already present above).
+            + $fields;
 
         foreach ($fields as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
