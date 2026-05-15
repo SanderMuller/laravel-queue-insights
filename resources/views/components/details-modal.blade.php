@@ -26,16 +26,17 @@
         ? $captureMode
         : (\SanderMuller\QueueInsights\Enums\CaptureMode::tryFrom(is_string($captureMode) ? $captureMode : 'off') ?? \SanderMuller\QueueInsights\Enums\CaptureMode::Off);
     $sectionBKeys = ['payload_displayName', 'payload_maxTries', 'payload_timeout', 'payload_backoff', 'payload_note', 'payload_reason', 'payload_error', 'payload_size'];
+    // Decoded-body keys that belong in the hero (Job Config card) — kept in
+    // one place so the hasSectionB gate, the hero pill source map, and the
+    // payload-tab filter all agree on what counts as "config".
+    $heroBodyKeys = ['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'];
     $sectionCBodyRaw = $payload['payload_body'] ?? null;
     $sectionCBody = is_string($sectionCBodyRaw) ? (json_decode($sectionCBodyRaw, true) ?? $sectionCBodyRaw) : null;
-    // Section B (the right-column hero) now sources Job-Config + tags from
-    // EITHER the narrow `payload_*` capture-mode fields OR the decoded full
-    // body — so it renders whenever either is available, not just the legacy
-    // `payload_*` set. Without this widening, full-capture-with-no-`payload_*`
-    // fixtures (the path the structured-payload tests cover) would hide the
-    // hero even though the body carries all the data needed.
+    // Hero renders whenever EITHER the narrow `payload_*` capture-mode
+    // fields OR the decoded body carries hero data — otherwise full-capture
+    // fixtures without the `payload_*` slice would silently hide the card.
     $hasSectionB = ! empty(array_intersect($sectionBKeys, array_keys($payload)))
-        || (is_array($sectionCBody) && ! empty(array_intersect(['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'], array_keys($sectionCBody))));
+        || (is_array($sectionCBody) && ! empty(array_intersect($heroBodyKeys, array_keys($sectionCBody))));
 
     // Duration — humanize with short form + keep raw ms in gray.
     $durationRaw = $payload['duration_ms'] ?? '';
@@ -147,9 +148,6 @@
                     || $captureMode !== \SanderMuller\QueueInsights\Enums\CaptureMode::Full;
             @endphp
             @php
-                // Split the class FQCN into a faded namespace + bold leaf so
-                // the modal title reads `App\Jobs\` faded into BillingJob.
-                // Matches the rhythm of the completed-list row header.
                 $classFqcn = is_string($payload['class'] ?? null) && $payload['class'] !== ''
                     ? $payload['class']
                     : null;
@@ -327,15 +325,13 @@
                         // attempts, etc.) flow through unchanged.
                         $sectionCBodyFiltered = $sectionCBody;
                         if (is_array($sectionCBodyFiltered)) {
-                            foreach (['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'] as $stripKey) {
+                            foreach ($heroBodyKeys as $stripKey) {
                                 unset($sectionCBodyFiltered[$stripKey]);
                             }
                         }
                     @endphp
 
-                    {{-- Job-config section — promoted "Hero gradient header" baseline
-                         from round 1. Stays outside the round-2 picker since the user
-                         is iterating on the section under it. --}}
+                    {{-- Job-config section — gradient hero card. --}}
                     @if($hasSectionB)
                         <section data-section="job-config">
                             @if($statusBranch === 'note')
@@ -386,12 +382,12 @@
                          2px emerald underline. Body sits flush in a gray inset surface so
                          the modal reads as documentation rather than a control panel. --}}
                     @if($sectionCBody !== null)
-                        @php
-                            // Use the filtered body for both tabs so config + tags don't
-                            // double up between the hero header and the payload section.
-                            $payloadJsonString = is_array($sectionCBodyFiltered) ? json_encode($sectionCBodyFiltered, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBodyFiltered;
-                        @endphp
-
+                        {{-- Structured tab uses the FILTERED body so config + tags
+                             don't double up with the hero header chips. JSON tab
+                             keeps the ORIGINAL sanitized body — that pane is the
+                             operator's only raw view of the captured payload, so
+                             stripping there would lose the only way to inspect
+                             maxTries / retryUntil / tags as captured. --}}
                         <section data-section="payload">
                             <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
                                 <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
@@ -417,6 +413,9 @@
                                 </div>
                             </div>
                             @if($payloadTab === 'json')
+                                @php
+                                    $payloadJsonString = is_array($sectionCBody) ? json_encode($sectionCBody, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBody;
+                                @endphp
                                 <pre role="tabpanel"
                                      id="qi-panel-json"
                                      aria-labelledby="qi-tab-json"

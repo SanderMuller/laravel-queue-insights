@@ -169,11 +169,9 @@
                                         ? $item['parent_uuid']
                                         : null;
 
-                                    // Split FQCN into faded namespace + bold leaf so the row
-                                    // matches the completed-list rhythm. When class wasn't
-                                    // captured (older stream entry / pending hash expired),
-                                    // fall back to a status-appropriate placeholder so the
-                                    // identifier doesn't end up duplicated on both lines.
+                                    // Placeholder fallback exists so a row whose class wasn't
+                                    // captured (old stream entry / pending hash expired)
+                                    // doesn't fall back to showing the UUID twice.
                                     $namespace = '';
                                     $shortName = '';
                                     if ($hasClass) {

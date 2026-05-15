@@ -3,9 +3,12 @@
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
+use SanderMuller\QueueInsights\QueueInsights;
+use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -155,6 +158,62 @@ it('renders the per-uuid item list in enqueue order when expanded', function ():
         ->assertSee('App\\Jobs\\')
         ->assertSeeHtml('>BetaJob</span>')
         ->assertSeeHtml('>GammaJob</span>');
+});
+
+it('hydrates completed batch items with class + attempts + chain via pipelined XRANGE on qi:completed', function (): void {
+    // The completed-item branch backfills enrichment from the aggregate
+    // `qi:completed` stream — without this, completed batch rows used to
+    // render the UUID twice (class came back null from the `uuid-completed`
+    // index, which only stores the stream id). Seed a real completed stream
+    // entry + uuid index pointer; assert the batch modal renders:
+    //   - faded namespace + bold leaf for the class FQCN
+    //   - retry chip (attempts=3)
+    //   - forward-chain chip pointing at the next class
+    //   - processed_at timestamp (ISO-8601 from RecordJobProcessed, parsed
+    //     back to epoch by BatchItemMeta::completedFromFields)
+    seedBatchRow('batch-enriched');
+    R::raw('zadd', 'qmtest:batches:index', Date::now()->getTimestamp(), 'batch-enriched');
+    R::raw('rpush', 'qmtest:batch:batch-enriched:uuids', 'uuid-enriched');
+
+    // Real completed-stream entry — same shape RecordJobProcessed writes.
+    seedStream(Redis::connection('default'), KeyPrefix::make('completed'), [
+        'class' => 'App\\Jobs\\BillingReport',
+        'connection' => 'redis',
+        'queue' => 'reports',
+        'duration_ms' => '420',
+        'attempts' => '3',
+        'processed_at' => '2026-04-24T12:00:00+00:00',
+        'uuid' => 'uuid-enriched',
+        'chain' => (string) json_encode([
+            ['class' => 'App\\Jobs\\BillingFollowUp', 'connection' => 'redis', 'queue' => 'reports'],
+        ]),
+    ]);
+
+    // The XRANGE-by-id path in BatchItemMeta::loadCompleted needs the
+    // exact stream id. seedStream() doesn't return the auto-assigned id, so
+    // read it back via the QueueInsights service the way real callers do.
+    $completed = resolve(QueueInsights::class)->recentCompleted(1);
+    $streamIdRaw = $completed[0]['_id'] ?? '';
+    if (! is_string($streamIdRaw) || $streamIdRaw === '') {
+        throw new RuntimeException('Seeded completed-stream entry missing _id');
+    }
+    $streamId = $streamIdRaw;
+    R::raw('set', 'qmtest:uuid-completed:uuid-enriched', $streamId);
+
+    Livewire::test(QueueInsightsDashboard::class, ['expandedBatchId' => 'batch-enriched'])
+        // Class FQCN renders with namespace fade + bold leaf — assert on the
+        // bold-leaf span so a stray payload occurrence of the class can't
+        // false-positive.
+        ->assertSee('App\\Jobs\\')
+        ->assertSeeHtml('>BillingReport</span>')
+        // Retry chip — `attempts=3` triggers it. The chip text is "retry 3"
+        // wrapped by the shared retry-chip partial.
+        ->assertSee('retry 3')
+        // Forward-chain chip — `↳` glyph + the next-class leaf.
+        ->assertSeeHtml('>BillingFollowUp</span>')
+        // Click target — completed items route to openPayload with the
+        // stream id, not the uuid.
+        ->assertSeeHtml("wire:click=\"openPayload('" . $streamId . "')\"");
 });
 
 it('renders an in-flight batch item with running chip when the pending hash carries state=in_flight', function (): void {

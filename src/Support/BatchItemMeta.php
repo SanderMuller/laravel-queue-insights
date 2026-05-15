@@ -56,14 +56,18 @@ final class BatchItemMeta
                 continue;
             }
 
-            // phpredis returns `{id => {field => value}}`, predis returns
-            // a list of `[id, fields]` pairs. Both shapes collapse to the
-            // first entry's field map below.
             $first = $entries[array_key_first($entries)] ?? null;
-            $fields = is_array($first) ? $first : null;
-            if ($fields === null) {
+            if (! is_array($first)) {
                 continue;
             }
+
+            // Normalize across both XRANGE reply shapes:
+            //   phpredis  → {id => {field => value}}        first = field map directly
+            //   predis    → [[id, [field, value, ...]]]     first = [id, field_map]
+            // Without this, predis hosts silently lose every enriched field.
+            $fields = (array_is_list($first) && count($first) === 2 && is_array($first[1]))
+                ? $first[1]
+                : $first;
 
             $out[$id] = self::completedFromFields($fields);
         }
@@ -117,6 +121,21 @@ final class BatchItemMeta
      */
     private static function completedFromFields(array $fields): array
     {
+        // `RecordJobProcessed` writes `processed_at` as ISO-8601 (the same
+        // shape the details-modal qi-time component consumes). Batch items
+        // need an epoch int because the modal template's `is_int($ts)`
+        // gate hands the value to qi-time; parse here so a completed batch
+        // row shows when it finished, mirroring the pending/in-flight/failed
+        // statuses that already carry an int timestamp.
+        $processedAt = null;
+        $processedAtRaw = $fields['processed_at'] ?? null;
+        if (is_string($processedAtRaw) && $processedAtRaw !== '') {
+            $ts = strtotime($processedAtRaw);
+            $processedAt = $ts === false ? null : $ts;
+        } elseif (is_numeric($processedAtRaw)) {
+            $processedAt = (int) $processedAtRaw;
+        }
+
         return [
             'class' => isset($fields['class']) && is_string($fields['class']) ? $fields['class'] : null,
             'attempts' => isset($fields['attempts']) && is_numeric($fields['attempts']) ? (int) $fields['attempts'] : 0,
@@ -126,7 +145,7 @@ final class BatchItemMeta
             'parent_uuid' => isset($fields['parent_uuid']) && is_string($fields['parent_uuid']) && $fields['parent_uuid'] !== ''
                 ? $fields['parent_uuid']
                 : null,
-            'processed_at' => isset($fields['processed_at']) && is_numeric($fields['processed_at']) ? (int) $fields['processed_at'] : null,
+            'processed_at' => $processedAt,
         ];
     }
 
