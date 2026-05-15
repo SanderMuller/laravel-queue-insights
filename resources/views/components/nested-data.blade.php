@@ -41,14 +41,27 @@
         <dl class="divide-y divide-gray-950/5 dark:divide-white/10">
             @foreach($data as $k => $v)
                 @php
-                    $isContainer = is_array($v) && $v !== [];
+                    // Strings that are themselves a serialized PHP blob or a
+                    // JSON container (e.g. Laravel's `illuminate:log:context`
+                    // entry on a queued job) surface to the operator as a
+                    // wall of escaped characters. `ValueParser` cracks them
+                    // open so the renderer can treat them like any other
+                    // tree node — Sentry-style transparent parsing.
+                    $parsedFromString = is_string($v) && $v !== ''
+                        ? \SanderMuller\QueueInsights\Support\ValueParser::parse($v)
+                        : null;
+                    $isContainer = (is_array($v) && $v !== []) || $parsedFromString !== null;
+                    $containerData = $parsedFromString ?? (is_array($v) ? $v : []);
                     $rendered = $isContainer ? '' : $renderInline($v);
                     $truncated = ! $isContainer && strlen($rendered) > 200;
-                    $childCount = $isContainer ? count($v) : 0;
-                    $childIsAssoc = $isContainer && ! array_is_list($v);
-                    $containerSummary = $isContainer
-                        ? ($childIsAssoc ? "object · {$childCount} keys" : "array · {$childCount} items")
-                        : '';
+                    $childCount = $isContainer ? count($containerData) : 0;
+                    $childIsAssoc = $isContainer && ! array_is_list($containerData);
+                    $containerKind = $parsedFromString !== null ? 'parsed' : ($childIsAssoc ? 'object' : 'array');
+                    $containerSummary = match ($containerKind) {
+                        'parsed' => "parsed · {$childCount} " . ($childCount === 1 ? 'entry' : 'entries'),
+                        'object' => "object · {$childCount} keys",
+                        default => "array · {$childCount} items",
+                    };
                 @endphp
                 <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs"
                      @if($isContainer || $truncated) x-data="{ expanded: false }" @endif>
@@ -70,7 +83,7 @@
                                 the full layout pass (codex perf review). --}}
                             <template x-if="expanded">
                                 <div class="mt-1 -mx-4 -mb-2 border-t border-gray-950/5 bg-gray-950/[0.02] dark:border-white/10 dark:bg-white/5">
-                                    <x-queue-insights::nested-data :data="$v" :depth="$depth + 1"/>
+                                    <x-queue-insights::nested-data :data="$containerData" :depth="$depth + 1"/>
                                 </div>
                             </template>
                         @elseif($truncated)

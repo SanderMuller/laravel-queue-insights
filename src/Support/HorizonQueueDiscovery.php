@@ -4,6 +4,7 @@ namespace SanderMuller\QueueInsights\Support;
 
 use Illuminate\Support\Str;
 use Laravel\Horizon\Horizon;
+use Laravel\Horizon\HorizonServiceProvider;
 
 /**
  * Resolve Horizon supervisor `{connection, queue}` tuples from
@@ -16,6 +17,32 @@ use Laravel\Horizon\Horizon;
  */
 final class HorizonQueueDiscovery
 {
+    /**
+     * True when Horizon's service provider — or any subclass of it — is
+     * registered in the running app. This is the "Horizon is the intended
+     * runtime here" signal: on Vapor + SQS the idiomatic setup excludes the
+     * provider (`extra.laravel.dont-discover` + conditional registration),
+     * so this returns false and config-walk autodiscovery stays off.
+     *
+     * Scans `getLoadedProviders()` rather than `Application::providerIsLoaded()`
+     * because that method keys on the exact registered class name — a host
+     * registering a `HorizonServiceProvider` subclass would false-negative an
+     * active Horizon. `is_a(..., true)` matches the base class and subclasses;
+     * it is safe when Horizon is uninstalled (no Horizon provider in the list).
+     * Stateless; provider registration is fixed per app instance, so this is
+     * Octane-safe.
+     */
+    public static function isActive(): bool
+    {
+        foreach (array_keys(app()->getLoadedProviders()) as $provider) {
+            if (is_a($provider, HorizonServiceProvider::class, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** @return list<array{connection: string, queue: string}> */
     public static function discover(): array
     {

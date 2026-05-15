@@ -44,13 +44,36 @@ final class ConfiguredQueueList
             self::push($out, $seen, $connection, $queue, $scopeConnection);
         }
 
-        if (Config::bool('horizon.autodiscover', true)) {
+        if (self::shouldAutodiscover()) {
             foreach (HorizonQueueDiscovery::discover() as $pair) {
                 self::push($out, $seen, $pair['connection'], $pair['queue'], $scopeConnection);
             }
         }
 
         return $out;
+    }
+
+    /**
+     * Tri-state `horizon.autodiscover`:
+     *   false   — never autodiscover
+     *   true    — autodiscover only when Horizon's provider is loaded (default)
+     *   'force' — autodiscover from config regardless of provider state
+     *
+     * Read raw via `config()`: `Config::bool` would coerce `'force'` to its
+     * default arg and silently misbehave. `ConfigValidator::validateHorizon`
+     * has already rejected anything outside `bool|'force'` at boot, so the
+     * strict `=== true` is safe — a runtime `config()->set` that bypasses
+     * validation falls through to "off", which is the conservative choice.
+     */
+    private static function shouldAutodiscover(): bool
+    {
+        $setting = config('queue-insights.horizon.autodiscover', true);
+
+        if ($setting === 'force') {
+            return true;
+        }
+
+        return $setting === true && HorizonQueueDiscovery::isActive();
     }
 
     /**

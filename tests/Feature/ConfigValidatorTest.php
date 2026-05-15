@@ -443,14 +443,17 @@ it('accepts a well-formed horizon block', function (): void {
     expect(fn () => ConfigValidator::validateHorizon(['autodiscover' => true, 'environment' => 'production']))
         ->not->toThrow(Throwable::class)
         ->and(fn () => ConfigValidator::validateHorizon(['autodiscover' => false, 'environment' => null]))
+        ->not->toThrow(Throwable::class)
+        // 'force' is the tri-state escape hatch — accepted alongside bools.
+        ->and(fn () => ConfigValidator::validateHorizon(['autodiscover' => 'force']))
         ->not->toThrow(Throwable::class);
 });
 
-it('rejects a non-bool horizon.autodiscover', function (): void {
-    expect(fn () => ConfigValidator::validateHorizon(['autodiscover' => 'yes']))
-        ->toThrow(QueueInsightsConfigException::class, 'horizon.autodiscover must be a boolean')
-        ->and(fn () => ConfigValidator::validateHorizon(['autodiscover' => 1]))
-        ->toThrow(QueueInsightsConfigException::class, 'horizon.autodiscover must be a boolean');
+it('rejects a horizon.autodiscover that is neither a bool nor the literal force', function (): void {
+    foreach (['yes', 1, 'Force', 'always'] as $invalid) {
+        expect(fn () => ConfigValidator::validateHorizon(['autodiscover' => $invalid]))
+            ->toThrow(QueueInsightsConfigException::class, "must be true, false, or the string 'force'");
+    }
 });
 
 it('rejects a non-string or empty horizon.environment', function (): void {

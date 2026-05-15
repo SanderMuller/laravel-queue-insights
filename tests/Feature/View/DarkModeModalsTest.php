@@ -18,21 +18,23 @@ function modalSource(string $name): string
     return $contents === false ? '' : $contents;
 }
 
-it('emits dark variants on details-modal panel + identity hero + metrics + tabs', function (): void {
+it('emits dark variants on details-modal panel + two-column rail + tabs', function (): void {
     $src = modalSource('details-modal');
 
     expect($src)
         // Modal panel surface.
         ->toContain('dark:bg-gray-900')
         ->toContain('dark:ring-white/10')
-        // Sticky header divider.
+        // Sticky header divider + left-rail border.
         ->toContain('dark:border-white/10')
-        // Identity hero gradient.
-        ->toContain('dark:from-gray-800 dark:to-gray-900')
-        // Metrics row dividers.
+        // Metadata description-list dividers.
+        ->toContain('dark:divide-white/10')
+        // Stream-id chip background.
         ->toContain('dark:bg-white/10')
         // Tab strip background.
         ->toContain('dark:bg-white/10 p-0.5')
+        // Attempts retry badge.
+        ->toContain('dark:bg-amber-900/60 dark:text-amber-200')
         // Body text + secondary.
         ->toContain('dark:text-gray-100')
         ->toContain('dark:text-gray-300')
@@ -40,13 +42,21 @@ it('emits dark variants on details-modal panel + identity hero + metrics + tabs'
         ->toContain('capture: ');
 });
 
-it('emits dark variants on failed-modal red hero + retry button branches', function (): void {
-    $src = modalSource('failed-modal');
+it('emits dark variants on failed-modal two-column rail + retry button branches', function (): void {
+    // The retry button + header chrome live in the shared
+    // `partials/failed-modal-header` partial; the two-column body
+    // stays in the component. Scan both so the guarantee holds.
+    $headerPartial = file_get_contents(
+        __DIR__ . '/../../../resources/views/partials/failed-modal-header.blade.php'
+    );
+    $src = modalSource('failed-modal') . ($headerPartial === false ? '' : $headerPartial);
 
     expect($src)
-        // Red identity hero gradient.
-        ->toContain('dark:from-red-900/40 dark:to-gray-900')
-        ->toContain('dark:ring-red-400/30')
+        // Red "Failed" badge in the left rail.
+        ->toContain('dark:bg-red-900/40 dark:text-red-400 dark:ring-red-400/30')
+        // Left-rail border + metadata list dividers.
+        ->toContain('dark:border-white/10')
+        ->toContain('dark:divide-white/10')
         // Retry button — confirming branch.
         ->toContain('dark:bg-red-500 dark:ring-red-400 dark:hover:bg-red-400')
         // Retry button — idle branch.

@@ -1,6 +1,7 @@
 <?php declare(strict_types=1);
 
 use SanderMuller\QueueInsights\Support\HorizonQueueDiscovery;
+use SanderMuller\QueueInsights\Tests\Fixtures\FakeHorizonServiceProvider;
 
 beforeEach(function (): void {
     // Each test isolates its Horizon config — reset.
@@ -8,6 +9,21 @@ beforeEach(function (): void {
     config()->set('queue-insights.horizon.environment');
     config()->set('horizon.environments', []);
     config()->set('horizon.defaults', []);
+});
+
+it('isActive is false when no Horizon service provider is registered', function (): void {
+    // The test harness registers only the package's own providers — Horizon's
+    // provider is never loaded unless a test opts in.
+    expect(HorizonQueueDiscovery::isActive())->toBeFalse();
+});
+
+it('isActive is true when a HorizonServiceProvider subclass is registered', function (): void {
+    // Regression guard: Laravel keys loaded providers by exact class name, so
+    // an exact-class `providerIsLoaded()` check would false-negative a
+    // subclass. The `is_a(..., true)` scan must match it.
+    app()->register(FakeHorizonServiceProvider::class);
+
+    expect(HorizonQueueDiscovery::isActive())->toBeTrue();
 });
 
 it('returns empty when Horizon has no environments configured', function (): void {

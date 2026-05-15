@@ -4,6 +4,44 @@ Migration steps between minor/major versions of `laravel-queue-insights`. Patch 
 
 Newest at the top. Across-version jumps must complete intermediate sections in order.
 
+## Upgrading from 0.19 to 0.20
+
+### `horizon.autodiscover` is now runtime-gated
+
+**BREAKING:** `queue-insights.horizon.autodiscover` is now tri-state, and the
+default value `true` has a new meaning.
+
+| Value | Old behaviour | New behaviour |
+|---|---|---|
+| `false` | Never autodiscover | Unchanged |
+| `true` (default) | Autodiscover whenever `laravel/horizon` is **installed** | Autodiscover only when Horizon's **service provider is loaded** in the running app |
+| `'force'` | — (new) | Autodiscover from `config/horizon.php` regardless of provider state |
+
+**Who is affected.** Only apps where Horizon is *installed but its provider is
+not registered* — e.g. Vapor/SQS setups using `composer.json`
+`extra.laravel.dont-discover` + conditional `$app->register(HorizonServiceProvider::class)`.
+There, config-walk autodiscovery now correctly stops surfacing Horizon
+supervisor queues that never receive a snapshot. Apps running Horizon normally
+(provider auto-discovered) see **no change**.
+
+**This is not cosmetic.** Autodiscovered connections feed more than the Queues
+panel — when one stops being discovered it also leaves the dashboard
+connection nav + per-connection scoping/auth, the
+`allPendingJobs` / `allDelayedJobs` / `allInFlightJobs` aggregation, the
+`connection_drift` detector, the snapshot command's pruning set, and the
+Prometheus per-connection collectors. That's the intended cleanup when Horizon
+isn't the runtime, but if you *were* relying on those rows (rare — a
+non-Horizon app monitoring a Horizon environment), opt back in:
+
+```dotenv
+QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force
+```
+
+**Action — none required for most hosts.** If you run Horizon as your queue
+runtime, the provider is loaded and `true` behaves as before. Set `'force'`
+only if you deliberately want config-derived rows without Horizon's provider
+registered.
+
 ## Upgrading from 0.18 to 0.19
 
 ### Redis Cluster support

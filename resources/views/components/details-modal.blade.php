@@ -85,7 +85,7 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closePayload">
     <div x-trap.noscroll="true"
-         class="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10 [--padding:--spacing(6)]"
+         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
          @click.stop>
         <div class="sticky top-0 px-4 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
             <div class="flex items-center gap-2 min-w-0">
@@ -128,133 +128,113 @@
             </div>
         </div>
 
-        <div class="p-4" x-show="view === 'job'">
-
-            {{-- Section A: Base metadata — hierarchical structure:
-                identity hero (class + connection + queue) → metrics row (duration / attempts / processed) → stream id. --}}
-            <section data-section="base" class="mb-6">
-                <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Metadata</p>
-
-                {{-- Identity hero: what job is this. --}}
-                <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-gray-950/5 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
-                    <dl>
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
-                        <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $payload['class'] ?? '—' }}</dd>
-                    </dl>
+        <div x-show="view === 'job'">
+            @php
+                $payloadBatchId = is_string($payload['batch_id'] ?? null) && $payload['batch_id'] !== ''
+                    ? $payload['batch_id']
+                    : null;
+                // Right column is empty only in full-capture mode with no job
+                // config and no payload body — fall back to an explicit note.
+                $hasRightContent = $hasSectionB
+                    || $sectionCBody !== null
+                    || $captureMode !== \SanderMuller\QueueInsights\Enums\CaptureMode::Full;
+            @endphp
+            <div class="grid md:grid-cols-[20rem_1fr]">
+                {{-- Left rail — identity + metadata description list. --}}
+                <div data-section="base" class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">Metadata</p>
+                    <p class="break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $payload['class'] ?? '—' }}</p>
                     <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
                         <x-queue-insights::meta-pill label="Connection" :value="$payload['connection'] ?? null"/>
                         <x-queue-insights::meta-pill label="Queue" :value="$payload['queue'] ?? null"/>
-                        @php
-                            $payloadBatchId = is_string($payload['batch_id'] ?? null) && $payload['batch_id'] !== ''
-                                ? $payload['batch_id']
-                                : null;
-                        @endphp
-                        @if($payloadBatchId !== null)
-                            @include('queue-insights::partials.batch-chip', ['batchId' => $payloadBatchId])
-                        @endif
                     </div>
+
+                    <dl class="mt-4 divide-y divide-gray-950/5 border-t border-gray-950/5 text-xs dark:divide-white/10 dark:border-white/10">
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="text-gray-500 dark:text-gray-400">Duration</dt>
+                            <dd class="text-right font-medium tabular-nums text-gray-900 dark:text-gray-100">
+                                {{ $durationHumanized }}
+                                @if(is_numeric($durationRaw) && (int) $durationRaw > 0)
+                                    <span class="text-gray-400 dark:text-gray-500">({{ (int) $durationRaw }} ms)</span>
+                                @endif
+                            </dd>
+                        </div>
+                        <div class="flex items-baseline justify-between gap-3 py-2" title="Wait time = enqueue → worker pickup">
+                            <dt class="text-gray-500 dark:text-gray-400">Wait</dt>
+                            <dd class="text-right font-medium tabular-nums text-gray-900 dark:text-gray-100">
+                                {{ $waitHumanized ?? '—' }}
+                                @if(is_numeric($waitRaw) && (int) $waitRaw > 0)
+                                    <span class="text-gray-400 dark:text-gray-500">({{ (int) $waitRaw }} ms)</span>
+                                @endif
+                            </dd>
+                        </div>
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="text-gray-500 dark:text-gray-400">Attempts</dt>
+                            <dd class="text-right">
+                                @if($attemptsInt === null)
+                                    <span class="font-medium text-gray-400 dark:text-gray-500">—</span>
+                                @else
+                                    <span class="font-medium tabular-nums {{ $attemptsInt > 1 ? 'rounded bg-amber-100 px-1.5 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200' : 'text-gray-900 dark:text-gray-100' }}">{{ $attemptsInt }}</span>
+                                    @if($attemptsInt > 1)
+                                        <span class="ml-1 text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">retry</span>
+                                    @endif
+                                @endif
+                            </dd>
+                        </div>
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Processed at</dt>
+                            <dd class="min-w-0 text-right">
+                                <x-queue-insights::qi-time :at="$processedAtRaw" class="block truncate font-medium text-gray-900 dark:text-gray-100"/>
+                                @if($processedAtRaw)
+                                    <x-queue-insights::qi-time :at="$processedAtRaw" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-500"/>
+                                @endif
+                            </dd>
+                        </div>
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Stream ID</dt>
+                            <dd class="flex min-w-0 items-center gap-1.5">
+                                <code id="qi-stream-id"
+                                      class="truncate rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $payload['_id'] ?? '—' }}</code>
+                                <x-queue-insights::copy-button target="qi-stream-id" label="Copy stream id" variant="icon" class="shrink-0"/>
+                            </dd>
+                        </div>
+                    </dl>
+
+                    @include('queue-insights::partials.parent-lineage-row', [
+                        'parentUuid' => $payload['parent_uuid'] ?? null,
+                        'parentClass' => $payload['parent_class'] ?? null,
+                        'parentTarget' => $payload['parent_target'] ?? null,
+                        'fromClass' => is_string($payload['class'] ?? null) ? $payload['class'] : null,
+                        'copyId' => 'qi-completed-parent-uuid',
+                    ])
+
+                    @if($payloadBatchId !== null)
+                        @include('queue-insights::partials.batch-teaser', ['batchId' => $payloadBatchId])
+                    @endif
+
+                    @if($chain !== null)
+                        <button type="button"
+                                data-section="chain"
+                                x-on:click="view = 'chain'"
+                                class="mt-3 block w-full rounded-lg p-3 text-left ring-1 ring-gray-950/5 transition hover:bg-gray-50 hover:ring-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:ring-white/10 dark:hover:bg-gray-800"
+                                aria-label="View full chain details">
+                            <div class="flex items-center justify-between gap-2">
+                                <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Chain</p>
+                                <span class="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">View {{ $chain['remaining'] }} chained {{ $chain['remaining'] === 1 ? 'job' : 'jobs' }} →</span>
+                            </div>
+                            <p class="mt-1 break-all font-mono text-xs text-gray-900 dark:text-gray-100">{{ $chain['next_class'] }}</p>
+                            @if($chain['remaining'] > 1)
+                                <p class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-300">+{{ $chain['remaining'] - 1 }} more chained</p>
+                            @endif
+                        </button>
+                    @endif
                 </div>
 
-                @include('queue-insights::partials.parent-lineage-row', [
-                    'parentUuid' => $payload['parent_uuid'] ?? null,
-                    'parentClass' => $payload['parent_class'] ?? null,
-                    'parentTarget' => $payload['parent_target'] ?? null,
-                    'fromClass' => is_string($payload['class'] ?? null) ? $payload['class'] : null,
-                    'copyId' => 'qi-completed-parent-uuid',
-                ])
-
-                @if($chain !== null)
-                    <button type="button"
-                            data-section="chain"
-                            x-on:click="view = 'chain'"
-                            class="mt-3 block w-full text-left rounded-xl bg-white dark:bg-gray-900 p-4 ring-1 ring-gray-950/5 dark:ring-white/10 transition hover:bg-gray-50 dark:hover:bg-gray-800 hover:ring-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
-                            aria-label="View full chain details">
-                        <div class="flex items-center justify-between gap-2">
-                            <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Chain</p>
-                            <span class="text-[10px] font-medium text-emerald-700 dark:text-emerald-300">View {{ $chain['remaining'] }} chained {{ $chain['remaining'] === 1 ? 'job' : 'jobs' }} →</span>
-                        </div>
-                        <dl class="mt-2 space-y-1 text-xs">
-                            <div class="flex flex-wrap items-baseline gap-x-2">
-                                <dt class="text-gray-400 dark:text-gray-400">Next</dt>
-                                <dd class="break-all font-mono text-gray-900 dark:text-gray-100">{{ $chain['next_class'] }}</dd>
-                                @if($chain['remaining'] > 1)
-                                    <dd class="text-gray-500 dark:text-gray-300">(+{{ $chain['remaining'] - 1 }} more chained)</dd>
-                                @endif
-                            </div>
-                            @if($chain['chain_queue'] !== null || $chain['chain_connection'] !== null)
-                                <div class="flex flex-wrap items-baseline gap-x-2">
-                                    <dt class="text-gray-400 dark:text-gray-400">Queue</dt>
-                                    <dd class="font-mono text-gray-700 dark:text-gray-300">{{ $chain['chain_queue'] ?? '—' }}</dd>
-                                    @if($chain['chain_connection'] !== null)
-                                        <dd class="text-gray-400 dark:text-gray-400">·</dd>
-                                        <dd class="font-mono text-gray-700 dark:text-gray-300">{{ $chain['chain_connection'] }}</dd>
-                                    @endif
-                                </div>
-                            @endif
-                        </dl>
-                    </button>
-                @endif
-
-                {{-- Metrics row: how it ran. --}}
-                <dl class="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10">
-                    <div class="bg-white dark:bg-gray-900 p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Duration</dt>
-                        <dd class="mt-1 flex items-baseline gap-1.5">
-                            <span class="text-lg font-semibold tracking-tight text-gray-900 dark:text-gray-100 tabular-nums">{{ $durationHumanized }}</span>
-                            @if(is_numeric($durationRaw) && (int) $durationRaw > 0)
-                                <span class="text-xs tabular-nums text-gray-400 dark:text-gray-400">({{ (int) $durationRaw }} ms)</span>
-                            @endif
-                        </dd>
-                        {{-- Wait time — enqueue → worker pickup. Renders `—` when no
-                            sample exists (legacy job, custom driver, or queued before
-                            the JobQueued listener was wired). --}}
-                        <dd class="mt-1 text-[11px] tabular-nums text-gray-500 dark:text-gray-300"
-                            title="Wait time = enqueue → worker pickup">
-                            <span class="text-gray-400 dark:text-gray-400">wait</span>
-                            <span class="font-medium text-gray-700 dark:text-gray-300">{{ $waitHumanized ?? '—' }}</span>
-                            @if(is_numeric($waitRaw) && (int) $waitRaw > 0)
-                                <span class="text-gray-400 dark:text-gray-400">({{ (int) $waitRaw }} ms)</span>
-                            @endif
-                        </dd>
-                    </div>
-                    <div class="bg-white dark:bg-gray-900 p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Attempts</dt>
-                        <dd class="mt-1 flex items-baseline gap-1.5">
-                            @if($attemptsInt === null)
-                                <span class="text-lg font-semibold tracking-tight text-gray-400 dark:text-gray-400">—</span>
-                            @else
-                                <span class="text-lg font-semibold tracking-tight tabular-nums {{ $attemptsInt > 1 ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 rounded px-2 py-0.5' : 'text-gray-900 dark:text-gray-100' }}">{{ $attemptsInt }}</span>
-                                @if($attemptsInt > 1)
-                                    <span class="text-[10px] font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">retry</span>
-                                @endif
-                            @endif
-                        </dd>
-                    </div>
-                    <div class="bg-white dark:bg-gray-900 p-4">
-                        <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Processed at</dt>
-                        <dd class="mt-1">
-                            <x-queue-insights::qi-time :at="$processedAtRaw" class="block truncate text-sm font-medium text-gray-900 dark:text-gray-100"/>
-                            @if($processedAtRaw)
-                                <x-queue-insights::qi-time :at="$processedAtRaw" format="absolute-mono" class="block truncate text-[10px] text-gray-400 dark:text-gray-400"/>
-                            @endif
-                        </dd>
-                    </div>
-                </dl>
-
-                {{-- Stream ID — de-emphasized, bottom row. --}}
-                <dl class="mt-3 flex items-center gap-2 border-t border-gray-950/5 dark:border-white/10 pt-3">
-                    <dt class="shrink-0 text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Stream ID</dt>
-                    <dd class="flex min-w-0 flex-1 items-center gap-1.5">
-                        <code id="qi-stream-id"
-                              class="truncate rounded bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:text-gray-300">{{ $payload['_id'] ?? '—' }}</code>
-                        <x-queue-insights::copy-button target="qi-stream-id" label="Copy stream id" variant="icon" class="shrink-0"/>
-                    </dd>
-                </dl>
-            </section>
-
+                {{-- Right column — job config + payload body. --}}
+                <div class="min-w-0 space-y-6 p-5">
             {{-- Section B: Job config (happy path) OR status branches (closure/error/overflow). --}}
             @if($hasSectionB)
-                <section data-section="job-config" class="mb-6">
+                <section data-section="job-config">
                     @if($hasStatusNote)
                         <div class="flex gap-3 rounded-lg bg-amber-50 dark:bg-amber-900/40 p-3 text-sm text-amber-900 dark:text-amber-200 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30">
                             <x-queue-insights::icon-warning-triangle class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"/>
@@ -321,7 +301,7 @@
 
             {{-- Section C: Payload body (visible only when `payload_body` present). --}}
             @if($sectionCBody !== null)
-                <section data-section="payload" class="mb-6 px-4">
+                <section data-section="payload">
                     <h4 class="mb-3 text-xs font-medium text-gray-500 dark:text-gray-300">Payload</h4>
 
                     <div class="mb-3 inline-flex rounded-md bg-gray-950/5 dark:bg-white/10 p-0.5" role="tablist">
@@ -362,7 +342,7 @@
 
             {{-- Footer — tiered escalation hints. --}}
             @if($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Off)
-                <div class="mt-6 flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
+                <div class="flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
                     <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
                     <p>
                         Capture is off — only base metadata is stored. Set
@@ -375,7 +355,7 @@
                     </p>
                 </div>
             @elseif($captureMode === \SanderMuller\QueueInsights\Enums\CaptureMode::Metadata)
-                <div class="mt-6 flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
+                <div class="flex gap-3 rounded-lg bg-gray-50 dark:bg-gray-800 p-3 text-xs leading-5 text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
                     <x-queue-insights::icon-info-circle class="mt-0.5 size-4 shrink-0 text-gray-400 dark:text-gray-400"/>
                     <p>
                         Metadata-only capture — job config without a serialized command body. Set
@@ -384,7 +364,15 @@
                     </p>
                 </div>
             @endif
-        </div>{{-- /padding wrapper --}}
+
+            @unless($hasRightContent)
+                <div class="rounded-lg bg-gray-50 px-4 py-6 text-center text-xs text-gray-500 ring-1 ring-inset ring-gray-950/5 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10">
+                    No job config or payload body was captured for this job.
+                </div>
+            @endunless
+                </div>{{-- /right column --}}
+            </div>{{-- /grid --}}
+        </div>{{-- /job view --}}
 
         @if($chain !== null)
             @php

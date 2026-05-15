@@ -404,17 +404,22 @@ final class ConfigValidator
     }
 
     /**
-     * Validate the `horizon.*` block. Only `autodiscover` (bool) and
-     * `environment` (non-empty string or null) are validated — the rest of
-     * the keyspace is Horizon's own and validated by Horizon at boot.
+     * Validate the `horizon.*` block. Only `autodiscover` (`bool` or the
+     * literal `'force'`) and `environment` (non-empty string or null) are
+     * validated — the rest of the keyspace is Horizon's own and validated by
+     * Horizon at boot.
      *
      * @param  array<array-key, mixed>  $horizon
      */
     public static function validateHorizon(array $horizon): void
     {
-        if (array_key_exists('autodiscover', $horizon) && ! is_bool($horizon['autodiscover'])) {
+        if (
+            array_key_exists('autodiscover', $horizon)
+            && ! is_bool($horizon['autodiscover'])
+            && $horizon['autodiscover'] !== 'force'
+        ) {
             throw new QueueInsightsConfigException(
-                'queue-insights.horizon.autodiscover must be a boolean.'
+                "queue-insights.horizon.autodiscover must be true, false, or the string 'force'."
             );
         }
 

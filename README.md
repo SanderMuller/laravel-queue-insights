@@ -643,7 +643,15 @@ When `laravel/horizon` is installed, the dashboard Queues panel + pending/in-fli
 ],
 ```
 
-Opt out with `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=false` to keep the static-snapshots-only behaviour. Set `QUEUE_INSIGHTS_HORIZON_ENV` when running multiple Horizon environments off the same Laravel `APP_ENV`.
+`autodiscover` is tri-state:
+
+| Value | Behaviour |
+|---|---|
+| `false` | Never autodiscover — static `snapshots[]` only. |
+| `true` (default) | Autodiscover **only when Horizon's service provider is loaded** in the running app — i.e. Horizon is actually the queue runtime here. |
+| `'force'` | Autodiscover from `config/horizon.php` regardless of whether the provider is loaded. |
+
+The `true` gate matters on Vapor and similar setups: Horizon may be *configured* (`config/horizon.php` defines supervisors) while jobs actually run on SQS and Horizon's provider is excluded (`composer.json` `extra.laravel.dont-discover` + conditional registration). There, `true` correctly skips those supervisor queues — they'd never receive a snapshot. Set `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force` if you genuinely want config-derived rows without the provider loaded. Set `QUEUE_INSIGHTS_HORIZON_ENV` when running multiple Horizon environments off the same Laravel `APP_ENV`.
 
 ## Connection aliasing
 

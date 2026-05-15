@@ -23,14 +23,25 @@
         @php
             $isObject = is_object($propValue);
             $isArray = is_array($propValue);
+            // Strings that are themselves a serialized PHP blob (Laravel's
+            // `illuminate:log:context` is the canonical example) or a JSON
+            // container surface as one opaque escape-fest. Crack them open
+            // so the operator sees a real tree — Sentry-style.
+            $parsedFromString = is_string($propValue) && $propValue !== ''
+                ? \SanderMuller\QueueInsights\Support\ValueParser::parse($propValue)
+                : null;
             $rendered = $reader::summarize($propValue);
-            $truncated = ! $isObject && strlen($rendered) > 200;
+            $truncated = ! $isObject && $parsedFromString === null && strlen($rendered) > 200;
             $nestedClass = $isObject ? $reader::classNameOf($propValue) : null;
+            $parsedCount = $parsedFromString !== null ? count($parsedFromString) : 0;
+            $parsedSummary = $parsedFromString !== null
+                ? "parsed · {$parsedCount} " . ($parsedCount === 1 ? 'entry' : 'entries')
+                : '';
         @endphp
         <div class="grid grid-cols-[max-content_1fr] gap-x-4 px-4 py-2 text-xs"
-             @if($isObject || $truncated) x-data="{ expanded: false }" @endif>
+             @if($isObject || $truncated || $parsedFromString !== null) x-data="{ expanded: false }" @endif>
             <dt class="font-mono font-medium text-gray-600 dark:text-gray-300">{{ $propName }}</dt>
-            <dd class="break-all font-mono {{ $propValue === null ? 'text-gray-400 dark:text-gray-400' : ($isObject ? 'text-purple-700 dark:text-purple-300' : ($isArray ? 'text-blue-700 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100')) }}">
+            <dd class="break-all font-mono {{ $propValue === null ? 'text-gray-400 dark:text-gray-400' : ($isObject ? 'text-purple-700 dark:text-purple-300' : ($isArray || $parsedFromString !== null ? 'text-blue-700 dark:text-blue-300' : 'text-gray-900 dark:text-gray-100')) }}">
                 @if($isObject)
                     <span>{{ $nestedClass ?? 'object' }}</span>
                     @if($depth < $maxDepth)
@@ -49,6 +60,23 @@
                             @endif
                         </div>
                     @else
+                        <span class="ml-1 text-[10px] text-gray-400 dark:text-gray-400">(max depth)</span>
+                    @endif
+                @elseif($parsedFromString !== null)
+                    @if($depth < $maxDepth)
+                        <button type="button"
+                                @click="expanded = ! expanded"
+                                class="inline-flex items-center gap-1.5 rounded bg-gray-950/5 px-1.5 py-0.5 text-[10px] font-medium text-gray-700 hover:bg-gray-950/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:bg-white/10 dark:text-gray-200 dark:hover:bg-white/20">
+                            <x-queue-insights::icon-chevron-right class="size-2.5 transition" x-bind:class="expanded ? 'rotate-90' : ''"/>
+                            <span>{{ $parsedSummary }}</span>
+                        </button>
+                        <template x-if="expanded">
+                            <div class="mt-2 -mx-4 -mb-2 border-t border-gray-950/5 bg-gray-950/[0.02] dark:border-white/10 dark:bg-white/5">
+                                <x-queue-insights::nested-data :data="$parsedFromString" :depth="$depth + 1"/>
+                            </div>
+                        </template>
+                    @else
+                        <span>{{ $parsedSummary }}</span>
                         <span class="ml-1 text-[10px] text-gray-400 dark:text-gray-400">(max depth)</span>
                     @endif
                 @elseif($truncated)
