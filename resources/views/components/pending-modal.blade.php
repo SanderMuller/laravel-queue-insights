@@ -251,6 +251,55 @@
                             This job is in line to run. It hasn't been picked up yet — the modal will flip to its empty state once a worker grabs it.
                         @endif
                     </p>
+
+                    {{-- Payload — populated when `pending.capture.payloads` is on
+                        (off by default; see config docblock for the memory math).
+                        Same `structured-payload` renderer the details-modal uses,
+                        so a serialized `illuminate:log:context` entry expands
+                        Sentry-style via `ValueParser`. --}}
+                    @php
+                        $pendingPayloadBody = $row['payload_body'] ?? null;
+                        $pendingPayloadDecoded = is_string($pendingPayloadBody) && $pendingPayloadBody !== ''
+                            ? (json_decode($pendingPayloadBody, true) ?? $pendingPayloadBody)
+                            : null;
+                        $pendingPayloadNote = ($row['payload_note'] ?? null) === 'payload_not_persisted';
+                        $pendingPayloadEncErr = ($row['payload_error'] ?? null) === 'payload_encoding_failed';
+                        $pendingPayloadSizeErr = ($row['payload_error'] ?? null) === 'payload_too_large';
+                    @endphp
+                    @if($pendingPayloadNote)
+                        <div class="flex gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-400/30">
+                            <x-queue-insights::icon-warning-triangle class="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400"/>
+                            <div class="min-w-0">
+                                <p class="font-medium">Payload not persisted</p>
+                                @if($reason = ($row['payload_reason'] ?? null))
+                                    <p class="mt-1 text-xs text-amber-800 dark:text-amber-200">Reason: {{ str_replace('_', ' ', $reason) }}</p>
+                                @endif
+                            </div>
+                        </div>
+                    @elseif($pendingPayloadEncErr)
+                        <div class="flex gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-900 ring-1 ring-inset ring-red-600/20 dark:bg-red-900/40 dark:text-red-200 dark:ring-red-400/30">
+                            <x-queue-insights::icon-error-circle class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400"/>
+                            <p class="min-w-0">Payload encoding failed — sanitizer could not JSON-encode this job's payload.</p>
+                        </div>
+                    @elseif($pendingPayloadSizeErr)
+                        <div class="flex gap-3 rounded-lg bg-red-50 p-3 text-sm text-red-900 ring-1 ring-inset ring-red-600/20 dark:bg-red-900/40 dark:text-red-200 dark:ring-red-400/30">
+                            <x-queue-insights::icon-error-circle class="mt-0.5 size-4 shrink-0 text-red-600 dark:text-red-400"/>
+                            <div class="min-w-0">
+                                <p class="font-medium">Payload exceeded size cap</p>
+                                @if($size = ($row['payload_size'] ?? null))
+                                    <p class="mt-1 text-xs tabular-nums text-red-800 dark:text-red-200">{{ $size }} bytes — raise
+                                        <code class="rounded bg-red-100 px-1 font-mono dark:bg-red-900/60">pending.capture.max_payload_bytes</code>
+                                        or narrow the sanitizer.
+                                    </p>
+                                @endif
+                            </div>
+                        </div>
+                    @elseif($pendingPayloadDecoded !== null)
+                        <section data-section="pending-payload">
+                            <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
+                            <x-queue-insights::structured-payload :payload="$pendingPayloadDecoded"/>
+                        </section>
+                    @endif
                 </div>
             </div>
         @endif

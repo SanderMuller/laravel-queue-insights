@@ -233,7 +233,7 @@ final class PendingJobsReader
      * grabbed it) or never existed (legacy job, pending tracking disabled
      * at queue time).
      *
-     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}|null
+     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, parent_uuid: ?string, attempts: ?int, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
      */
     public static function findByUuid(string $uuid): ?array
     {
@@ -269,6 +269,13 @@ final class PendingJobsReader
         $parentUuid = $hash['parent_uuid'] ?? null;
         $attempts = $hash['attempts'] ?? null;
 
+        // Pull optional `payload_*` fields written by RecordJobQueued when
+        // `pending.capture.payloads` is on. Same set + same naming as the
+        // `parseHash` path so the pending-modal sees identical row shape
+        // whether the row came from the by-uuid lookup or the per-queue
+        // hydrate fan-out.
+        $payloadFields = self::extractPayloadFields($hash);
+
         return [
             'uuid' => $uuid,
             'class' => $class,
@@ -281,7 +288,36 @@ final class PendingJobsReader
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
             'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
             'attempts' => is_numeric($attempts) ? (int) $attempts : null,
+            'payload_body' => $payloadFields['payload_body'],
+            'payload_displayName' => $payloadFields['payload_displayName'],
+            'payload_maxTries' => $payloadFields['payload_maxTries'],
+            'payload_timeout' => $payloadFields['payload_timeout'],
+            'payload_backoff' => $payloadFields['payload_backoff'],
+            'payload_note' => $payloadFields['payload_note'],
+            'payload_reason' => $payloadFields['payload_reason'],
+            'payload_error' => $payloadFields['payload_error'],
+            'payload_size' => $payloadFields['payload_size'],
         ];
+    }
+
+    /**
+     * Pull any `payload_*` fields from a hash result into a flat assoc
+     * array of `payload_body|displayName|maxTries|...` keys with string-or-
+     * null values. Centralised so `findByUuid` and `parseHash` stay in
+     * lock-step on the field surface they expose.
+     *
+     * @param  array<array-key, mixed>  $hash
+     * @return array<string, ?string>
+     */
+    private static function extractPayloadFields(array $hash): array
+    {
+        $out = [];
+        foreach (['body', 'displayName', 'maxTries', 'timeout', 'backoff', 'note', 'reason', 'error', 'size'] as $key) {
+            $value = $hash['payload_' . $key] ?? null;
+            $out['payload_' . $key] = is_string($value) && $value !== '' ? $value : null;
+        }
+
+        return $out;
     }
 
     public static function trackedCount(string $connection, string $queue): int
@@ -416,7 +452,7 @@ final class PendingJobsReader
     }
 
     /**
-     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int}|null
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
      */
     private static function readHash(string $uuid): ?array
     {
@@ -427,7 +463,7 @@ final class PendingJobsReader
     }
 
     /**
-     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int}|null
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, parent_uuid: ?string, attempts: ?int, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
      */
     private static function parseHash(string $uuid, mixed $hash): ?array
     {
@@ -449,6 +485,12 @@ final class PendingJobsReader
         $parentUuid = $hash['parent_uuid'] ?? null;
         $attempts = $hash['attempts'] ?? null;
 
+        // Pull any `payload_*` fields RecordJobQueued wrote when
+        // `pending.capture.payloads` is on. Shared with findByUuid via
+        // `extractPayloadFields` so the row shape is identical regardless
+        // of read path.
+        $payloadFields = self::extractPayloadFields($hash);
+
         return [
             'uuid' => $uuid,
             'class' => $class,
@@ -459,6 +501,15 @@ final class PendingJobsReader
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
             'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
             'attempts' => is_numeric($attempts) ? (int) $attempts : null,
+            'payload_body' => $payloadFields['payload_body'],
+            'payload_displayName' => $payloadFields['payload_displayName'],
+            'payload_maxTries' => $payloadFields['payload_maxTries'],
+            'payload_timeout' => $payloadFields['payload_timeout'],
+            'payload_backoff' => $payloadFields['payload_backoff'],
+            'payload_note' => $payloadFields['payload_note'],
+            'payload_reason' => $payloadFields['payload_reason'],
+            'payload_error' => $payloadFields['payload_error'],
+            'payload_size' => $payloadFields['payload_size'],
         ];
     }
 

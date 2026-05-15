@@ -13,6 +13,7 @@ use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
+use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -370,4 +371,127 @@ it('aligns the worker side when getQueue() returns null', function (): void {
 
     expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
         ->and(R::int('zcard', 'qmtest:inflight-zset:sqs:staging_default'))->toBe(0);
+});
+
+// --- Pending payload capture ----------------------------------------------
+
+/**
+ * Richer JobQueued payload that includes the wrapped command + data envelope
+ * Laravel actually pushes onto the queue. Needed to exercise the
+ * `pending.capture.payloads` branch of RecordJobQueued.
+ */
+/**
+ * @param  array<string, mixed>  $extra
+ */
+function makePendingEventWithCommand(
+    string $uuid,
+    string $serializedCommand,
+    array $extra = [],
+): JobQueued {
+    $payload = json_encode(array_replace([
+        'uuid' => $uuid,
+        'displayName' => 'App\\Jobs\\PendingTestJob',
+        'maxTries' => 3,
+        'timeout' => 60,
+        'data' => [
+            'commandName' => 'App\\Jobs\\PendingTestJob',
+            'command' => $serializedCommand,
+        ],
+    ], $extra));
+
+    return new JobQueued(
+        connectionName: 'redis',
+        queue: 'work',
+        id: 'driver-id-' . Str::random(8),
+        job: (object) ['displayName' => 'App\\Jobs\\PendingTestJob'],
+        payload: $payload === false ? '' : $payload,
+        delay: null,
+    );
+}
+
+it('does not write payload_* fields when pending.capture.payloads = off', function (): void {
+    config()->set('queue-insights.pending.capture.payloads', 'off');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CAPOFF';
+    (new RecordJobQueued())->handle(makePendingEventWithCommand($uuid, 'O:11:"App\\Jobs\\X":0:{}'));
+
+    expect(R::int('hexists', 'qmtest:pending:' . $uuid, 'payload_body'))->toBe(0)
+        ->and(R::int('hexists', 'qmtest:pending:' . $uuid, 'payload_displayName'))->toBe(0);
+});
+
+it('writes only payload_displayName / maxTries / timeout under metadata mode', function (): void {
+    config()->set('queue-insights.pending.capture.payloads', 'metadata');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CAPMET';
+    (new RecordJobQueued())->handle(makePendingEventWithCommand($uuid, 'O:11:"App\\Jobs\\X":0:{}'));
+
+    expect(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_displayName'))->toBe('App\\Jobs\\PendingTestJob')
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_maxTries'))->toBe('3')
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_timeout'))->toBe('60')
+        ->and(R::int('hexists', 'qmtest:pending:' . $uuid, 'payload_body'))->toBe(0);
+});
+
+it('writes payload_body under full mode and PendingJobsReader surfaces it', function (): void {
+    config()->set('queue-insights.pending.capture.payloads', 'full');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CAPFULL';
+    $cmd = 'O:11:"App\\Jobs\\X":1:{s:5:"email";s:13:"a@example.com";}';
+    (new RecordJobQueued())->handle(makePendingEventWithCommand($uuid, $cmd));
+
+    $body = R::str('hget', 'qmtest:pending:' . $uuid, 'payload_body');
+    expect($body)->not->toBe('');
+    expect($body)->not->toBeNull();
+
+    $decoded = json_decode((string) $body, true);
+    expect($decoded)
+        ->toBeArray()
+        ->toHaveKey('displayName', 'App\\Jobs\\PendingTestJob');
+    expect($decoded['data']['command'] ?? null)->toBe($cmd);
+
+    // PendingJobsReader::findByUuid should expose the payload fields on
+    // the returned row so the pending-modal can pick them up.
+    $row = PendingJobsReader::findByUuid($uuid);
+    expect($row)->not->toBeNull();
+    expect($row['payload_body'] ?? null)->toBe($body);
+    expect($row['payload_displayName'] ?? null)->toBe('App\\Jobs\\PendingTestJob');
+});
+
+it('records payload_too_large when the body exceeds pending.capture.max_payload_bytes', function (): void {
+    config()->set('queue-insights.pending.capture.payloads', 'full');
+    config()->set('queue-insights.pending.capture.max_payload_bytes', 256);
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69TOOBIG';
+    $cmd = 'O:11:"App\\Jobs\\X":1:{s:4:"blob";s:500:"' . str_repeat('A', 500) . '";}';
+    (new RecordJobQueued())->handle(makePendingEventWithCommand($uuid, $cmd, ['huge' => str_repeat('B', 4000)]));
+
+    expect(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_error'))->toBe('payload_too_large')
+        ->and(R::int('hexists', 'qmtest:pending:' . $uuid, 'payload_body'))->toBe(0);
+});
+
+it('flags closure jobs with payload_note instead of persisting the body', function (): void {
+    config()->set('queue-insights.pending.capture.payloads', 'full');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CLOSURE';
+    $payload = json_encode([
+        'uuid' => $uuid,
+        'displayName' => 'Closure',
+        'data' => [
+            'commandName' => 'Illuminate\\Queue\\CallQueuedClosure',
+            'command' => 'irrelevant',
+        ],
+    ]);
+    $event = new JobQueued(
+        connectionName: 'redis',
+        queue: 'work',
+        id: 'driver-id-closure',
+        job: (object) ['displayName' => 'Closure'],
+        payload: $payload === false ? '' : $payload,
+        delay: null,
+    );
+
+    (new RecordJobQueued())->handle($event);
+
+    expect(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_note'))->toBe('payload_not_persisted')
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'payload_reason'))->toBe('closure_or_encrypted')
+        ->and(R::int('hexists', 'qmtest:pending:' . $uuid, 'payload_body'))->toBe(0);
 });

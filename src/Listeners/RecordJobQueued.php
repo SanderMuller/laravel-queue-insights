@@ -7,6 +7,7 @@ use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageClaim;
@@ -15,6 +16,7 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\PendingPayloadSnapshot;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
@@ -135,6 +137,14 @@ final class RecordJobQueued
             $fields['batch_id'] = $batchId;
         }
 
+        // Pending payload capture — gated on a per-surface `pending.capture.payloads`
+        // mode (off by default, separate from the completed-stream `capture.payloads`
+        // because the memory math is structurally different: pending = N rows × TTL
+        // × queues, vs completed's bounded MAXLEN trim).
+        foreach ($this->buildPendingPayloadFields($payload) as $field => $value) {
+            $fields[$field] = $value;
+        }
+
         foreach ($fields as $field => $value) {
             $redis->command('hset', [$hashKey, $field, $value]);
         }
@@ -157,6 +167,47 @@ final class RecordJobQueued
     /**
      * Resolve `available_at` (unix seconds) from the JobQueued event's `delay`
      * field. Laravel's event docblock types `delay` as `int|null` — the queue
+     * Build the `payload_*` field map to merge into the pending hash. Runs
+     * the decoded queued payload through {@see PendingPayloadSnapshot},
+     * which mirrors the completed-stream redaction + size-cap logic against
+     * the array shape we have at JobQueued time (no `Job` wrapper). Returns
+     * `[]` when capture is off — keeps the hot path slim.
+     *
+     * @param  array<array-key, mixed>|null  $payload
+     * @return array<string, string>
+     */
+    private function buildPendingPayloadFields(?array $payload): array
+    {
+        $mode = Config::enum('pending.capture.payloads', CaptureMode::class, CaptureMode::Off);
+        if (! $mode->writesPayloadFields()) {
+            return [];
+        }
+
+        $redactKeys = array_values(array_filter(
+            Config::array('capture.redact_keys'),
+            static fn (mixed $v): bool => is_string($v) && $v !== '',
+        ));
+
+        $built = PendingPayloadSnapshot::build(
+            $payload,
+            $mode->value,
+            $redactKeys,
+            Config::int('capture.max_field_bytes', 2048),
+            Config::int('pending.capture.max_payload_bytes', 4096),
+        );
+
+        $out = [];
+        foreach ($built as $field => $value) {
+            if ($value === null) {
+                continue;
+            }
+            $out[$field] = is_scalar($value) ? (string) $value : (string) json_encode($value, JSON_UNESCAPED_SLASHES);
+        }
+
+        return $out;
+    }
+
+    /**
      * dispatcher coerces DateTimeInterface inputs to int seconds before
      * dispatching the event.
      */

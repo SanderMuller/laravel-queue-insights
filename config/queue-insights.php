@@ -374,6 +374,34 @@ return [
         // dashboard surfaces a "tracking gap" badge so operators know to
         // read the snapshot count, not the listed sample, as truth.
         'gap_warn_threshold' => 5,
+
+        /*
+         | Per-pending-row payload capture. Parallel to the completed-stream
+         | `capture.payloads` block above, but with a separate budget because
+         | the memory math is structurally different.
+         |
+         | Completed: bounded by `retention.completed_stream_max` (one
+         | XADD per finished job, MAXLEN-trimmed). Total cost ≈ N × bytes.
+         |
+         | Pending: fans out as `max_per_queue × queues × TTL_seconds /
+         | avg_dispatch_interval`. A 10k-row queue × 4 KB × 10 queues =
+         | 400 MB of Redis just for the per-row hashes. So we default
+         | `pending.capture.payloads = off` even when `capture.payloads
+         | = full` is on for completed.
+         |
+         | When set to `metadata` / `full`, RecordJobQueued runs the queued
+         | payload through the same `capture.redact_keys` regex list as
+         | the completed stream, then bounds the result by
+         | `pending.capture.max_payload_bytes` (default 4 KB — a quarter
+         | of the completed cap so 10k pending rows fit in ~40 MB).
+         |
+         | The pending-modal's right column lights up its payload section
+         | when `payload_body` is present on the row; no client opt-in.
+         */
+        'capture' => [
+            'payloads' => env('QUEUE_INSIGHTS_PENDING_CAPTURE_PAYLOADS', CaptureMode::Off->value),
+            'max_payload_bytes' => 4096,
+        ],
     ],
 
     /*
