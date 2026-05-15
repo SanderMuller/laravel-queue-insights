@@ -346,7 +346,7 @@
                                     shows up here when it diverges from the class FQCN (a
                                     job that overrode `displayName()` to include subject
                                     context — e.g. `SendEmail (user@example.com)`). --}}
-                                <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
+                                <div class="rounded-xl bg-gradient-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
                                     <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job Config</p>
 
                                     @if($displayName !== null && $displayName !== $classFqcn)
@@ -519,7 +519,7 @@
                             Chained job {{ $i + 1 }} of {{ $chainTotal }}
                             @if($i === 0)<span class="ml-1 rounded-md bg-gray-950/[0.04] dark:bg-white/10 px-1.5 py-0.5 font-medium text-gray-600 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">queued next</span>@endif
                         </p>
-                        <div class="rounded-xl bg-linear-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
+                        <div class="rounded-xl bg-gradient-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
                             <dl>
                                 <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Class</dt>
                                 <dd class="mt-1 break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $job['class'] }}</dd>
