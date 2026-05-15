@@ -42,6 +42,11 @@ return [
 
     'excluded_vendor_packages' => [
         'sandermuller/package-boost',
+        // Laravel Boost-format vendor skills (`SKILL.blade.php`) that
+        // package-boost's frontmatter linter doesn't understand —
+        // informational warning only, but excluding keeps sync output clean.
+        'laravel/horizon',
+        'laravel/mcp',
     ],
 
     /*

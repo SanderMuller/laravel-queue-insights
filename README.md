@@ -41,11 +41,11 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 ## Features
 
 - **Driver-agnostic depth, in-flight, delayed counts** per queue — SQS, Redis, database.
-- **Pending & delayed-job inspector** per queue, event-captured into Redis (same view across drivers).
+- **Pending & delayed-job inspector** per queue, event-captured into Redis (same view across drivers). Optional payload capture under a separate budget so the per-row hash math doesn't pin the completed-stream sanitiser settings.
 - **Batched jobs** — per-batch progress, counts, cancelled state, per-item rollup linking back to job modals.
 - **Chained-job visibility** — `↳ Next` chip + Chain modal section, plus opportunistic backward `↰ From {parent}` lineage.
 - **Wait time** per queue (p50 / p95) and per job — enqueue → pickup gap.
-- **24h throughput sparkline** + headline stats (jobs/min, past hour, max p95 wait + runtime).
+- **24h throughput sparkline** + headline stats (jobs/min, past hour, max p95 wait + runtime). Optional 7th tile: total Redis bytes consumed by the package's keyspace.
 - **Queues grouped *Needs attention* vs *Healthy*** so a broken queue can't hide in a long list.
 - **Per-class metrics** — 24h processed / failed, avg + max duration, last run.
 - **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), per-page dropdown (10 / 25 / 50 / 100), all persisted in the URL. Failed rows surface runtime alongside Completed (computed via a 30 d `failed-runtime:{uuid}` side-key written when the worker's `start:` stamp survives to `JobFailed`).
@@ -58,6 +58,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
 - **Horizon integration** — supervisor queue auto-discovery from `horizon.environments`, `horizon.silenced` merged into our suppression filter, operator-declared `connection_aliases` collapses dispatcher/worker connection drift onto a canonical key.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
+- **12h / 24h clock toggle** in the header (12h / auto / 24h). `auto` follows browser locale + OS 24-hour preference. Persists per operator.
 - **Standalone Livewire + Blade** — no Filament or Nova coupling.
 - **Small, bounded Redis footprint** — auto-evicting, no external observability service required.
 - **Redis Cluster compatible** — opt-in (`QUEUE_INSIGHTS_REDIS_CLUSTER`); hash-tag pinning keeps the keyspace on one slot so the package's multi-key Lua + pipelines stay CROSSSLOT-legal.
@@ -93,6 +94,18 @@ Three modes via `QUEUE_INSIGHTS_CAPTURE_PAYLOADS`:
 | `full`            | Raw body after a sanitizer pass. Apps with sensitive jobs MUST bind a custom `PayloadSanitizer` that understands their job shape.        |
 
 Read [`SECURITY.md`](SECURITY.md) before enabling `full`.
+
+### Pending payload capture (separate budget)
+
+The completed-stream `capture.payloads` setting controls what's persisted on **completed and failed** rows. Pending and in-flight rows have their own knob because the memory math differs structurally — completed-stream entries are MAXLEN-trimmed (`N × bytes`), but pending hashes fan out as `max_per_queue × queues × TTL`, which on a 10k-row × 10-queue host is ~400 MB at 4 KB/row.
+
+```bash
+# .env
+QUEUE_INSIGHTS_PENDING_CAPTURE_PAYLOADS=metadata    # off | metadata | full
+QUEUE_INSIGHTS_PENDING_INCLUDE_COMMAND_BODY=false   # opt in to persist data.command bytes
+```
+
+Defaults: `off` (no payload fields written), `4096` byte cap per pending hash (a quarter of the completed-stream cap), and `data.command` omitted even under `full` until the host explicitly opts in. The same `capture.redact_keys` regex list is applied either way.
 
 ## Dashboard
 
@@ -652,6 +665,8 @@ When `laravel/horizon` is installed, the dashboard Queues panel + pending/in-fli
 | `'force'` | Autodiscover from `config/horizon.php` regardless of whether the provider is loaded. |
 
 The `true` gate matters on Vapor and similar setups: Horizon may be *configured* (`config/horizon.php` defines supervisors) while jobs actually run on SQS and Horizon's provider is excluded (`composer.json` `extra.laravel.dont-discover` + conditional registration). There, `true` correctly skips those supervisor queues — they'd never receive a snapshot. Set `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force` if you genuinely want config-derived rows without the provider loaded. Set `QUEUE_INSIGHTS_HORIZON_ENV` when running multiple Horizon environments off the same Laravel `APP_ENV`.
+
+When `autodiscover='force'` is set but the Horizon provider isn't loaded in the running app, the dashboard surfaces a top-level "Horizon not running" banner so operators don't read empty supervisor rows as a healthy state.
 
 ## Connection aliasing
 
