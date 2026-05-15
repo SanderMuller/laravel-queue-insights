@@ -55,7 +55,7 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closeBatch">
     <div x-trap.noscroll="true"
-         class="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
+         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
          @click.stop>
         {{-- Header --}}
         <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
@@ -75,80 +75,81 @@
             </button>
         </div>
 
-        <div class="p-4">
-            @if($row === null)
+        @if($row === null)
+            <div class="p-4">
                 <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center dark:border-white/10">
                     <p class="text-sm font-medium text-gray-900 dark:text-gray-100">Batch no longer tracked</p>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                         The BatchRepository row aged out, or our index TTL fired before the next poll. Close this modal — the Batches list refreshes on the next 10s tick.
                     </p>
                 </div>
-            @else
-                {{-- Identity hero — name + id + progress bar + counts --}}
-                <section class="mb-6">
-                    <p class="mb-3 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Batch</p>
-                    <div class="rounded-xl bg-linear-to-br to-white dark:to-gray-900 p-4 ring-1 ring-inset {{ $heroChrome }}">
-                        <dl>
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Name</dt>
-                            <dd class="mt-1 break-all text-sm font-medium text-gray-900 dark:text-gray-100">{{ $label }}</dd>
-                        </dl>
-                        <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-                            <x-queue-insights::meta-pill label="ID" :value="$id"/>
-                            @if($statusChip)
-                                <span class="rounded-md px-1.5 py-0.5 font-medium ring-1 ring-inset {{ $statusChip['cls'] }}">
-                                    {{ $statusChip['label'] }}
-                                </span>
-                            @endif
-                        </div>
-
-                        <div class="mt-4">
-                            <div class="h-2 w-full overflow-hidden rounded-full bg-gray-950/5 dark:bg-white/10">
-                                <div class="h-full {{ $barTone }} transition-all" style="width: {{ max(2, $progress) }}%"></div>
-                            </div>
-                            <p class="mt-1.5 text-xs tabular-nums text-gray-500 dark:text-gray-300">{{ $progress }}% · {{ $processed }}/{{ $total }} processed</p>
-                        </div>
+            </div>
+        @else
+            <div class="grid md:grid-cols-[20rem_1fr]">
+                {{-- Left rail — identity + progress + counts + timeline. --}}
+                <div class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">Batch</p>
+                    <p class="break-all text-sm font-medium text-gray-900 dark:text-gray-100">{{ $label }}</p>
+                    <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+                        <x-queue-insights::meta-pill label="ID" :value="$id"/>
+                        @if($statusChip)
+                            <span class="rounded-md px-1.5 py-0.5 font-medium ring-1 ring-inset {{ $statusChip['cls'] }}">
+                                {{ $statusChip['label'] }}
+                            </span>
+                        @endif
                     </div>
 
-                    {{-- Counts row --}}
-                    <dl class="mt-3 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-gray-950/5 dark:bg-white/10 ring-1 ring-gray-950/5 dark:ring-white/10">
-                        <div class="bg-white dark:bg-gray-900 p-4">
-                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Processed</dt>
-                            <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-emerald-700 dark:text-emerald-300">{{ $processed }}</dd>
+                    <div class="mt-4">
+                        <div class="h-2 w-full overflow-hidden rounded-full bg-gray-950/5 dark:bg-white/10">
+                            <div class="h-full {{ $barTone }} transition-all" style="width: {{ max(2, $progress) }}%"></div>
                         </div>
-                        <div class="bg-white dark:bg-gray-900 p-4">
+                        <p class="mt-1.5 text-xs tabular-nums text-gray-500 dark:text-gray-300">{{ $progress }}% · {{ $processed }}/{{ $total }} processed</p>
+                    </div>
+
+                    {{-- Counts row — compact stat trio. --}}
+                    <dl class="mt-4 grid grid-cols-3 gap-px overflow-hidden rounded-xl bg-gray-950/5 ring-1 ring-gray-950/5 dark:bg-white/10 dark:ring-white/10">
+                        <div class="bg-white p-3 dark:bg-gray-900">
+                            <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Done</dt>
+                            <dd class="mt-1 text-base font-semibold tracking-tight tabular-nums text-emerald-700 dark:text-emerald-300">{{ $processed }}</dd>
+                        </div>
+                        <div class="bg-white p-3 dark:bg-gray-900">
                             <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Failed</dt>
-                            <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums {{ $hasFailures ? 'text-red-700 dark:text-red-300' : 'text-gray-900 dark:text-gray-100' }}">{{ $failed }}</dd>
+                            <dd class="mt-1 text-base font-semibold tracking-tight tabular-nums {{ $hasFailures ? 'text-red-700 dark:text-red-300' : 'text-gray-900 dark:text-gray-100' }}">{{ $failed }}</dd>
                         </div>
-                        <div class="bg-white dark:bg-gray-900 p-4">
+                        <div class="bg-white p-3 dark:bg-gray-900">
                             <dt class="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-400">Pending</dt>
-                            <dd class="mt-1 text-lg font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">{{ $pending }}</dd>
+                            <dd class="mt-1 text-base font-semibold tracking-tight tabular-nums text-gray-900 dark:text-gray-100">{{ $pending }}</dd>
                         </div>
                     </dl>
 
-                    {{-- Timeline --}}
+                    {{-- Timeline as a clean description list, matching the
+                        completed/failed modal rail. --}}
                     @if($createdAt instanceof \Carbon\CarbonInterface || $finishedAt instanceof \Carbon\CarbonInterface)
-                        <dl class="mt-3 flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-950/5 dark:border-white/10 pt-3 text-xs text-gray-500 dark:text-gray-300">
+                        <dl class="mt-4 divide-y divide-gray-950/5 border-t border-gray-950/5 text-xs dark:divide-white/10 dark:border-white/10">
                             @if($createdAt instanceof \Carbon\CarbonInterface)
-                                <div class="flex items-baseline gap-1.5">
-                                    <dt class="text-gray-400 dark:text-gray-400">created</dt>
-                                    <dd><x-queue-insights::qi-time :at="$createdAt"/></dd>
+                                <div class="flex items-baseline justify-between gap-3 py-2">
+                                    <dt class="text-gray-500 dark:text-gray-400">Created</dt>
+                                    <dd class="text-right font-medium text-gray-900 dark:text-gray-100">
+                                        <x-queue-insights::qi-time :at="$createdAt"/>
+                                    </dd>
                                 </div>
                             @endif
                             @if($finishedAt instanceof \Carbon\CarbonInterface)
-                                <div class="flex items-baseline gap-1.5">
-                                    <dt class="text-gray-400 dark:text-gray-400">{{ $isCancelled ? 'cancelled' : 'finished' }}</dt>
-                                    <dd><x-queue-insights::qi-time :at="$finishedAt"/></dd>
+                                <div class="flex items-baseline justify-between gap-3 py-2">
+                                    <dt class="text-gray-500 dark:text-gray-400">{{ $isCancelled ? 'Cancelled' : 'Finished' }}</dt>
+                                    <dd class="text-right font-medium text-gray-900 dark:text-gray-100">
+                                        <x-queue-insights::qi-time :at="$finishedAt"/>
+                                    </dd>
                                 </div>
                             @endif
                         </dl>
                     @endif
-                </section>
+                </div>
 
-                {{-- Items list — same item shape as the old inline expand,
-                    same click targets (openPayload / openFailed / openPending).
-                    Opening a per-item modal closes this batch modal in one
-                    server round-trip via the open* methods. --}}
-                <section>
+                {{-- Right column — items list, the focal content.
+                    Same item shape as the old inline expand, same click
+                    targets (openPayload / openFailed / openPending). --}}
+                <div class="min-w-0 p-5">
                     <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Items ({{ count($items) }})</p>
                     @if(count($items) === 0)
                         <div class="rounded-xl border border-dashed border-gray-950/10 p-6 text-center text-xs text-gray-500 dark:text-gray-300">
@@ -161,7 +162,6 @@
                                     $status = $item['status'];
                                     $klass = $item['class'] ?? null;
                                     $klassLabel = is_string($klass) && $klass !== '' ? $klass : (string) $item['uuid'];
-                                    $shortUuid = substr((string) $item['uuid'], -8);
                                     $ts = $item['timestamp'] ?? null;
 
                                     [$icon, $iconCls] = match ($status) {
@@ -208,7 +208,7 @@
                                             @endif
                                         </p>
                                         <div class="mt-1 flex flex-wrap items-center gap-x-2 text-gray-400 dark:text-gray-400">
-                                            <span class="font-mono">…{{ $shortUuid }}</span>
+                                            <span class="break-all font-mono">{{ $item['uuid'] }}</span>
                                             @if(is_int($ts))
                                                 <x-queue-insights::qi-time :at="$ts"/>
                                             @endif
@@ -221,8 +221,8 @@
                             @endforeach
                         </ul>
                     @endif
-                </section>
-            @endif
-        </div>
+                </div>{{-- /right column --}}
+            </div>{{-- /grid --}}
+        @endif
     </div>
 </div>
