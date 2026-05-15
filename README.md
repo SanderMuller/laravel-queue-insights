@@ -81,6 +81,23 @@ php artisan vendor:publish --tag=queue-insights-config
 
 The service provider auto-discovers.
 
+### Run the scheduler
+
+Every dashboard tile, alert detector, and Prometheus gauge reads from snapshots written by `php artisan queue-insights:snapshot`. The package auto-registers it on Laravel's scheduler with `->everyMinute()->withoutOverlapping()` — you just need a host that runs `php artisan schedule:work` (or the equivalent `* * * * * cd /path && php artisan schedule:run` cron).
+
+To opt out and wire it yourself, set `queue-insights.schedule.enabled = false` and add `Schedule::command('queue-insights:snapshot')` to your own kernel.
+
+`snapshots[]` lists the queues to capture. Static config plus Horizon autodiscovery (when `laravel/horizon` is installed) cover most setups — see the published `config/queue-insights.php` for the shape and the Horizon section below.
+
+### Optional environment knobs
+
+| Var                            | Default | Purpose                                                                                      |
+|--------------------------------|---------|----------------------------------------------------------------------------------------------|
+| `QUEUE_INSIGHTS_REDIS`         | `default` | Laravel Redis connection name the package writes to. Point at a dedicated DB on shared Redis. |
+| `QUEUE_INSIGHTS_KEY_PREFIX`    | `qm:{APP_ENV}:` | Prefix for every Redis key the package writes. See [Key-prefix strategies](#key-prefix-strategies). |
+
+Subsystems each carry their own `.enabled` switch (`dashboard.enabled`, `pending.enabled`, `alerts.enabled`, `prometheus.enabled`, `scheduler.enabled`, `batches.enabled`) — flip those individually rather than reaching for a global kill switch.
+
 ## Payload capture
 
 Off by default. Laravel payloads embed serialized and sometimes encrypted job state, and a regex over JSON keys can't sanitize that safely.
@@ -381,6 +398,18 @@ Persistence lives in `localStorage['qi-theme']`. A blocking inline script in `<h
         // Default true; set to false to revert to the always-light look.
         'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
     ],
+    'clock' => [
+        // Default true. Tri-state header control (12h / auto / 24h) persisted
+        // client-side via localStorage['qi-clock']. `auto` follows browser locale.
+        'enabled' => env('QUEUE_INSIGHTS_CLOCK_TOGGLE', true),
+    ],
+    'redis_memory' => [
+        // Default false. Opt-in 7th headline tile summing MEMORY USAGE across
+        // every key under `key_prefix`. SCAN cost scales with keyspace size —
+        // measure before enabling on multi-thousand-key hosts.
+        'enabled' => env('QUEUE_INSIGHTS_REDIS_MEMORY_TILE', false),
+        'cache_ttl' => 60,
+    ],
 ],
 ```
 
@@ -447,6 +476,18 @@ The default 120s covers `--timeout=60` + 20s SQS long-poll + headroom. The windo
 ```
 
 ## Ops runbook
+
+### Console commands
+
+| Command                              | When to run                                                                                                  |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| `queue-insights:snapshot`            | Auto-registered every minute on Laravel's scheduler when `schedule.enabled=true` (default). Captures depth / in-flight / delayed for every queue in `snapshots[]`. Run manually for one-off captures or when you've opted out of auto-registration. |
+| `queue-insights:work`                | Long-running supervisor that boots one `queue:work` per `snapshots[]` connection. Use when not running Horizon. See [Running workers](#running-workers). |
+| `queue-insights:purge-pending {connection} {queue}` | One-shot cleanup of orphan pending entries on a single (connection, queue) pair (workers that crashed mid-pickup, raw `Queue::push()` outside Laravel's event flow). Default dry-run; pass `--force` to mutate. Refuses to scrub the live default queue unless `--allow-live-queue` is set. Not online-safe — quiesce dispatch first. |
+| `queue-insights:migrate-aliases`     | One-shot migration after publishing `connection_aliases` — rewrites pending/inflight zsets onto the canonical name without waiting for `pending.ttl_seconds` to drain. Default dry-run; `--force` to mutate. See [Connection aliasing](#connection-aliasing). |
+| `queue-insights:prometheus-push`     | One-shot collect + PUT to a Pushgateway, for short-lived workers / CLI scripts. See [Push gateway](#push-gateway-short-lived-workers--cli). |
+| `queue-insights:schedule:list`       | Print the captured scheduler-task snapshot table. Read-only. Requires `scheduler.enabled`.                    |
+| `queue-insights:schedule:sweep`      | Detect missed + hung scheduler runs; dispatch their typed events. Auto-registered on Laravel's scheduler with `->everyMinute()->onOneServer()->withoutOverlapping()` when `scheduler.enabled` and `scheduler.sweeper.enabled` are both true. Run manually for one-off sweeps. |
 
 ### Dashboard signals
 
@@ -552,7 +593,7 @@ Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}
 The package ships three channels out of the box:
 
 - **`log`** — zero-dep, on by default; one structured log line per issue at the configured level (`alerts.channels.log.level`).
-- **`slack`** — `Http::post` to a Slack-compatible incoming webhook (works with Slack, Mattermost, Rocket.Chat). Block Kit payload with severity-coloured attachment; falls back to plain `text` if the receiver rejects Block Kit. Set `QUEUE_INSIGHTS_SLACK_WEBHOOK` and `alerts.channels.slack.enabled = true`.
+- **`slack`** — `Http::post` to a Slack-compatible incoming webhook (works with Slack, Mattermost, Rocket.Chat). Block Kit payload with severity-coloured attachment; falls back to plain `text` if the receiver rejects Block Kit. Set `QUEUE_INSIGHTS_SLACK_WEBHOOK` and `alerts.channels.slack.enabled = true`. `QUEUE_INSIGHTS_SLACK_CHANNEL` (queue alerts) and `QUEUE_INSIGHTS_SCHEDULER_SLACK_CHANNEL` (scheduler alerts) are optional display labels surfaced in the dashboard's alert-rules panel — they don't override the webhook's destination, since Slack incoming-webhooks bind the channel server-side at creation time.
 - **`mail`** — uses Laravel's first-party mail channel; subject prefix `[Queue Insights] {severity}: {rule} on {target}`. Recipients from `alerts.channels.mail.to` (array of addresses).
 
 Both `slack` and `mail` feature-detect the underlying binding (`Illuminate\Http\Client\Factory` and `mail.manager` respectively) — if the binding is missing they're silently skipped.
