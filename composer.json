@@ -28,6 +28,7 @@
         "larastan/larastan": "^3.9.3",
         "laravel/boost": "^2.4.0",
         "laravel/horizon": "^5.29",
+        "laravel/pao": "^1.0",
         "laravel/pint": "^1.29",
         "livewire/livewire": "^3.0 || ^4.0",
         "mockery/mockery": "^1.6",
