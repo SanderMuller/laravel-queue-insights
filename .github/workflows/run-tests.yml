@@ -41,9 +41,11 @@ jobs:
         include:
           # Floor — lowest supported combo. Both drivers because the
           # predis/phpredis shim divergence is most likely to bite on the
-          # constraint floor.
-          - { php: '8.3', laravel: '11.*', testbench: '9.*',  stability: prefer-lowest, redis-client: predis,   livewire-pin: '' }
-          - { php: '8.3', laravel: '11.*', testbench: '9.*',  stability: prefer-lowest, redis-client: phpredis, livewire-pin: '' }
+          # constraint floor. Bumped from L11 to L12 because dev-only
+          # `laravel/pao ^1.0` requires L12+. Package code itself still
+          # supports L11 per `illuminate/* ^11||^12||^13` in composer.json.
+          - { php: '8.3', laravel: '12.*', testbench: '10.*', stability: prefer-lowest, redis-client: predis,   livewire-pin: '' }
+          - { php: '8.3', laravel: '12.*', testbench: '10.*', stability: prefer-lowest, redis-client: phpredis, livewire-pin: '' }
 
           # Ceiling — highest supported combo. Both drivers, same reason.
           - { php: '8.4', laravel: '13.*', testbench: '11.*', stability: prefer-stable, redis-client: predis,   livewire-pin: '' }
