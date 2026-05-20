@@ -36,7 +36,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 
 ## Live demo
 
-[**queue-insights-demo-main-wgcmqf.laravel.cloud**](https://queue-insights-demo-main-wgcmqf.laravel.cloud) — public preview hosted on Laravel Cloud, seeded with realistic fixtures.
+[**queue-insights-demo.laravel.cloud**](https://queue-insights-demo.laravel.cloud) — public preview hosted on Laravel Cloud, seeded with realistic fixtures.
 
 ## Features
 
