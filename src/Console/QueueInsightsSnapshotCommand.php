@@ -83,6 +83,7 @@ final class QueueInsightsSnapshotCommand extends Command
             $redis->command('del', [KeyPrefix::make("snapshot:error:{$connection}:{$canonicalKey}")]);
 
             $this->writeDepthSample($redis, $connection, $canonicalKey, $now, $depth);
+            $this->reapStaleTracking($redis, $connection, $canonicalKey, $now);
 
             $this->dispatcher->dispatchForSnapshot($connection, $canonicalKey, $depth);
         } catch (Throwable $throwable) {
@@ -91,6 +92,40 @@ final class QueueInsightsSnapshotCommand extends Command
         }
 
         unset($driver);
+    }
+
+    /**
+     * Drop `pending-zset` / `inflight-zset` members older than the
+     * pending-retention window. Such a member has outlived its backing
+     * `pending:{uuid}` hash (gone to TTL) — it's an orphan: the cleanup
+     * `zrem` was missed. On SQS this is the common case (a job consumed by
+     * a worker without the package's listeners, a SIGKILLed worker, or
+     * uuid drift) and orphans would otherwise accumulate unbounded — the
+     * oldest one perpetually firing `oldest_pending` / `stuck_inflight`.
+     *
+     * Runs once per (connection, queue) per snapshot tick. The detectors
+     * already score-exclude these members from alerting; this physically
+     * reaps them so the zsets stay bounded and the dashboard's tracked
+     * counts stop drifting.
+     */
+    private function reapStaleTracking(RedisConnection $redis, string $connection, string $canonicalKey, int $now): void
+    {
+        if (! Config::bool('pending.enabled', true)) {
+            return;
+        }
+
+        // Exclusive upper bound `(floor` — reap strictly older than the
+        // retention floor, mirroring the detectors' inclusive `>= floor`
+        // live-window lower bound so the two never disagree on an edge member.
+        $floor = $now - Config::int('pending.ttl_seconds', 86400);
+
+        foreach (['pending-zset', 'inflight-zset'] as $zset) {
+            $redis->command('zremrangebyscore', [
+                KeyPrefix::make("{$zset}:{$connection}:{$canonicalKey}"),
+                '-inf',
+                "({$floor}",
+            ]);
+        }
     }
 
     private function writeMetric(

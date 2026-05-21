@@ -204,6 +204,46 @@ it('prunes classes older than 30 days at the end of the run', function (): void 
     expect($members)->toContain('App\\Jobs\\Fresh')->not->toContain('App\\Jobs\\Ancient');
 });
 
+it('reaps orphaned pending/inflight zset members older than the retention window', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.pending.ttl_seconds', 86400);
+
+    $r = Redis::connection('default');
+    $now = Date::now()->getTimestamp();
+
+    // Orphans — score older than the 86400s retention window (backing
+    // pending:{uuid} hash long gone). Plus a live member inside the window.
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 600_000, 'orphan-pending']);
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 300, 'live-pending']);
+    $r->command('zadd', ['qmtest:inflight-zset:sqsq:work', $now - 600_000, 'orphan-inflight']);
+    $r->command('zadd', ['qmtest:inflight-zset:sqsq:work', $now - 120, 'live-inflight']);
+
+    Artisan::call('queue-insights:snapshot');
+
+    expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))
+        ->toBe(['live-pending'])
+        ->and($r->command('zrange', ['qmtest:inflight-zset:sqsq:work', 0, -1]))
+        ->toBe(['live-inflight']);
+});
+
+it('skips the stale-tracking reap when pending tracking is disabled', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', false);
+
+    $r = Redis::connection('default');
+    // A would-be orphan — left untouched because pending tracking is off.
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', Date::now()->getTimestamp() - 600_000, 'orphan-pending']);
+
+    Artisan::call('queue-insights:snapshot');
+
+    expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))->toBe(['orphan-pending']);
+});
+
 it('falls back to NullSnapshotDriver with warning when queue connection is unknown', function (): void {
     config()->set('queue-insights.snapshots', [
         ['connection' => 'ghost', 'queue' => 'default'],
