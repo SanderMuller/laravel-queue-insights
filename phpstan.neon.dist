@@ -69,7 +69,10 @@ parameters:
             path: tests/Feature/Http/DetailsModalTest.php
             reportUnmatched: false
 
-        # Pest $this->fail() in closures — PHPStan can't resolve $this to TestCase
+        # Test-only dynamic method calls PHPStan can't statically resolve:
+        # Mockery fluent-mock chains (->once() / ->andReturn()), Pest's
+        # TestCall higher-order API, and Livewire component + test-response
+        # methods. (Pest closure `$this` itself is resolved by peststan.)
         -
             identifier: method.notFound
             path: tests/
