@@ -3,8 +3,10 @@
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
+use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Event;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
+use SanderMuller\QueueInsights\Http\Middleware\SetInitiatorOrigin;
 use SanderMuller\QueueInsights\QueueInsightsServiceProvider;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
@@ -53,6 +55,16 @@ it('binds KeyRedactingSanitizer when capture.payloads = full', function (): void
     app()->forgetInstance(PayloadSanitizer::class);
 
     expect(resolve(PayloadSanitizer::class)::class)->toBe(KeyRedactingSanitizer::class);
+});
+
+it('appends the SetInitiatorOrigin middleware to the web and api groups', function (): void {
+    // registerInitiatorMiddleware() runs in boot() when initiator.enabled —
+    // the behavioural origin tests exercise the middleware itself, this pins
+    // the provider-side group registration that puts it in the pipeline.
+    $groups = app(Router::class)->getMiddlewareGroups();
+
+    expect($groups['web'] ?? [])->toContain(SetInitiatorOrigin::class)
+        ->and($groups['api'] ?? [])->toContain(SetInitiatorOrigin::class);
 });
 
 it('honors a custom PayloadSanitizer binding from the host application', function (): void {

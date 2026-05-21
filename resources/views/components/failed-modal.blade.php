@@ -268,7 +268,7 @@
                             <div class="flex items-baseline justify-between gap-3 py-2">
                                 <dt class="shrink-0 text-gray-500 dark:text-gray-400">Dispatched from</dt>
                                 <dd class="min-w-0 text-right">
-                                    <code class="break-all rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $failed['call_site'] }}</code>
+                                    <code class="break-all rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $failedCallSite }}</code>
                                 </dd>
                             </div>
                         @endif
