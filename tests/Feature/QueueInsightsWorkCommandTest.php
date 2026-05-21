@@ -225,7 +225,7 @@ it('narrows fan-out via repeated --connection= (array form)', function (): void 
     ]);
 
     expect($this->factory->calls)->toHaveCount(2)
-        ->and(array_column($this->factory->calls, 'connection'))
+        ->and(array_column((array) $this->factory->calls, 'connection'))
         ->toBe(['sqs', 'beanstalk']);
 });
 
@@ -241,7 +241,7 @@ it('narrows fan-out via CSV --connection= (single value, comma-split)', function
     ]);
 
     expect($this->factory->calls)->toHaveCount(2)
-        ->and(array_column($this->factory->calls, 'connection'))
+        ->and(array_column((array) $this->factory->calls, 'connection'))
         ->toBe(['sqs', 'redis']);
 });
 
@@ -257,7 +257,7 @@ it('composes array + CSV in --connection= and dedups first-seen', function (): v
     ]);
 
     expect($this->factory->calls)->toHaveCount(3)
-        ->and(array_column($this->factory->calls, 'connection'))
+        ->and(array_column((array) $this->factory->calls, 'connection'))
         ->toBe(['sqs', 'redis', 'beanstalk']);
 });
 
