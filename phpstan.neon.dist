@@ -14,6 +14,14 @@ parameters:
 
     level: max
 
+    # Analyse against the whole supported PHP range (composer.json: php ^8.3),
+    # not whatever PHP happens to run PHPStan. Without this the result set
+    # drifts between a contributor on 8.5 and the CI job on 8.4 — a local
+    # green is then no proof CI passes.
+    phpVersion:
+        min: 80300
+        max: 80500
+
     type_coverage:
         return: 100
         param: 100

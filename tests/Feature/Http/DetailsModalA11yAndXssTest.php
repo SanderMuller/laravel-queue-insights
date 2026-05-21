@@ -218,8 +218,6 @@ it('XSS layer 2 — hook body runs highlightJson + insertAdjacentHTML on hostile
     $source = file_get_contents($layoutPath);
     if ($source === false) {
         $this->fail('Could not read layouts/app.blade.php');
-
-        return;
     }
 
     // Locate the two JS blocks we need. Extraction regex is deliberately simple —
@@ -227,14 +225,10 @@ it('XSS layer 2 — hook body runs highlightJson + insertAdjacentHTML on hostile
     // function or wrap it in a closure fail this assertion loudly.
     if (preg_match('/function highlightJson\(src\) \{(.*?)\n {8}\}/s', $source, $highlightMatch) !== 1) {
         $this->fail('Could not locate highlightJson function in layout — extraction regex needs updating');
-
-        return;
     }
 
     if (preg_match('/function registerQueueInsightsHook\(\) \{(.*?)\n {8}\}/s', $source, $hookMatch) !== 1) {
         $this->fail('Could not locate registerQueueInsightsHook function in layout — extraction regex needs updating');
-
-        return;
     }
 
     // Source-order sanity: escape-first must appear before token-wrapping in highlightJson.
@@ -242,8 +236,6 @@ it('XSS layer 2 — hook body runs highlightJson + insertAdjacentHTML on hostile
     $tokenIdx = strpos($source, '("(?:\\\\.|[^"\\\\])*")');
     if ($escapeIdx === false || $tokenIdx === false) {
         $this->fail('Could not locate escape-chain or token-wrapping regex in highlightJson source');
-
-        return;
     }
 
     expect($escapeIdx)->toBeLessThan($tokenIdx);
