@@ -66,7 +66,7 @@ it('the dispatch() helper resolves to an application frame', function (): void {
 });
 
 it('a bare Job::dispatch() statement resolves to an application frame', function (): void {
-    InitiatorQueuedJob::dispatch();
+    dispatch(new InitiatorQueuedJob());
 
     $callSite = singlePendingCallSite();
 
@@ -79,7 +79,7 @@ it('two real dispatch sites of the same job class resolve to two different call_
     $uuids = R::raw('zrange', 'qmtest:pending-zset:redis:default', 0, -1);
     $firstUuid = is_array($uuids) && isset($uuids[0]) && is_string($uuids[0]) ? $uuids[0] : '';
 
-    InitiatorQueuedJob::dispatch();
+    dispatch(new InitiatorQueuedJob());
     $uuids = R::raw('zrange', 'qmtest:pending-zset:redis:default', 0, -1);
     $secondUuid = '';
     if (is_array($uuids)) {

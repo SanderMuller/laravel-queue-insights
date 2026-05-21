@@ -347,6 +347,7 @@ it('renders the class FQCN title with a faded namespace + bold leaf', function (
     ] as $field => $value) {
         R::conn()->command('hset', ['qmtest:pending:pending-title', $field, $value]);
     }
+
     R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-title']);
 
     Livewire::test(QueueInsightsDashboard::class)
@@ -374,6 +375,7 @@ it('renders Structured + Sanitized JSON payload tabs when a full pending body is
     ] as $field => $value) {
         R::conn()->command('hset', ['qmtest:pending:pending-tabs', $field, $value]);
     }
+
     R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-tabs']);
 
     Livewire::test(QueueInsightsDashboard::class)

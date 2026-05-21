@@ -236,7 +236,7 @@ it('RecordJobProcessed omits origin when none is on Context', function (): void 
     expect($entries)->toHaveCount(1);
 
     $fields = array_values($entries)[0];
-    expect(array_key_exists('origin', $fields))->toBeFalse();
+    expect($fields)->not->toHaveKey('origin');
 });
 
 // --- RecordJobFailed: durable initiator key + lazy resolve -----------------

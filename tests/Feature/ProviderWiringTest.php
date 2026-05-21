@@ -61,7 +61,7 @@ it('appends the SetInitiatorOrigin middleware to the web and api groups', functi
     // registerInitiatorMiddleware() runs in boot() when initiator.enabled —
     // the behavioural origin tests exercise the middleware itself, this pins
     // the provider-side group registration that puts it in the pipeline.
-    $groups = app(Router::class)->getMiddlewareGroups();
+    $groups = resolve(Router::class)->getMiddlewareGroups();
 
     expect($groups['web'] ?? [])->toContain(SetInitiatorOrigin::class)
         ->and($groups['api'] ?? [])->toContain(SetInitiatorOrigin::class);

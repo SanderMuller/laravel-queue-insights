@@ -128,7 +128,7 @@ final class QueueInsightsSnapshotCommand extends Command
             $key = KeyPrefix::make("{$zset}:{$connection}:{$canonicalKey}");
 
             $candidates = $redis->command('zrangebyscore', [$key, '-inf', "({$floor}"]);
-            $uuids = is_array($candidates) ? array_values(array_filter($candidates, 'is_string')) : [];
+            $uuids = is_array($candidates) ? array_values(array_filter($candidates, is_string(...))) : [];
             if ($uuids === []) {
                 continue;
             }

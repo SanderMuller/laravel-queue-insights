@@ -44,6 +44,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Pending & delayed-job inspector** per queue, event-captured into Redis (same view across drivers). Optional payload capture under a separate budget so the per-row hash math doesn't pin the completed-stream sanitiser settings.
 - **Batched jobs** — per-batch progress, counts, cancelled state, per-item rollup linking back to job modals.
 - **Chained-job visibility** — `↳ Next` chip + Chain modal section, plus opportunistic backward `↰ From {parent}` lineage.
+- **Job initiator** — every job records where it was dispatched from: a coarse origin (HTTP route / artisan command / scheduled task, propagated into nested dispatches via `Context`) and an opt-in `file:line` call site. Surfaced in the completed / pending / failed modals.
 - **Wait time** per queue (p50 / p95) and per job — enqueue → pickup gap.
 - **24h throughput sparkline** + headline stats (jobs/min, past hour, max p95 wait + runtime). Optional 7th tile: total Redis bytes consumed by the package's keyspace.
 - **Queues grouped *Needs attention* vs *Healthy*** so a broken queue can't hide in a long list.
@@ -96,7 +97,7 @@ To opt out and wire it yourself, set `queue-insights.schedule.enabled = false` a
 | `QUEUE_INSIGHTS_REDIS`         | `default` | Laravel Redis connection name the package writes to. Point at a dedicated DB on shared Redis. |
 | `QUEUE_INSIGHTS_KEY_PREFIX`    | `qm:{APP_ENV}:` | Prefix for every Redis key the package writes. See [Key-prefix strategies](#key-prefix-strategies). |
 
-Subsystems each carry their own `.enabled` switch (`dashboard.enabled`, `pending.enabled`, `alerts.enabled`, `prometheus.enabled`, `scheduler.enabled`, `batches.enabled`) — flip those individually rather than reaching for a global kill switch.
+Subsystems each carry their own `.enabled` switch (`dashboard.enabled`, `pending.enabled`, `alerts.enabled`, `prometheus.enabled`, `scheduler.enabled`, `batches.enabled`, `initiator.enabled`) — flip those individually rather than reaching for a global kill switch.
 
 ## Payload capture
 
@@ -339,6 +340,24 @@ For **failed jobs** the source is `failed_jobs.payload.data.command` — Laravel
 - **Click-through to the parent's modal is not in v1** — the lineage row is plain text plus a copy-to-clipboard button. Resolving a UUID to its target surface (completed stream id vs failed_jobs id) is a follow-up.
 
 `queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job will still carry the correct `chain` field — the retry doesn't lose chain visibility. Backward lineage is keyed by uuid and survives the retry too: the existing `qi:lineage:{uuid}` is never overwritten with null.
+
+### Job initiator
+
+Where `↰ From {parent}` answers "which *job* ran before this one", the job initiator answers "which *request, command, or scheduled task* started the work" — and, optionally, the exact line of code that dispatched it. Both surface as `Origin` and `Dispatched from` rows in the completed-, pending-, and failed-job modals, and in the failed-job markdown export.
+
+- **Origin** — the coarse entry point: `http:{route}` for a job dispatched during a request, `artisan:{command}` inside a console command, `schedule:{task}` for one dispatched by a scheduled task. Origin rides Laravel's `Context`, so it's serialized into the job payload and **propagates into nested dispatches** — a job dispatched by another job inherits the root origin. Jobs dispatched outside any of those (tinker, a bare daemon) carry no origin.
+- **Call site** — the exact `file:line` the `dispatch()` ran from, so two code paths that dispatch the same job class stay distinguishable. Opt-in: it costs one bounded `debug_backtrace()` per dispatch, so it's **off by default**.
+
+```php
+// config/queue-insights.php
+'initiator' => [
+    'enabled' => env('QUEUE_INSIGHTS_INITIATOR', true),
+    'capture_origin' => true,
+    'capture_call_site' => false,  // opt in for file:line precision
+],
+```
+
+Origin capture is automatic — the package appends an HTTP middleware to the `web` / `api` groups and listens on `CommandStarting` plus the scheduler lifecycle. Coverage is best-effort: requests through custom route groups, and dispatches that run before the group middleware, carry no origin. Disable the whole feature with `QUEUE_INSIGHTS_INITIATOR=false` — listeners and the middleware become no-ops.
 
 ### Customising row markup
 

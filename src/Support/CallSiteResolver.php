@@ -2,6 +2,9 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use ReflectionException;
+use ReflectionFunction;
+
 /**
  * Resolves the application dispatch call site from a backtrace.
  *
@@ -25,7 +28,7 @@ namespace SanderMuller\QueueInsights\Support;
  * The skip-paths set is computed once from the runtime layout but is also
  * injectable so tests can supply their own roots.
  */
-final class CallSiteResolver
+final readonly class CallSiteResolver
 {
     /**
      * Absolute, `realpath`-normalised directory/file prefixes whose frames
@@ -45,8 +48,8 @@ final class CallSiteResolver
     public function __construct(?array $skipPaths = null)
     {
         $this->skipPaths = $skipPaths === null
-            ? self::computeSkipPaths()
-            : self::normalisePaths($skipPaths);
+            ? $this->computeSkipPaths()
+            : $this->normalisePaths($skipPaths);
     }
 
     /**
@@ -66,8 +69,15 @@ final class CallSiteResolver
         foreach ($frames as $frame) {
             $file = $frame['file'] ?? null;
             $line = $frame['line'] ?? null;
+            if (! is_string($file)) {
+                continue;
+            }
 
-            if (! is_string($file) || $file === '' || ! is_int($line)) {
+            if ($file === '') {
+                continue;
+            }
+
+            if (! is_int($line)) {
                 continue;
             }
 
@@ -108,7 +118,7 @@ final class CallSiteResolver
      */
     private function formatRelative(string $file): string
     {
-        $base = self::resolvedBasePath();
+        $base = $this->resolvedBasePath();
         if ($base === null) {
             return $file;
         }
@@ -133,7 +143,7 @@ final class CallSiteResolver
      *
      * @return list<string>
      */
-    private static function computeSkipPaths(): array
+    private function computeSkipPaths(): array
     {
         $paths = [];
 
@@ -148,7 +158,7 @@ final class CallSiteResolver
         // The Composer vendor directory. Resolved from the installed
         // `illuminate/support` location when available — robust against
         // path-repo layouts where base_path()/vendor doesn't exist.
-        foreach (self::candidateVendorDirs() as $vendor) {
+        foreach ($this->candidateVendorDirs() as $vendor) {
             $resolved = realpath($vendor);
             if (is_string($resolved)) {
                 $paths[] = $resolved;
@@ -159,7 +169,7 @@ final class CallSiteResolver
         // frame carries no class, so it can't be skipped by namespace.
         if (function_exists('dispatch')) {
             try {
-                $reflection = new \ReflectionFunction('dispatch');
+                $reflection = new ReflectionFunction('dispatch');
                 $helperFile = $reflection->getFileName();
                 if (is_string($helperFile) && $helperFile !== '') {
                     $resolved = realpath($helperFile);
@@ -167,12 +177,12 @@ final class CallSiteResolver
                         $paths[] = $resolved;
                     }
                 }
-            } catch (\ReflectionException) {
+            } catch (ReflectionException) {
                 // Helper not reflectable — vendor/ skip already covers it.
             }
         }
 
-        return self::normalisePaths($paths);
+        return $this->normalisePaths($paths);
     }
 
     /**
@@ -182,11 +192,11 @@ final class CallSiteResolver
      *
      * @return list<string>
      */
-    private static function candidateVendorDirs(): array
+    private function candidateVendorDirs(): array
     {
         $dirs = [];
 
-        $base = self::resolvedBasePath();
+        $base = $this->resolvedBasePath();
         if ($base !== null) {
             $dirs[] = $base . DIRECTORY_SEPARATOR . 'vendor';
         }
@@ -203,7 +213,7 @@ final class CallSiteResolver
      * `base_path()` helper is unavailable (e.g. a unit context with no
      * booted application).
      */
-    private static function resolvedBasePath(): ?string
+    private function resolvedBasePath(): ?string
     {
         if (! function_exists('base_path')) {
             return null;
@@ -221,7 +231,7 @@ final class CallSiteResolver
      * @param  list<string>  $paths
      * @return list<string>
      */
-    private static function normalisePaths(array $paths): array
+    private function normalisePaths(array $paths): array
     {
         $out = [];
         foreach ($paths as $path) {
