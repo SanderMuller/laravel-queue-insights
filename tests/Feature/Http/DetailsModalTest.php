@@ -337,7 +337,8 @@ it('Section C Raw pane groups standard Laravel queue-payload fields into Executi
         'maxExceptions' => null,
         'timeout' => 60,
         'backoff' => [1, 5, 10],
-        // Execution group — stays in the Structured tab.
+        // Execution group — pushedAt stays in the Structured tab. `attempts`
+        // is recognised but NOT rendered (the left-rail metadata shows it).
         'attempts' => 1,
         'pushedAt' => 1716200000,
         // Tags — also moved to the hero, no longer in the Structured tab.
@@ -370,10 +371,12 @@ it('Section C Raw pane groups standard Laravel queue-payload fields into Executi
         ->assertSee('1, 5, 10 s') // backoff array rendered as comma-list with unit
         ->assertSee('tags')
         ->assertSee('App\\Models\\User:42')
-        // Structured tab keeps Execution + Other.
+        // Structured tab keeps Execution + Other. `attempts` is suppressed —
+        // it's already in the left-rail metadata, so the Execution panel
+        // only carries delay / createdAt / pushedAt.
         ->assertSee('Execution')
-        ->assertSee('attempts')
         ->assertSee('pushedAt')
+        ->assertDontSeeHtml('>attempts</')
         ->assertSee('Other fields')
         ->assertSee('customField')
         ->assertSee('customValue');

@@ -22,7 +22,6 @@
         'backoff' => 'Seconds to wait between retries. List = staircase delays (e.g. [1,5,10] = 1s · 5s · 10s).',
         'retryUntil' => 'Absolute timestamp after which the job stops retrying regardless of maxTries.',
         'failOnTimeout' => 'When true, a timeout marks the job as failed instead of letting it retry.',
-        'attempts' => 'How many times the worker has tried this job so far.',
         'delay' => 'Seconds the job was delayed before its first dispatch.',
         'createdAt' => 'When the job payload was constructed.',
         'pushedAt' => 'When the job was pushed to the queue connection.',
@@ -32,9 +31,13 @@
 @if(is_array($body))
     @php
         $configKeys = ['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout'];
-        $executionKeys = ['attempts', 'delay', 'createdAt', 'pushedAt'];
+        $executionKeys = ['delay', 'createdAt', 'pushedAt'];
+        // `attempts` is recognised as well-known (kept out of "Other fields")
+        // but NOT rendered here — every modal embedding this component already
+        // shows the attempt count in its left-rail metadata, so repeating it
+        // in the Execution panel is noise.
         $wellKnownKeys = array_merge(
-            ['uuid', 'displayName', 'job', 'id', 'type', 'tags', 'silenced', 'data'],
+            ['uuid', 'displayName', 'job', 'id', 'type', 'tags', 'silenced', 'data', 'attempts'],
             $configKeys,
             $executionKeys,
         );
