@@ -289,48 +289,16 @@
                     @endif
 
                     @if(is_string($failedPayloadRaw) && $failedPayloadRaw !== '')
-                        {{-- Payload — underline-link tabs over a soft inset body,
-                            matching the completed-jobs details modal. Structured
-                            tab gets the config-stripped body; JSON tab keeps the
-                            full sanitized payload as the operator's raw view. --}}
+                        {{-- Payload — shared underline-tab partial. Structured tab
+                            gets the config-stripped body; JSON tab keeps the full
+                            sanitized payload as the operator's raw view. --}}
                         <section data-section="payload">
-                            <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
-                                <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
-                                <div class="-mb-px flex items-center gap-4" role="tablist">
-                                    <button type="button"
-                                            role="tab"
-                                            id="qi-failed-tab-raw"
-                                            aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
-                                            aria-controls="qi-failed-panel-raw"
-                                            wire:click="setPayloadTab('raw')"
-                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
-                                        Structured
-                                    </button>
-                                    <button type="button"
-                                            role="tab"
-                                            id="qi-failed-tab-json"
-                                            aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
-                                            aria-controls="qi-failed-panel-json"
-                                            wire:click="setPayloadTab('json')"
-                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
-                                        Sanitized JSON
-                                    </button>
-                                </div>
-                            </div>
-                            @if($payloadTab === 'json')
-                                <pre role="tabpanel"
-                                     id="qi-failed-panel-json"
-                                     aria-labelledby="qi-failed-tab-json"
-                                     data-json-highlight
-                                     class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{{ $failedPayloadPretty }}</pre>
-                            @else
-                                <div role="tabpanel"
-                                     id="qi-failed-panel-raw"
-                                     aria-labelledby="qi-failed-tab-raw"
-                                     class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                                    <x-queue-insights::structured-payload :payload="$failedPayloadFiltered ?? $failedPayloadRaw"/>
-                                </div>
-                            @endif
+                            @include('queue-insights::partials.payload-tabs', [
+                                'idPrefix' => 'qi-failed',
+                                'payloadTab' => $payloadTab,
+                                'structuredBody' => $failedPayloadFiltered ?? $failedPayloadRaw,
+                                'jsonBody' => $failedPayloadDecoded ?? $failedPayloadRaw,
+                            ])
                         </section>
                     @endif
 

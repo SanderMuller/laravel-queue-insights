@@ -19,7 +19,13 @@ function modalSource(string $name): string
 }
 
 it('emits dark variants on details-modal panel + two-column rail + tabs', function (): void {
-    $src = modalSource('details-modal');
+    // The underline payload tabs live in the shared `payload-tabs` partial
+    // (one source of truth across the completed / failed / pending modals);
+    // scan both so the tab dark-variant guarantee still holds.
+    $tabsPartial = file_get_contents(
+        __DIR__ . '/../../../resources/views/partials/payload-tabs.blade.php'
+    );
+    $src = modalSource('details-modal') . ($tabsPartial === false ? '' : $tabsPartial);
 
     expect($src)
         // Modal panel surface.

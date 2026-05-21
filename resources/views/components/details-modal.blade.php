@@ -340,58 +340,18 @@
                         </section>
                     @endif
 
-                    {{-- Payload section — underline-link tabs over a soft inset body.
-                         Tab buttons sit on a shared bottom-border rail, active tab gets a
-                         2px emerald underline. Body sits flush in a gray inset surface so
-                         the modal reads as documentation rather than a control panel. --}}
+                    {{-- Payload section. Structured tab uses the FILTERED body so
+                         config + tags don't double up with the hero chips; JSON tab
+                         keeps the ORIGINAL body so the operator can still inspect
+                         maxTries / retryUntil / tags as captured. --}}
                     @if($sectionCBody !== null)
-                        {{-- Structured tab uses the FILTERED body so config + tags
-                             don't double up with the hero header chips. JSON tab
-                             keeps the ORIGINAL sanitized body — that pane is the
-                             operator's only raw view of the captured payload, so
-                             stripping there would lose the only way to inspect
-                             maxTries / retryUntil / tags as captured. --}}
                         <section data-section="payload">
-                            <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
-                                <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
-                                <div class="-mb-px flex items-center gap-4" role="tablist">
-                                    <button type="button"
-                                            role="tab"
-                                            id="qi-tab-raw"
-                                            aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
-                                            aria-controls="qi-panel-raw"
-                                            wire:click="setPayloadTab('raw')"
-                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
-                                        Structured
-                                    </button>
-                                    <button type="button"
-                                            role="tab"
-                                            id="qi-tab-json"
-                                            aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
-                                            aria-controls="qi-panel-json"
-                                            wire:click="setPayloadTab('json')"
-                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
-                                        Sanitized JSON
-                                    </button>
-                                </div>
-                            </div>
-                            @if($payloadTab === 'json')
-                                @php
-                                    $payloadJsonString = is_array($sectionCBody) ? json_encode($sectionCBody, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) : $sectionCBody;
-                                @endphp
-                                <pre role="tabpanel"
-                                     id="qi-panel-json"
-                                     aria-labelledby="qi-tab-json"
-                                     data-json-highlight
-                                     class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{{ $payloadJsonString }}</pre>
-                            @else
-                                <div role="tabpanel"
-                                     id="qi-panel-raw"
-                                     aria-labelledby="qi-tab-raw"
-                                     class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                                    <x-queue-insights::structured-payload :payload="$sectionCBodyFiltered"/>
-                                </div>
-                            @endif
+                            @include('queue-insights::partials.payload-tabs', [
+                                'idPrefix' => 'qi',
+                                'payloadTab' => $payloadTab,
+                                'structuredBody' => $sectionCBodyFiltered,
+                                'jsonBody' => $sectionCBody,
+                            ])
                         </section>
                     @endif
 

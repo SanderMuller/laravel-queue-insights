@@ -321,9 +321,6 @@
                                 unset($pendingPayloadFiltered[$stripKey]);
                             }
                         }
-                        $pendingPayloadJson = is_array($pendingPayloadDecoded)
-                            ? json_encode($pendingPayloadDecoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
-                            : $pendingPayloadDecoded;
                     @endphp
                     @if($pendingPayloadNote)
                         <div class="flex gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-400/30">
@@ -359,48 +356,16 @@
                         @include('queue-insights::partials.job-config-hero', ['body' => $heroBody, 'subtitle' => null])
 
                         @if($pendingPayloadDecoded !== null)
-                            {{-- Payload — underline-link Structured / Sanitized JSON
-                                tabs, matching the completed- + failed-jobs modals.
-                                Structured shows the config-stripped body; JSON keeps
-                                the full sanitized payload for the colorizer. --}}
+                            {{-- Payload — shared underline-tab partial. Structured
+                                shows the config-stripped body; JSON keeps the full
+                                sanitized payload for the colorizer. --}}
                             <section data-section="pending-payload">
-                                <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
-                                    <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
-                                    <div class="-mb-px flex items-center gap-4" role="tablist">
-                                        <button type="button"
-                                                role="tab"
-                                                id="qi-pending-tab-raw"
-                                                aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
-                                                aria-controls="qi-pending-panel-raw"
-                                                wire:click="setPayloadTab('raw')"
-                                                class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
-                                            Structured
-                                        </button>
-                                        <button type="button"
-                                                role="tab"
-                                                id="qi-pending-tab-json"
-                                                aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
-                                                aria-controls="qi-pending-panel-json"
-                                                wire:click="setPayloadTab('json')"
-                                                class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
-                                            Sanitized JSON
-                                        </button>
-                                    </div>
-                                </div>
-                                @if($payloadTab === 'json')
-                                    <pre role="tabpanel"
-                                         id="qi-pending-panel-json"
-                                         aria-labelledby="qi-pending-tab-json"
-                                         data-json-highlight
-                                         class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{{ $pendingPayloadJson }}</pre>
-                                @else
-                                    <div role="tabpanel"
-                                         id="qi-pending-panel-raw"
-                                         aria-labelledby="qi-pending-tab-raw"
-                                         class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
-                                        <x-queue-insights::structured-payload :payload="$pendingPayloadFiltered ?? $pendingPayloadDecoded"/>
-                                    </div>
-                                @endif
+                                @include('queue-insights::partials.payload-tabs', [
+                                    'idPrefix' => 'qi-pending',
+                                    'payloadTab' => $payloadTab,
+                                    'structuredBody' => $pendingPayloadFiltered ?? $pendingPayloadDecoded,
+                                    'jsonBody' => $pendingPayloadDecoded,
+                                ])
                             </section>
                         @endif
                     @endif
