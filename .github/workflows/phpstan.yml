@@ -38,18 +38,6 @@ jobs:
       - name: Install composer dependencies
         uses: ramsey/composer-install@v4
 
-      - name: DEBUG peststan/extension state
-        run: |
-          echo "=== composer show mrpunyapal/peststan ==="
-          composer show mrpunyapal/peststan 2>&1 | head -4 || echo "NOT INSTALLED"
-          echo "=== peststan occurrences in GeneratedConfig ==="
-          grep -c "mrpunyapal/peststan" vendor/phpstan/extension-installer/src/GeneratedConfig.php 2>&1 || echo "0"
-          echo "=== peststan vendor dir ==="
-          ls vendor/mrpunyapal/peststan/ 2>&1 || echo "ABSENT"
-          echo "=== phpstan version + php ==="
-          ./vendor/bin/phpstan --version 2>&1 | head -1
-          php -v | head -1
-
       - name: Cache PHPStan results
         uses: actions/cache@v5
         with:
