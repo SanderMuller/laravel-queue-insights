@@ -214,8 +214,8 @@ it('reaps orphaned pending/inflight zset members older than the retention window
     $r = Redis::connection('default');
     $now = Date::now()->getTimestamp();
 
-    // Orphans — score older than the 86400s retention window (backing
-    // pending:{uuid} hash long gone). Plus a live member inside the window.
+    // Orphans — score older than the 86400s retention window with no
+    // backing pending:{uuid} hash. Plus a live member inside the window.
     $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 600_000, 'orphan-pending']);
     $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 300, 'live-pending']);
     $r->command('zadd', ['qmtest:inflight-zset:sqsq:work', $now - 600_000, 'orphan-inflight']);
@@ -227,6 +227,28 @@ it('reaps orphaned pending/inflight zset members older than the retention window
         ->toBe(['live-pending'])
         ->and($r->command('zrange', ['qmtest:inflight-zset:sqsq:work', 0, -1]))
         ->toBe(['live-inflight']);
+});
+
+it('does not reap an old-scored member whose backing pending hash is still alive', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.pending.ttl_seconds', 86400);
+
+    $r = Redis::connection('default');
+    $now = Date::now()->getTimestamp();
+
+    // Score is below the retention floor, but the backing hash still
+    // exists — the reap confirms orphanhood via EXISTS, not score age
+    // alone, so this member must survive. Guards against a future write
+    // path decoupling the hash TTL from `pending.ttl_seconds`.
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 600_000, 'old-but-live']);
+    $r->command('hset', ['qmtest:pending:old-but-live', 'class', 'App\\Jobs\\Slow']);
+
+    Artisan::call('queue-insights:snapshot');
+
+    expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))->toBe(['old-but-live']);
 });
 
 it('skips the stale-tracking reap when pending tracking is disabled', function (): void {

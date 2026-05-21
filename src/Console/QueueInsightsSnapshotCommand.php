@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\RedisPipeline;
 use Throwable;
 
 final class QueueInsightsSnapshotCommand extends Command
@@ -95,18 +96,22 @@ final class QueueInsightsSnapshotCommand extends Command
     }
 
     /**
-     * Drop `pending-zset` / `inflight-zset` members older than the
-     * pending-retention window. Such a member has outlived its backing
-     * `pending:{uuid}` hash (gone to TTL) — it's an orphan: the cleanup
-     * `zrem` was missed. On SQS this is the common case (a job consumed by
-     * a worker without the package's listeners, a SIGKILLed worker, or
-     * uuid drift) and orphans would otherwise accumulate unbounded — the
-     * oldest one perpetually firing `oldest_pending` / `stuck_inflight`.
+     * Reap orphaned `pending-zset` / `inflight-zset` members — entries
+     * whose backing `pending:{uuid}` hash is gone (TTL'd out) but whose
+     * zset member lingered because a cleanup `zrem` was missed. On SQS
+     * this is the common case: a job consumed by a worker without the
+     * package's listeners, a SIGKILLed worker, or queue-uuid drift.
+     * Orphans would otherwise accumulate unbounded — the oldest one
+     * perpetually firing `oldest_pending` / `stuck_inflight`.
      *
-     * Runs once per (connection, queue) per snapshot tick. The detectors
-     * already score-exclude these members from alerting; this physically
-     * reaps them so the zsets stay bounded and the dashboard's tracked
-     * counts stop drifting.
+     * The candidate set is scored below the retention floor
+     * (`now - pending.ttl_seconds`): a member that old has, under every
+     * current write path, outlived its hash. Orphanhood is then
+     * *confirmed* by an actual `EXISTS pending:{uuid}` check rather than
+     * inferred from score age alone — so a member that somehow still
+     * carries live backing state (a future write path with a longer
+     * hash TTL, clock skew) is never wrongly deleted. Runs once per
+     * (connection, queue) per snapshot tick.
      */
     private function reapStaleTracking(RedisConnection $redis, string $connection, string $canonicalKey, int $now): void
     {
@@ -114,17 +119,42 @@ final class QueueInsightsSnapshotCommand extends Command
             return;
         }
 
-        // Exclusive upper bound `(floor` — reap strictly older than the
+        // Exclusive upper bound `(floor` — strictly older than the
         // retention floor, mirroring the detectors' inclusive `>= floor`
         // live-window lower bound so the two never disagree on an edge member.
         $floor = $now - Config::int('pending.ttl_seconds', 86400);
 
         foreach (['pending-zset', 'inflight-zset'] as $zset) {
-            $redis->command('zremrangebyscore', [
-                KeyPrefix::make("{$zset}:{$connection}:{$canonicalKey}"),
-                '-inf',
-                "({$floor}",
-            ]);
+            $key = KeyPrefix::make("{$zset}:{$connection}:{$canonicalKey}");
+
+            $candidates = $redis->command('zrangebyscore', [$key, '-inf', "({$floor}"]);
+            $uuids = is_array($candidates) ? array_values(array_filter($candidates, 'is_string')) : [];
+            if ($uuids === []) {
+                continue;
+            }
+
+            // Confirm the backing hash is actually gone before deleting —
+            // pipelined so the whole confirmation is one round-trip.
+            $exists = RedisPipeline::run($redis, static function (mixed $client) use ($uuids): void {
+                foreach ($uuids as $uuid) {
+                    $client->exists(KeyPrefix::make("pending:{$uuid}"));
+                }
+            });
+
+            $orphans = [];
+            foreach ($uuids as $i => $uuid) {
+                // Reap only on a definitive EXISTS=0 reply. A non-numeric /
+                // missing reply (driver hiccup) is treated as "present" so
+                // the destructive zrem fails safe — never delete on doubt.
+                $flag = $exists[$i] ?? null;
+                if (is_numeric($flag) && (int) $flag === 0) {
+                    $orphans[] = $uuid;
+                }
+            }
+
+            if ($orphans !== []) {
+                $redis->command('zrem', [$key, ...$orphans]);
+            }
         }
     }
 
