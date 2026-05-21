@@ -200,6 +200,77 @@ it('auto-disables oldest_pending when pending.enabled = false and warns at boot'
     Event::assertNotDispatched(OldestPendingAging::class);
 });
 
+it('excludes orphaned pending-zset members older than the retention window', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+    config()->set('queue-insights.pending.ttl_seconds', 86400);
+
+    // An orphan: its `available_at` is older than the 86400s retention
+    // window, so the backing `pending:{uuid}` hash has long TTL'd out but
+    // the zset member lingered (cleanup zrem missed it). A 6-day-old
+    // member like the one staging hit — must NOT be picked as the head.
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600_000, 'orphan-uuid']);
+
+    Event::fake([OldestPendingAging::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertNotDispatched(OldestPendingAging::class);
+});
+
+it('alerts on a real aging job queued behind an orphan (orphan does not mask it)', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+    config()->set('queue-insights.pending.ttl_seconds', 86400);
+
+    $redis = Redis::connection('default');
+    // Orphan (oldest score) + a real aging job inside the retention window.
+    // The score-bounded query skips the orphan and returns the real one.
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600_000, 'orphan-uuid']);
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'real-uuid']);
+    $redis->command('hset', [KeyPrefix::make('pending:real-uuid'), 'class', 'App\\Jobs\\Slow']);
+
+    Event::fake([OldestPendingAging::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertDispatched(OldestPendingAging::class, fn (OldestPendingAging $e): bool => $e->oldestUuid === 'real-uuid'
+        && $e->oldestClass === 'App\\Jobs\\Slow');
+});
+
+it('excludes orphaned inflight-zset members older than the retention window', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.stuck_inflight.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+    config()->set('queue-insights.pending.ttl_seconds', 86400);
+
+    // Worker SIGKILLed mid-job → RecordJobProcessed/Failed never ran, so
+    // the inflight-zset member orphaned. `started_at` older than the
+    // retention window — must not fire stuck_inflight forever.
+    Redis::connection('default')->command('zadd', [KeyPrefix::make('inflight-zset:sqsq:work'), Date::now()->getTimestamp() - 600_000, 'orphan-uuid']);
+
+    Event::fake([StuckInFlight::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertNotDispatched(StuckInFlight::class);
+});
+
 it('fires StuckInFlight when oldest started_at exceeds the threshold', function (): void {
     config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
     config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));

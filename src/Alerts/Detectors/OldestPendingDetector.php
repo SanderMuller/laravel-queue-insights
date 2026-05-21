@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Alerts\Detectors;
 
+use Carbon\CarbonInterval;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
@@ -32,11 +33,17 @@ final class OldestPendingDetector
         $now = Date::now()->getTimestamp();
         $redis = $this->redis();
 
-        // Pull the oldest available_at <= now uuid. Skips delayed jobs that
-        // aren't runnable yet.
+        // Pull the oldest available_at within (now - retention, now]. The
+        // lower bound matters: a `pending-zset` member whose `available_at`
+        // is older than the pending-retention window is an orphan — its
+        // backing `pending:{uuid}` hash has TTL'd out but the zset member
+        // lingered (a cleanup zrem missed it, common on SQS). Without the
+        // lower bound, that orphan is returned as the perpetual "oldest"
+        // head, firing this alert forever with an ever-growing age AND
+        // masking real aging jobs queued behind it.
         $row = $redis->command('zrangebyscore', [
             KeyPrefix::make("pending-zset:{$connection}:{$canonicalQueue}"),
-            '-inf',
+            (string) ($now - $this->retentionSeconds()),
             (string) $now,
             ['LIMIT' => [0, 1], 'WITHSCORES' => true],
         ]);
@@ -91,6 +98,12 @@ final class OldestPendingDetector
             $context['oldest_class'] = $jobClass;
         }
 
+        // Human-readable wait — `{$age}s` flat is unreadable at scale (a
+        // 6-day wait reads as "518400s"). Raw seconds stay in context as
+        // `age_seconds` for machine consumers; the description gets the
+        // cascaded short form ("6d 17h").
+        $waited = CarbonInterval::seconds($age)->cascade()->forHumans(['short' => true, 'parts' => 2]);
+
         return new Issue(
             rule: self::RULE,
             severity: $this->severity(),
@@ -98,7 +111,7 @@ final class OldestPendingDetector
             queue: $canonicalQueue,
             jobClass: null,
             title: 'Oldest pending job aging',
-            description: "Oldest pending job on {$connection}:{$canonicalQueue} has been waiting {$age}s.",
+            description: "Oldest pending job on {$connection}:{$canonicalQueue} has been waiting {$waited}.",
             context: $context,
             detectedAt: $now,
         );
@@ -113,6 +126,17 @@ final class OldestPendingDetector
     public function thresholdSeconds(): int
     {
         return Config::int('alerts.rules.oldest_pending.seconds', 600);
+    }
+
+    /**
+     * Pending-tracking retention window. A `pending-zset` member older than
+     * this has lost its backing `pending:{uuid}` hash to TTL — past this
+     * horizon the tracking can't be trusted, so it's the cutoff for the
+     * orphan-excluding zset lower bound.
+     */
+    public function retentionSeconds(): int
+    {
+        return Config::int('pending.ttl_seconds', 86400);
     }
 
     private function resolveClass(RedisConnection $redis, string $uuid): ?string

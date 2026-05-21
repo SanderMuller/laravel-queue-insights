@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Alerts\Detectors;
 
+use Carbon\CarbonInterval;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
@@ -29,11 +30,19 @@ final class StuckInFlightDetector
         $now = Date::now()->getTimestamp();
         $redis = $this->redis();
 
-        $row = $redis->command('zrange', [
+        // Oldest startedAt within (now - retention, +inf]. The lower bound
+        // excludes orphans: an `inflight-zset` member whose `startedAt` is
+        // older than the pending-retention window has lost its backing
+        // `pending:{uuid}` hash to TTL — typically a worker that was
+        // SIGKILLed mid-job, so `RecordJobProcessed/Failed` never ran to
+        // zrem the member. Without the bound that orphan is the perpetual
+        // "oldest in-flight" head, firing this alert forever and masking
+        // genuinely-stuck jobs behind it.
+        $row = $redis->command('zrangebyscore', [
             KeyPrefix::make("inflight-zset:{$connection}:{$canonicalQueue}"),
-            0,
-            0,
-            ['WITHSCORES' => true],
+            (string) ($now - $this->retentionSeconds()),
+            '+inf',
+            ['LIMIT' => [0, 1], 'WITHSCORES' => true],
         ]);
 
         $head = ZsetHead::firstMemberScore($row);
@@ -81,6 +90,10 @@ final class StuckInFlightDetector
             $context['oldest_class'] = $jobClass;
         }
 
+        // Human-readable runtime — raw seconds stay in context as
+        // `age_seconds`; the description gets the cascaded short form.
+        $running = CarbonInterval::seconds($age)->cascade()->forHumans(['short' => true, 'parts' => 2]);
+
         return new Issue(
             rule: self::RULE,
             severity: $this->severity(),
@@ -88,7 +101,7 @@ final class StuckInFlightDetector
             queue: $canonicalQueue,
             jobClass: null,
             title: 'Stuck in-flight job',
-            description: "Oldest in-flight job on {$connection}:{$canonicalQueue} has been running {$age}s.",
+            description: "Oldest in-flight job on {$connection}:{$canonicalQueue} has been running {$running}.",
             context: $context,
             detectedAt: $now,
         );
@@ -103,6 +116,16 @@ final class StuckInFlightDetector
     public function thresholdSeconds(): int
     {
         return Config::int('alerts.rules.stuck_inflight.seconds', 300);
+    }
+
+    /**
+     * Pending-tracking retention window. An `inflight-zset` member older
+     * than this has lost its backing `pending:{uuid}` hash to TTL — the
+     * cutoff for the orphan-excluding zset lower bound.
+     */
+    public function retentionSeconds(): int
+    {
+        return Config::int('pending.ttl_seconds', 86400);
     }
 
     private function resolveClass(RedisConnection $redis, string $uuid): ?string

@@ -59,10 +59,17 @@ final readonly class IssueDetectorBatch
 
         $now = Date::now()->getTimestamp();
         $stalledThreshold = $flags['stalled'] ? $now - $this->stalledDetector->idleSeconds() : 0;
+        // Lower bound for the oldest-pending / stuck-inflight zset reads —
+        // members older than the pending-retention window are orphans
+        // (backing `pending:{uuid}` hash TTL'd out) and must not be picked
+        // as the head. See OldestPendingDetector::detect for the rationale.
+        $retentionFloor = ($flags['oldest'] || $flags['stuck'])
+            ? $now - $this->oldestPendingDetector->retentionSeconds()
+            : 0;
 
         $redis = $this->redis();
 
-        $phase1 = $this->runPhase1($redis, $pairs, $flags, $now, $stalledThreshold);
+        $phase1 = $this->runPhase1($redis, $pairs, $flags, $now, $stalledThreshold, $retentionFloor);
         $stride = $this->stride($flags);
 
         [$perPair, $classLookups] = $this->decodePhase1($pairs, $phase1, $stride, $flags, $now);
@@ -92,9 +99,9 @@ final readonly class IssueDetectorBatch
      * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return list<mixed>
      */
-    private function runPhase1(RedisConnection $redis, array $pairs, array $flags, int $now, int $stalledThreshold): array
+    private function runPhase1(RedisConnection $redis, array $pairs, array $flags, int $now, int $stalledThreshold, int $retentionFloor): array
     {
-        return RedisPipeline::run($redis, static function (mixed $client) use ($pairs, $flags, $now, $stalledThreshold): void {
+        return RedisPipeline::run($redis, static function (mixed $client) use ($pairs, $flags, $now, $stalledThreshold, $retentionFloor): void {
             foreach ($pairs as [$c, $q]) {
                 if ($flags['depth'] || $flags['stalled']) {
                     $client->get(KeyPrefix::make("live:depth:{$c}:{$q}"));
@@ -105,16 +112,23 @@ final readonly class IssueDetectorBatch
                 }
 
                 if ($flags['oldest']) {
+                    // Lower bound = retention floor — excludes orphaned zset
+                    // members whose backing pending hash has TTL'd out.
                     $client->zrangebyscore(
                         KeyPrefix::make("pending-zset:{$c}:{$q}"),
-                        '-inf',
+                        (string) $retentionFloor,
                         (string) $now,
                         ['LIMIT' => [0, 1], 'WITHSCORES' => true],
                     );
                 }
 
                 if ($flags['stuck']) {
-                    $client->zrange(KeyPrefix::make("inflight-zset:{$c}:{$q}"), 0, 0, ['WITHSCORES' => true]);
+                    $client->zrangebyscore(
+                        KeyPrefix::make("inflight-zset:{$c}:{$q}"),
+                        (string) $retentionFloor,
+                        '+inf',
+                        ['LIMIT' => [0, 1], 'WITHSCORES' => true],
+                    );
                 }
 
                 if ($flags['errored']) {
