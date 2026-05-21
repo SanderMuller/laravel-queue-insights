@@ -364,6 +364,9 @@ final class QueueInsightsDashboard extends Component
         // mid-modal degrades to an empty `selectedPending` and the modal
         // shows the "no longer pending" empty state on the next poll.
         $this->selectedPendingUuid = $uuid;
+        // Reset to the default Structured tab — `payloadTab` is shared with
+        // the completed- + failed-jobs modals.
+        $this->payloadTab = 'raw';
     }
 
     public function closePending(): void

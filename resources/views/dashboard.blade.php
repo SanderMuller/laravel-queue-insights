@@ -171,7 +171,7 @@
     @endif
 
     @if($pendingEnabled && $selectedPendingUuid !== null)
-        <x-queue-insights::pending-modal :pending="$selectedPending" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
+        <x-queue-insights::pending-modal :pending="$selectedPending" :payload-tab="$payloadTab" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
     @elseif($selectedPendingUuid !== null)
         <x-queue-insights::stale-modal kind="pending"/>
     @endif

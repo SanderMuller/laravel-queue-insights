@@ -294,11 +294,12 @@ it('renders Job config + structured-payload when pending payload capture wrote f
     Livewire::test(QueueInsightsDashboard::class)
         ->call('openPending', 'pending-cap-full')
         ->assertSeeHtml('aria-labelledby="qi-pending-modal-title"')
-        // Metadata tile row + values.
+        // Job-config hero pills + values. `' s'` backoff suffix matches the
+        // shared job-config-hero partial.
         ->assertSee('maxTries')
         ->assertSee('timeout')
         ->assertSee('backoff')
-        ->assertSee('1, 5, 10s')
+        ->assertSee('1, 5, 10 s')
         // Structured-payload section landed too.
         ->assertSee('PayloadVisible');
 });
@@ -327,11 +328,65 @@ it('renders Job config tiles when pending capture is metadata-only (no body)', f
     Livewire::test(QueueInsightsDashboard::class)
         ->call('openPending', 'pending-cap-meta')
         ->assertSeeHtml('aria-labelledby="qi-pending-modal-title"')
-        ->assertSee('Job config')
+        ->assertSee('Job Config')
         ->assertSee('maxTries')
         ->assertSee('5')
         ->assertSee('timeout')
         ->assertSee('90');
+});
+
+it('renders the class FQCN title with a faded namespace + bold leaf', function (): void {
+    $now = Date::now()->getTimestamp();
+
+    foreach ([
+        'connection' => 'myredis',
+        'queue' => 'work',
+        'class' => 'App\\Jobs\\PendingMailer',
+        'queued_at' => (string) ($now - 5),
+        'available_at' => (string) ($now - 5),
+    ] as $field => $value) {
+        R::conn()->command('hset', ['qmtest:pending:pending-title', $field, $value]);
+    }
+    R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-title']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPending', 'pending-title')
+        // Namespace faded, base-class leaf bold — same treatment as the
+        // completed- + failed-jobs modal titles.
+        ->assertSeeHtml('<span class="text-gray-400 dark:text-gray-500">App\\Jobs\\</span>')
+        ->assertSeeHtml('<span class="font-semibold text-gray-900 dark:text-gray-100">PendingMailer</span>');
+});
+
+it('renders Structured + Sanitized JSON payload tabs when a full pending body is captured', function (): void {
+    $now = Date::now()->getTimestamp();
+
+    foreach ([
+        'connection' => 'myredis',
+        'queue' => 'work',
+        'class' => 'App\\Jobs\\PayloadVisible',
+        'queued_at' => (string) ($now - 5),
+        'available_at' => (string) ($now - 5),
+        'payload_body' => (string) json_encode([
+            'uuid' => 'pending-tabs',
+            'displayName' => 'App\\Jobs\\PayloadVisible',
+            'data' => ['commandName' => 'App\\Jobs\\PayloadVisible', 'command' => 'O:11:"App\\Jobs\\X":0:{}'],
+        ]),
+    ] as $field => $value) {
+        R::conn()->command('hset', ['qmtest:pending:pending-tabs', $field, $value]);
+    }
+    R::conn()->command('zadd', ['qmtest:pending-zset:myredis:work', $now - 5, 'pending-tabs']);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openPending', 'pending-tabs')
+        ->assertSeeHtml('id="qi-pending-tab-raw"')
+        ->assertSeeHtml('id="qi-pending-tab-json"')
+        ->assertSee('Structured')
+        ->assertSee('Sanitized JSON')
+        // openPending resets the shared payloadTab to the default.
+        ->assertSet('payloadTab', 'raw')
+        ->call('setPayloadTab', 'json')
+        ->assertSeeHtml('data-json-highlight')
+        ->assertSeeHtml('id="qi-pending-panel-json"');
 });
 
 it('renders the payload-not-persisted note for a closure pending job', function (): void {

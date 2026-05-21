@@ -1,6 +1,8 @@
 @props([
     /** @var array<string, mixed>|null Pending row from `QueueInsights::allPendingJobs()` / `allDelayedJobs()`. */
     'pending' => null,
+    /** @var 'raw'|'json' Active payload tab — shared Livewire state with the completed- + failed-jobs modals. */
+    'payloadTab' => 'raw',
     /** Currently-open batch id, '' if none. Drives the "Back to batch" button so the user can return to the batch view they came from. */
     'expandedBatchId' => '',
     /**
@@ -54,6 +56,16 @@
         $isDelayed => 'Delayed',
         default => 'Pending',
     };
+
+    // Class FQCN title — namespace faded, leaf bold. Mirrors the
+    // completed-jobs + failed-jobs modal titles.
+    $classNs = '';
+    $classLeaf = '';
+    if (is_string($class) && $class !== '') {
+        $lastBackslash = strrpos($class, '\\');
+        $classNs = $lastBackslash !== false ? substr($class, 0, $lastBackslash + 1) : '';
+        $classLeaf = $lastBackslash !== false ? substr($class, $lastBackslash + 1) : $class;
+    }
 @endphp
 
 <div role="dialog"
@@ -134,17 +146,25 @@
                     default => ['cls' => 'bg-gray-50 text-gray-700 ring-gray-600/20 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10', 'dot' => 'bg-gray-500'],
                 };
             @endphp
-            <div class="grid md:grid-cols-[20rem_1fr]">
+            <div class="grid md:grid-cols-[22rem_1fr]">
                 {{-- Left rail — identity, queue context, UUID, lineage,
                     optional batch teaser. Mirrors the failed/details modal
                     rail so cross-modal navigation feels consistent. --}}
                 <div class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    {{-- Class FQCN as the modal title — namespace fades to a soft
+                        secondary, base-class leaf bold. Matches the completed-
+                        and failed-jobs modal titles. --}}
+                    @if($classLeaf !== '')
+                        <p class="mb-4 break-all font-mono text-sm">@if($classNs !== '')<span class="text-gray-400 dark:text-gray-500">{{ $classNs }}</span>@endif<span class="font-semibold text-gray-900 dark:text-gray-100">{{ $classLeaf }}</span></p>
+                    @else
+                        <p class="mb-4 font-mono text-sm text-gray-400 dark:text-gray-500">—</p>
+                    @endif
+
                     <p class="mb-3 inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide ring-1 ring-inset {{ $statusBadge['cls'] }}">
                         <span aria-hidden="true" class="inline-block size-1.5 rounded-full {{ $statusBadge['dot'] }} {{ $isInFlight ? 'animate-pulse' : '' }}"></span>
                         {{ $headerHeroLabel }}
                     </p>
-                    <p class="break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $class ?? '—' }}</p>
-                    <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                    <div class="flex flex-wrap items-center gap-1.5 text-xs">
                         <x-queue-insights::meta-pill label="Connection" :value="$connection"/>
                         <x-queue-insights::meta-pill label="Queue" :value="$queue"/>
                     </div>
@@ -265,21 +285,45 @@
                         $pendingPayloadNote = ($row['payload_note'] ?? null) === 'payload_not_persisted';
                         $pendingPayloadEncErr = ($row['payload_error'] ?? null) === 'payload_encoding_failed';
                         $pendingPayloadSizeErr = ($row['payload_error'] ?? null) === 'payload_too_large';
-                        // Metadata-mode visibility — same `payload_maxTries / timeout /
-                        // backoff` shape the details-modal Section B exposes. Renders
-                        // alongside (or in place of) the structured-payload body so a
-                        // metadata-only capture isn't an empty modal.
+
+                        // Decode the metadata-mode backoff field. Full-capture
+                        // jobs carry backoff in the decoded body instead.
                         $pendingBackoffRaw = $row['payload_backoff'] ?? null;
-                        $pendingBackoffDisplay = null;
-                        if (is_string($pendingBackoffRaw) && $pendingBackoffRaw !== '') {
-                            $pendingBackoffDecoded = json_decode($pendingBackoffRaw, true);
-                            $pendingBackoffDisplay = is_array($pendingBackoffDecoded) && array_is_list($pendingBackoffDecoded)
-                                ? implode(', ', array_map(static fn ($v): string => (string) $v, $pendingBackoffDecoded)).'s'
-                                : $pendingBackoffRaw;
+                        $pendingBackoffDecoded = is_string($pendingBackoffRaw) && $pendingBackoffRaw !== ''
+                            ? json_decode($pendingBackoffRaw, true)
+                            : null;
+                        $pendingBackoffIsList = is_array($pendingBackoffDecoded) && array_is_list($pendingBackoffDecoded);
+
+                        // Body fed to the shared job-config-hero partial.
+                        // Pending capture always writes job config as the narrow
+                        // flat `payload_*` fields (both metadata AND full mode —
+                        // `payload_body` is the separate serialized command), so
+                        // the hero is built from those rather than the decoded
+                        // body. `backoff` passes the decoded list when it was a
+                        // JSON array so the partial joins it into one pill.
+                        $heroBody = [];
+                        if (isset($row['payload_maxTries']) && $row['payload_maxTries'] !== '') {
+                            $heroBody['maxTries'] = $row['payload_maxTries'];
                         }
-                        $pendingHasJobConfig = isset($row['payload_maxTries'])
-                            || isset($row['payload_timeout'])
-                            || $pendingBackoffDisplay !== null;
+                        if (isset($row['payload_timeout']) && $row['payload_timeout'] !== '') {
+                            $heroBody['timeout'] = $row['payload_timeout'];
+                        }
+                        if (is_string($pendingBackoffRaw) && $pendingBackoffRaw !== '') {
+                            $heroBody['backoff'] = $pendingBackoffIsList ? $pendingBackoffDecoded : $pendingBackoffRaw;
+                        }
+
+                        // Structured-tab body — job-config keys + tags stripped so
+                        // it stays job-payload-focused; those surface in the hero.
+                        $heroBodyKeys = ['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'];
+                        $pendingPayloadFiltered = $pendingPayloadDecoded;
+                        if (is_array($pendingPayloadFiltered)) {
+                            foreach ($heroBodyKeys as $stripKey) {
+                                unset($pendingPayloadFiltered[$stripKey]);
+                            }
+                        }
+                        $pendingPayloadJson = is_array($pendingPayloadDecoded)
+                            ? json_encode($pendingPayloadDecoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+                            : $pendingPayloadDecoded;
                     @endphp
                     @if($pendingPayloadNote)
                         <div class="flex gap-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 ring-1 ring-inset ring-amber-600/20 dark:bg-amber-900/40 dark:text-amber-200 dark:ring-amber-400/30">
@@ -310,36 +354,53 @@
                             </div>
                         </div>
                     @else
-                        @if($pendingHasJobConfig)
-                            <section data-section="pending-job-config">
-                                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job config</p>
-                                <dl class="grid grid-cols-3 overflow-hidden rounded-lg ring-1 ring-gray-950/5 dark:ring-white/10">
-                                    @if(isset($row['payload_maxTries']))
-                                        <div class="bg-white p-3 dark:bg-gray-900 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
-                                            <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">maxTries</dt>
-                                            <dd class="mt-1 text-base font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $row['payload_maxTries'] ?: '—' }}</dd>
-                                        </div>
-                                    @endif
-                                    @if(isset($row['payload_timeout']))
-                                        <div class="bg-white p-3 dark:bg-gray-900 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
-                                            <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">timeout</dt>
-                                            <dd class="mt-1 text-base font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $row['payload_timeout'] ?: '—' }}</dd>
-                                        </div>
-                                    @endif
-                                    @if($pendingBackoffDisplay !== null)
-                                        <div class="bg-white p-3 dark:bg-gray-900 [&:not(:first-child)]:border-l [&:not(:first-child)]:border-gray-950/5 dark:[&:not(:first-child)]:border-white/10">
-                                            <dt class="text-xs font-medium text-gray-500 dark:text-gray-300">backoff</dt>
-                                            <dd class="mt-1 text-base font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $pendingBackoffDisplay }}</dd>
-                                        </div>
-                                    @endif
-                                </dl>
-                            </section>
-                        @endif
+                        {{-- Job-config hero — shared partial, self-gates when there's
+                            no config to show. No subtitle — class FQCN is the title. --}}
+                        @include('queue-insights::partials.job-config-hero', ['body' => $heroBody, 'subtitle' => null])
 
                         @if($pendingPayloadDecoded !== null)
+                            {{-- Payload — underline-link Structured / Sanitized JSON
+                                tabs, matching the completed- + failed-jobs modals.
+                                Structured shows the config-stripped body; JSON keeps
+                                the full sanitized payload for the colorizer. --}}
                             <section data-section="pending-payload">
-                                <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
-                                <x-queue-insights::structured-payload :payload="$pendingPayloadDecoded"/>
+                                <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
+                                    <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
+                                    <div class="-mb-px flex items-center gap-4" role="tablist">
+                                        <button type="button"
+                                                role="tab"
+                                                id="qi-pending-tab-raw"
+                                                aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
+                                                aria-controls="qi-pending-panel-raw"
+                                                wire:click="setPayloadTab('raw')"
+                                                class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
+                                            Structured
+                                        </button>
+                                        <button type="button"
+                                                role="tab"
+                                                id="qi-pending-tab-json"
+                                                aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
+                                                aria-controls="qi-pending-panel-json"
+                                                wire:click="setPayloadTab('json')"
+                                                class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
+                                            Sanitized JSON
+                                        </button>
+                                    </div>
+                                </div>
+                                @if($payloadTab === 'json')
+                                    <pre role="tabpanel"
+                                         id="qi-pending-panel-json"
+                                         aria-labelledby="qi-pending-tab-json"
+                                         data-json-highlight
+                                         class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{{ $pendingPayloadJson }}</pre>
+                                @else
+                                    <div role="tabpanel"
+                                         id="qi-pending-panel-raw"
+                                         aria-labelledby="qi-pending-tab-raw"
+                                         class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+                                        <x-queue-insights::structured-payload :payload="$pendingPayloadFiltered ?? $pendingPayloadDecoded"/>
+                                    </div>
+                                @endif
                             </section>
                         @endif
                     @endif
