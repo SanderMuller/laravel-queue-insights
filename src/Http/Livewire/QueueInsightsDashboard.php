@@ -345,6 +345,10 @@ final class QueueInsightsDashboard extends Component
     public function openFailed(int $id): void
     {
         $this->selectedFailedId = $id;
+        // Reset to the default Structured tab — the failed modal shares the
+        // `payloadTab` state with the completed-jobs modal, so a user who
+        // flipped to JSON there shouldn't land on JSON here.
+        $this->payloadTab = 'raw';
     }
 
     public function closeFailed(): void

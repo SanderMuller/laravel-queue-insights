@@ -111,6 +111,59 @@ it('failed modal handles missing payload / exception gracefully', function (): v
         ->assertDontSee('Stack trace');
 });
 
+it('failed modal renders the class FQCN title with a faded namespace + bold leaf', function (): void {
+    $id = seedFailedJob();
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        // Namespace renders in a faded span, base-class leaf in a bold one —
+        // same treatment as the completed-jobs details modal title.
+        ->assertSeeHtml('<span class="text-gray-400 dark:text-gray-500">App\\Jobs\\</span>')
+        ->assertSeeHtml('<span class="font-semibold text-gray-900 dark:text-gray-100">SendEmail</span>');
+});
+
+it('failed modal renders the job-config hero with pills + tags from the payload', function (): void {
+    $id = seedFailedJob([
+        'payload' => json_encode([
+            'displayName' => 'App\\Jobs\\SendEmail',
+            'maxTries' => 3,
+            'timeout' => 60,
+            'backoff' => [1, 5, 10],
+            'tags' => ['App\\Models\\User:42'],
+            'attempts' => 3,
+        ]),
+    ]);
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        ->assertSee('Job Config')
+        ->assertSee('maxTries')
+        ->assertSee('timeout')
+        ->assertSee('60 s')
+        ->assertSee('backoff')
+        ->assertSee('1, 5, 10 s')
+        ->assertSee('tags')
+        ->assertSee('App\\Models\\User:42');
+});
+
+it('failed modal payload section has Structured + Sanitized JSON underline tabs', function (): void {
+    $id = seedFailedJob();
+
+    Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id)
+        // Default Structured tab.
+        ->assertSeeHtml('id="qi-failed-tab-raw"')
+        ->assertSeeHtml('id="qi-failed-tab-json"')
+        ->assertSee('Structured')
+        ->assertSee('Sanitized JSON')
+        // openFailed resets the shared payloadTab to the default.
+        ->assertSet('payloadTab', 'raw')
+        // Flip to JSON — the colorizer-hooked pre carries the highlight attr.
+        ->call('setPayloadTab', 'json')
+        ->assertSeeHtml('data-json-highlight')
+        ->assertSeeHtml('id="qi-failed-panel-json"');
+});
+
 it('Esc keydown handler is wired to closeFailed on the failed modal', function (): void {
     $id = seedFailedJob();
 

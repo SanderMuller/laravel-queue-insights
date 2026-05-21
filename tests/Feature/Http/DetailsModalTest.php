@@ -173,7 +173,9 @@ it('Section B decodes backoff array into a joined list', function (): void {
         'payload_displayName' => 'App\\Jobs\\SendEmail',
         'payload_backoff' => '[1,5,10]',
     ])
-        ->assertSeeText('1, 5, 10s');
+        // Joined backoff pill — `' s'` unit suffix matches the
+        // structured-payload component + the shared job-config-hero partial.
+        ->assertSeeText('1, 5, 10 s');
 });
 
 it('Section B closure/encrypted yellow box under metadata', function (): void {

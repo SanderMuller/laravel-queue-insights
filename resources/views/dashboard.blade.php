@@ -165,7 +165,7 @@
     @endif
 
     @if($selectedFailed !== null)
-        <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
+        <x-queue-insights::failed-modal :failed="$selectedFailed" :can-retry="$canRetry" :payload-tab="$payloadTab" :expanded-batch-id="$expandedBatchId" :chain-back-top="$chainBackTop"/>
     @elseif($selectedFailedId !== null)
         <x-queue-insights::stale-modal kind="failed"/>
     @endif

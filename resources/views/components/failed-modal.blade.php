@@ -3,6 +3,8 @@
     'failed' => [],
     /** Whether the current user passes the retryFailedJobs gate. Drives Retry button visibility. */
     'canRetry' => false,
+    /** @var 'raw'|'json' Active payload tab — shared Livewire state with the completed-jobs modal. */
+    'payloadTab' => 'raw',
     /** Currently-open batch id, '' if none. Drives the "Back to batch" button so the user can return to the batch view they came from. */
     'expandedBatchId' => '',
     /**
@@ -30,6 +32,29 @@
     $failedAtRaw = $failed['failed_at'] ?? null;
 
     $failedException = $failed['exception'] ?? null;
+
+    // Class FQCN title — namespace faded, leaf bold. Failed jobs carry the
+    // class only as `payload.displayName`, so that doubles as the title.
+    $failedClassNs = '';
+    $failedClassLeaf = '';
+    if (is_string($failedDisplayName) && $failedDisplayName !== '') {
+        $lastBackslash = strrpos($failedDisplayName, '\\');
+        $failedClassNs = $lastBackslash !== false ? substr($failedDisplayName, 0, $lastBackslash + 1) : '';
+        $failedClassLeaf = $lastBackslash !== false ? substr($failedDisplayName, $lastBackslash + 1) : $failedDisplayName;
+    }
+
+    // Body fed to the Structured payload tab — job-config keys + tags
+    // stripped so it stays job-payload-focused; those surface in the
+    // job-config hero instead. Mirrors the completed-jobs details modal.
+    // The Sanitized JSON tab keeps the full body via `$failedPayloadPretty`
+    // (computed below for the Markdown export — reused here).
+    $heroBodyKeys = ['maxTries', 'maxExceptions', 'timeout', 'backoff', 'retryUntil', 'failOnTimeout', 'tags'];
+    $failedPayloadFiltered = $failedPayloadDecoded;
+    if (is_array($failedPayloadFiltered)) {
+        foreach ($heroBodyKeys as $stripKey) {
+            unset($failedPayloadFiltered[$stripKey]);
+        }
+    }
 
     // Forward chain — `data.command` in the failed_jobs payload carries the
     // remaining chain. Encrypted commands return null gracefully.
@@ -153,17 +178,25 @@
         @include('queue-insights::partials.failed-modal-header')
 
         <div x-show="view === 'job'">
-            <div class="grid md:grid-cols-[20rem_1fr]">
-                {{-- Left rail — identity + metadata description list --}}
+            <div class="grid md:grid-cols-[22rem_1fr]">
+                {{-- Left rail — class title + metadata description list --}}
                 <div class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
+                    {{-- Class FQCN as the modal title — namespace fades to a soft
+                        secondary, base-class leaf bold so focus lands on the job
+                        name. Matches the completed-jobs details modal. --}}
+                    @if($failedClassLeaf !== '')
+                        <p class="mb-4 break-all font-mono text-sm">@if($failedClassNs !== '')<span class="text-gray-400 dark:text-gray-500">{{ $failedClassNs }}</span>@endif<span class="font-semibold text-gray-900 dark:text-gray-100">{{ $failedClassLeaf }}</span></p>
+                    @else
+                        <p class="mb-4 font-mono text-sm text-gray-400 dark:text-gray-500">—</p>
+                    @endif
+
                     <div class="mb-3 flex items-center gap-2">
                         <span class="inline-flex size-5 items-center justify-center rounded-md bg-red-50 text-red-600 ring-1 ring-inset ring-red-600/20 dark:bg-red-900/40 dark:text-red-400 dark:ring-red-400/30">
                             <x-queue-insights::icon-error-circle class="size-3"/>
                         </span>
                         <p class="text-[11px] font-semibold uppercase tracking-wide text-red-600 dark:text-red-400">Failed</p>
                     </div>
-                    <p class="break-all font-mono text-sm font-medium text-gray-900 dark:text-gray-100">{{ $failedDisplayName ?? '—' }}</p>
-                    <div class="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+                    <div class="flex flex-wrap items-center gap-1.5 text-xs">
                         <x-queue-insights::meta-pill label="Connection" :value="$failed['connection'] ?? null"/>
                         <x-queue-insights::meta-pill label="Queue" :value="$failed['queue'] ?? null"/>
                     </div>
@@ -237,8 +270,14 @@
                     @endif
                 </div>
 
-                {{-- Right column — exception + payload --}}
+                {{-- Right column — job config + exception + payload --}}
                 <div class="min-w-0 space-y-6 p-5">
+                    {{-- Job-config hero — config pills + tags from the decoded
+                        payload. Self-gates: renders nothing when neither is
+                        present. No subtitle — the class FQCN is already the
+                        left-rail title. --}}
+                    @include('queue-insights::partials.job-config-hero', ['body' => $failedPayloadDecoded, 'subtitle' => null])
+
                     @if(is_string($failedException) && $failedException !== '')
                         <section data-section="trace">
                             <div class="mb-2 flex items-center justify-between gap-3">
@@ -250,9 +289,48 @@
                     @endif
 
                     @if(is_string($failedPayloadRaw) && $failedPayloadRaw !== '')
+                        {{-- Payload — underline-link tabs over a soft inset body,
+                            matching the completed-jobs details modal. Structured
+                            tab gets the config-stripped body; JSON tab keeps the
+                            full sanitized payload as the operator's raw view. --}}
                         <section data-section="payload">
-                            <p class="mb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
-                            <x-queue-insights::structured-payload :payload="$failedPayloadDecoded ?? $failedPayloadRaw"/>
+                            <div class="mb-3 flex items-center justify-between gap-3 border-b border-gray-950/10 dark:border-white/10">
+                                <p class="pb-2 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Payload</p>
+                                <div class="-mb-px flex items-center gap-4" role="tablist">
+                                    <button type="button"
+                                            role="tab"
+                                            id="qi-failed-tab-raw"
+                                            aria-selected="{{ $payloadTab === 'raw' ? 'true' : 'false' }}"
+                                            aria-controls="qi-failed-panel-raw"
+                                            wire:click="setPayloadTab('raw')"
+                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'raw' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
+                                        Structured
+                                    </button>
+                                    <button type="button"
+                                            role="tab"
+                                            id="qi-failed-tab-json"
+                                            aria-selected="{{ $payloadTab === 'json' ? 'true' : 'false' }}"
+                                            aria-controls="qi-failed-panel-json"
+                                            wire:click="setPayloadTab('json')"
+                                            class="border-b-2 pb-2 text-xs font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 {{ $payloadTab === 'json' ? 'border-emerald-500 text-gray-900 dark:text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-200' }}">
+                                        Sanitized JSON
+                                    </button>
+                                </div>
+                            </div>
+                            @if($payloadTab === 'json')
+                                <pre role="tabpanel"
+                                     id="qi-failed-panel-json"
+                                     aria-labelledby="qi-failed-tab-json"
+                                     data-json-highlight
+                                     class="whitespace-pre-wrap break-all rounded-lg bg-gray-50 p-4 font-mono text-xs leading-5 text-gray-900 dark:bg-gray-800 dark:text-gray-100">{{ $failedPayloadPretty }}</pre>
+                            @else
+                                <div role="tabpanel"
+                                     id="qi-failed-panel-raw"
+                                     aria-labelledby="qi-failed-tab-raw"
+                                     class="rounded-lg bg-gray-50 p-4 dark:bg-gray-800">
+                                    <x-queue-insights::structured-payload :payload="$failedPayloadFiltered ?? $failedPayloadRaw"/>
+                                </div>
+                            @endif
                         </section>
                     @endif
 

@@ -39,17 +39,26 @@
         || (is_array($sectionCBody) && ! empty(array_intersect($heroBodyKeys, array_keys($sectionCBody))));
 
     // Duration — humanize with short form + keep raw ms in gray.
+    // Sub-second durations fall through to a plain "{ms} ms" because
+    // Carbon's cascade() rounds them down to "0s", which is misleading
+    // when the actual duration is meaningful (e.g. 384 ms).
     $durationRaw = $payload['duration_ms'] ?? '';
-    $durationHumanized = is_numeric($durationRaw) && (int) $durationRaw > 0
-        ? \Carbon\CarbonInterval::milliseconds((int) $durationRaw)->cascade()->forHumans(['short' => true])
-        : '—';
+    $durationMs = is_numeric($durationRaw) ? (int) $durationRaw : 0;
+    $durationHumanized = $durationMs <= 0
+        ? '—'
+        : ($durationMs < 1000
+            ? $durationMs . ' ms'
+            : \Carbon\CarbonInterval::milliseconds($durationMs)->cascade()->forHumans(['short' => true]));
 
     // Wait — enqueue → worker pickup. Computed by RecordJobProcessing from
     // the pushed:{uuid} key. Empty string = no sample (legacy / driver path).
     $waitRaw = $payload['wait_ms'] ?? '';
-    $waitHumanized = is_numeric($waitRaw) && (int) $waitRaw > 0
-        ? \Carbon\CarbonInterval::milliseconds((int) $waitRaw)->cascade()->forHumans(['short' => true])
-        : null;
+    $waitMs = is_numeric($waitRaw) ? (int) $waitRaw : 0;
+    $waitHumanized = $waitMs <= 0
+        ? null
+        : ($waitMs < 1000
+            ? $waitMs . ' ms'
+            : \Carbon\CarbonInterval::milliseconds($waitMs)->cascade()->forHumans(['short' => true]));
 
     $processedAtRaw = $payload['processed_at'] ?? null;
 
@@ -58,15 +67,8 @@
 
     // Section B — decode backoff if present and looks like a JSON array.
     $backoffRaw = $payload['payload_backoff'] ?? null;
-    $backoffDisplay = null;
-    if (is_string($backoffRaw) && $backoffRaw !== '') {
-        $backoffDecoded = json_decode($backoffRaw, true);
-        if (is_array($backoffDecoded) && array_is_list($backoffDecoded)) {
-            $backoffDisplay = implode(', ', array_map(fn ($v): string => (string) $v, $backoffDecoded)).'s';
-        } else {
-            $backoffDisplay = $backoffRaw;
-        }
-    }
+    $backoffDecoded = is_string($backoffRaw) && $backoffRaw !== '' ? json_decode($backoffRaw, true) : null;
+    $backoffIsList = is_array($backoffDecoded) && array_is_list($backoffDecoded);
 
     // Forward chain — JSON-encoded list of `{class, connection, queue}` per
     // chained job, written by `RecordJobProcessed`. Decoded into the same
@@ -95,7 +97,7 @@
     <div x-trap.noscroll="true"
          class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
          @click.stop>
-        <div class="sticky top-0 px-4 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
+        <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
             <div class="flex items-center gap-2 min-w-0">
                 @if($expandedBatchId !== '')
                     <button type="button"
@@ -159,14 +161,22 @@
                     $classLeaf = $lastBackslash !== false ? substr($classFqcn, $lastBackslash + 1) : $classFqcn;
                 }
             @endphp
-            <div class="grid md:grid-cols-[20rem_1fr]">
+            <div class="grid md:grid-cols-[22rem_1fr]">
                 {{-- Left rail — class title + metadata description list. --}}
                 <div data-section="base" class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
-                    {{-- Class FQCN as the modal title — namespace fades to
-                        a soft secondary, the base-class leaf gets bold weight
-                        so the focus is on the job name, not the namespace. --}}
+                    {{-- Class leaf as the modal title — namespace lives in the
+                        hover/focus tooltip so the rail stays scannable for the
+                        common case (everyone reads the leaf, the FQCN is only
+                        useful when you actually need to copy / disambiguate). --}}
                     @if($classFqcn !== null)
-                        <p class="mb-4 break-all font-mono text-sm">@if($classNs !== '')<span class="text-gray-400 dark:text-gray-500">{{ $classNs }}</span>@endif<span class="font-semibold text-gray-900 dark:text-gray-100">{{ $classLeaf }}</span></p>
+                        <p class="mb-4 break-all font-mono text-sm">
+                            <x-queue-insights::hint :trigger-class="'break-all font-semibold text-gray-900 dark:text-gray-100'">
+                                {{ $classLeaf }}
+                                <x-slot:tip>
+                                    <span class="block break-all font-mono">{{ $classFqcn }}</span>
+                                </x-slot:tip>
+                            </x-queue-insights::hint>
+                        </p>
                     @else
                         <p class="mb-4 font-mono text-sm text-gray-400 dark:text-gray-500">—</p>
                     @endif
@@ -178,25 +188,25 @@
                     </div>
 
                     <dl class="mt-4 divide-y divide-gray-950/5 border-t border-gray-950/5 text-xs dark:divide-white/10 dark:border-white/10">
-                        <div class="flex items-baseline justify-between gap-3 py-2">
+                        <div class="flex items-baseline justify-between gap-3 py-1.5">
                             <dt class="text-gray-500 dark:text-gray-400">Duration</dt>
                             <dd class="text-right font-medium tabular-nums text-gray-900 dark:text-gray-100">
                                 {{ $durationHumanized }}
-                                @if(is_numeric($durationRaw) && (int) $durationRaw > 0)
-                                    <span class="text-gray-400 dark:text-gray-500">({{ (int) $durationRaw }} ms)</span>
+                                @if($durationMs >= 1000)
+                                    <span class="text-gray-400 dark:text-gray-500">({{ $durationMs }} ms)</span>
                                 @endif
                             </dd>
                         </div>
-                        <div class="flex items-baseline justify-between gap-3 py-2" title="Wait time = enqueue → worker pickup">
+                        <div class="flex items-baseline justify-between gap-3 py-1.5" title="Wait time = enqueue → worker pickup">
                             <dt class="text-gray-500 dark:text-gray-400">Wait</dt>
                             <dd class="text-right font-medium tabular-nums text-gray-900 dark:text-gray-100">
                                 {{ $waitHumanized ?? '—' }}
-                                @if(is_numeric($waitRaw) && (int) $waitRaw > 0)
-                                    <span class="text-gray-400 dark:text-gray-500">({{ (int) $waitRaw }} ms)</span>
+                                @if($waitMs >= 1000)
+                                    <span class="text-gray-400 dark:text-gray-500">({{ $waitMs }} ms)</span>
                                 @endif
                             </dd>
                         </div>
-                        <div class="flex items-baseline justify-between gap-3 py-2">
+                        <div class="flex items-baseline justify-between gap-3 py-1.5">
                             <dt class="text-gray-500 dark:text-gray-400">Attempts</dt>
                             <dd class="text-right">
                                 @if($attemptsInt === null)
@@ -209,7 +219,7 @@
                                 @endif
                             </dd>
                         </div>
-                        <div class="flex items-baseline justify-between gap-3 py-2">
+                        <div class="flex items-baseline justify-between gap-3 py-1.5">
                             <dt class="shrink-0 text-gray-500 dark:text-gray-400">Processed at</dt>
                             <dd class="min-w-0 text-right">
                                 <x-queue-insights::qi-time :at="$processedAtRaw" class="block truncate font-medium text-gray-900 dark:text-gray-100"/>
@@ -218,7 +228,7 @@
                                 @endif
                             </dd>
                         </div>
-                        <div class="flex items-baseline justify-between gap-3 py-2">
+                        <div class="flex items-baseline justify-between gap-3 py-1.5">
                             <dt class="shrink-0 text-gray-500 dark:text-gray-400">Stream ID</dt>
                             <dd class="flex min-w-0 items-center gap-1.5">
                                 <code id="qi-stream-id"
@@ -275,52 +285,29 @@
                             }
                         }
 
-                        // Job-config pills and tag chips are sourced from the decoded
-                        // payload body when full-capture is on, falling back to the
-                        // narrower `payload_*` capture-mode fields under metadata mode.
-                        // The pills land on the hero so the payload tabs below stay
-                        // focused on job-specific data.
-                        $configPills = [];
+                        // Body fed to the shared job-config-hero partial. Full-capture
+                        // hands it the decoded payload directly; metadata mode (no
+                        // `payload_body`) synthesises a body-shaped array from the
+                        // narrow `payload_*` capture fields so the hero renders
+                        // identically. `backoff` is passed as the decoded list when it
+                        // was a JSON array so the partial joins it into one pill.
                         if (is_array($sectionCBody)) {
-                            $sourceMap = [
-                                'maxTries' => $sectionCBody['maxTries'] ?? null,
-                                'maxExceptions' => $sectionCBody['maxExceptions'] ?? null,
-                                'timeout' => $sectionCBody['timeout'] ?? null,
-                                'backoff' => $sectionCBody['backoff'] ?? null,
-                                'retryUntil' => $sectionCBody['retryUntil'] ?? null,
-                                'failOnTimeout' => $sectionCBody['failOnTimeout'] ?? null,
-                            ];
+                            $heroBody = $sectionCBody;
                         } else {
-                            $sourceMap = [
-                                'maxTries' => $payload['payload_maxTries'] ?? null,
-                                'timeout' => $payload['payload_timeout'] ?? null,
-                                'backoff' => $backoffDisplay,
-                            ];
-                        }
-                        foreach ($sourceMap as $configKey => $configVal) {
-                            if ($configVal === null || $configVal === '') {
-                                continue;
+                            $heroBody = [];
+                            if (isset($payload['payload_maxTries']) && $payload['payload_maxTries'] !== '') {
+                                $heroBody['maxTries'] = $payload['payload_maxTries'];
                             }
-                            if ($configKey === 'backoff' && is_array($configVal)) {
-                                $configPills[$configKey] = implode(', ', array_map(fn ($v): string => (string) $v, $configVal)) . ' s';
-                            } elseif ($configKey === 'timeout' && is_numeric($configVal)) {
-                                $configPills[$configKey] = ((int) $configVal) . ' s';
-                            } elseif (is_bool($configVal)) {
-                                $configPills[$configKey] = $configVal ? 'true' : 'false';
-                            } else {
-                                $configPills[$configKey] = (string) $configVal;
+                            if (isset($payload['payload_timeout']) && $payload['payload_timeout'] !== '') {
+                                $heroBody['timeout'] = $payload['payload_timeout'];
+                            }
+                            if (is_string($backoffRaw) && $backoffRaw !== '') {
+                                $heroBody['backoff'] = $backoffIsList ? $backoffDecoded : $backoffRaw;
                             }
                         }
-
-                        $jobTags = is_array($sectionCBody) && is_array($sectionCBody['tags'] ?? null)
-                            ? array_values(array_filter(
-                                $sectionCBody['tags'],
-                                fn (mixed $t): bool => is_scalar($t) && (string) $t !== '',
-                            ))
-                            : [];
 
                         // Body passed to the payload tabs — config keys + tags stripped
-                        // so the Structured / JSON renders stay focused on job-specific
+                        // so the Structured render stays focused on job-specific
                         // payload data. Keys outside this list (uuid, data, displayName,
                         // attempts, etc.) flow through unchanged.
                         $sectionCBodyFiltered = $sectionCBody;
@@ -331,7 +318,11 @@
                         }
                     @endphp
 
-                    {{-- Job-config section — gradient hero card. --}}
+                    {{-- Job-config section. Status-branch banners replace the hero
+                        when the payload couldn't be captured; otherwise the shared
+                        job-config-hero partial renders. The class FQCN lives in the
+                        left rail as the modal title, so the hero only carries the
+                        displayName subtitle when it diverges from the class. --}}
                     @if($hasSectionB)
                         <section data-section="job-config">
                             @if($statusBranch === 'note')
@@ -340,39 +331,11 @@
                                 @include('queue-insights::partials.details-modal-status-encoding')
                             @elseif($statusBranch === 'size')
                                 @include('queue-insights::partials.details-modal-status-size', ['size' => $payload['payload_size'] ?? null])
-                            @elseif($configPills !== [] || $jobTags !== [] || ($displayName !== null && $displayName !== $classFqcn))
-                                {{-- Class FQCN moved to the left rail as the modal title;
-                                    the hero carries config pills + tags. displayName only
-                                    shows up here when it diverges from the class FQCN (a
-                                    job that overrode `displayName()` to include subject
-                                    context — e.g. `SendEmail (user@example.com)`). --}}
-                                <div class="rounded-xl bg-gradient-to-br from-gray-50 to-white p-4 ring-1 ring-inset ring-gray-950/10 dark:from-gray-800 dark:to-gray-900 dark:ring-white/10">
-                                    <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Job Config</p>
-
-                                    @if($displayName !== null && $displayName !== $classFqcn)
-                                        <p class="mt-1 break-all font-mono text-sm text-gray-700 dark:text-gray-300">{{ $displayName }}</p>
-                                    @endif
-
-                                    @if($configPills !== [])
-                                        <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
-                                            @foreach($configPills as $pillKey => $pillVal)
-                                                <span class="inline-flex items-center gap-1 rounded-md bg-white px-2 py-0.5 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:ring-white/10">
-                                                    <span class="text-gray-500 dark:text-gray-400">{{ $pillKey }}</span>
-                                                    <span class="font-medium tabular-nums text-gray-900 dark:text-gray-100">{{ $pillVal }}</span>
-                                                </span>
-                                            @endforeach
-                                        </div>
-                                    @endif
-
-                                    @if($jobTags !== [])
-                                        <div class="mt-2 flex flex-wrap items-center gap-1 text-[11px]">
-                                            <span class="text-gray-500 dark:text-gray-400">tags</span>
-                                            @foreach($jobTags as $tag)
-                                                <span class="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-gray-700 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-900 dark:text-gray-200 dark:ring-white/10">{{ (string) $tag }}</span>
-                                            @endforeach
-                                        </div>
-                                    @endif
-                                </div>
+                            @else
+                                @include('queue-insights::partials.job-config-hero', [
+                                    'body' => $heroBody,
+                                    'subtitle' => ($displayName !== null && $displayName !== $classFqcn) ? $displayName : null,
+                                ])
                             @endif
                         </section>
                     @endif
