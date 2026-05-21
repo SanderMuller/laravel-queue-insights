@@ -4,6 +4,26 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.21.0 - 2026-05-21
+
+### Highlights
+
+- **Job initiator tracking.** Every queued job now records where it was dispatched from, along two axes. The coarse **origin** — the HTTP route, artisan command, or scheduled task the work descends from — rides Laravel `Context`, so it propagates into nested dispatches (a job dispatched by another job inherits the root origin). The opt-in **call site** is the exact `file:line` the `dispatch()` ran from, so two code paths that dispatch the same job class stay distinguishable. Both surface as `Origin` and `Dispatched from` rows in the completed-, pending-, and failed-job modals, and in the failed-job markdown export. Configured under a new `initiator` block — `QUEUE_INSIGHTS_INITIATOR=false` disables the feature; call-site capture is off by default (`initiator.capture_call_site`) since it costs a `debug_backtrace()` per dispatch. See [README.md](README.md#job-initiator).
+- **Modal UI consistency pass.** The completed-job modal's layout improvements now apply across the failed, pending, in-flight, and delayed modals — a shared job-config hero, a shared payload-tabs partial, and a trimmed Execution panel — so every job modal reads the same.
+- **Orphaned pending/in-flight entries reaped each snapshot tick.** The snapshot command now drops pending/in-flight sorted-set members whose per-uuid hash has expired (worker crashed mid-pickup, raw `Queue::push()` outside Laravel's event flow). Depth / in-flight counts and the `oldest_pending` / `stuck_inflight` alert detectors no longer drift on those orphans, and detector descriptions render human-readable wait times.
+
+### What's Changed
+
+* feat(initiator): track job origin + dispatch call site (d314be4)
+* fix(initiator): render the normalized call-site value in the failed modal (33ec8d7)
+* ui: apply the completed-modal layout across the failed / pending / in-flight / delayed modals (7c83def, c721bda)
+* ui(structured-payload): drop attempts from the Execution panel (c0c14cc)
+* refactor(modals): extract a shared payload-tabs partial (559a5c7)
+* fix(snapshot): reap orphaned pending/in-flight zset members each tick, confirming hash absence first (19f9ed9, 1c96bfa)
+* fix(alerts): exclude orphaned pending/in-flight zset members + humanize detector wait output (543231b, b415eca)
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.20.0...0.21.0
+
 ## 0.20.0 - 2026-05-15
 
 ### Highlights
@@ -13,6 +33,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   ```bash
   # .env
   QUEUE_INSIGHTS_REDIS_MEMORY_TILE=true
+  
   
   ```
 - **Horizon autodiscovery is now runtime-gated, with a "Horizon not running" banner.** `horizon.autodiscover` becomes tri-state (`true` / `false` / `'force'`). Default `true` only autodiscovers when Horizon's service provider is **actually loaded** in the running app — important for Vapor and similar setups where `config/horizon.php` defines supervisors that are never run from this app context (jobs route to SQS, Horizon's provider is excluded). When `'force'` is set without the provider loaded, the dashboard surfaces a top-level red banner so operators don't read empty supervisor rows as a healthy state. See [README.md](README.md#horizon-supervisor-auto-discovery) for the full tri-state matrix.
@@ -63,6 +84,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -85,6 +107,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -251,6 +274,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -475,6 +499,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -593,6 +618,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -628,6 +654,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -760,6 +787,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
