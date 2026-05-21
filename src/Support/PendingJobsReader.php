@@ -233,7 +233,7 @@ final class PendingJobsReader
      * grabbed it) or never existed (legacy job, pending tracking disabled
      * at queue time).
      *
-     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, parent_uuid: ?string, attempts: ?int, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
+     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, parent_uuid: ?string, attempts: ?int, origin: ?string, call_site: ?string, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
      */
     public static function findByUuid(string $uuid): ?array
     {
@@ -268,6 +268,8 @@ final class PendingJobsReader
         $startedAt = $hash['started_at'] ?? null;
         $parentUuid = $hash['parent_uuid'] ?? null;
         $attempts = $hash['attempts'] ?? null;
+        $origin = $hash['origin'] ?? null;
+        $callSite = $hash['call_site'] ?? null;
 
         // Pull optional `payload_*` fields written by RecordJobQueued when
         // `pending.capture.payloads` is on. Same set + same naming as the
@@ -288,6 +290,8 @@ final class PendingJobsReader
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
             'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
             'attempts' => is_numeric($attempts) ? (int) $attempts : null,
+            'origin' => is_string($origin) && $origin !== '' ? $origin : null,
+            'call_site' => is_string($callSite) && $callSite !== '' ? $callSite : null,
             'payload_body' => $payloadFields['payload_body'],
             'payload_displayName' => $payloadFields['payload_displayName'],
             'payload_maxTries' => $payloadFields['payload_maxTries'],
@@ -452,7 +456,7 @@ final class PendingJobsReader
     }
 
     /**
-     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int, origin: ?string, call_site: ?string, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
      */
     private static function readHash(string $uuid): ?array
     {
@@ -463,7 +467,7 @@ final class PendingJobsReader
     }
 
     /**
-     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, parent_uuid: ?string, attempts: ?int, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, parent_uuid: ?string, attempts: ?int, origin: ?string, call_site: ?string, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
      */
     private static function parseHash(string $uuid, mixed $hash): ?array
     {
@@ -484,6 +488,8 @@ final class PendingJobsReader
         $startedAt = $hash['started_at'] ?? null;
         $parentUuid = $hash['parent_uuid'] ?? null;
         $attempts = $hash['attempts'] ?? null;
+        $origin = $hash['origin'] ?? null;
+        $callSite = $hash['call_site'] ?? null;
 
         // Pull any `payload_*` fields RecordJobQueued wrote when
         // `pending.capture.payloads` is on. Shared with findByUuid via
@@ -501,6 +507,8 @@ final class PendingJobsReader
             'started_at' => is_numeric($startedAt) ? (int) $startedAt : null,
             'parent_uuid' => is_string($parentUuid) && $parentUuid !== '' ? $parentUuid : null,
             'attempts' => is_numeric($attempts) ? (int) $attempts : null,
+            'origin' => is_string($origin) && $origin !== '' ? $origin : null,
+            'call_site' => is_string($callSite) && $callSite !== '' ? $callSite : null,
             'payload_body' => $payloadFields['payload_body'],
             'payload_displayName' => $payloadFields['payload_displayName'],
             'payload_maxTries' => $payloadFields['payload_maxTries'],

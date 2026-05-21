@@ -236,6 +236,31 @@
                                 <x-queue-insights::copy-button target="qi-stream-id" label="Copy stream id" variant="icon" class="shrink-0"/>
                             </dd>
                         </div>
+                        @php
+                            // Initiator — who started this job. Origin is the coarse
+                            // entry point (http/artisan/schedule); call_site is the
+                            // exact dispatch file:line. Both omitted when absent.
+                            $detailsOrigin = is_string($payload['origin'] ?? null) && $payload['origin'] !== ''
+                                ? $payload['origin']
+                                : null;
+                            $detailsCallSite = is_string($payload['call_site'] ?? null) && $payload['call_site'] !== ''
+                                ? $payload['call_site']
+                                : null;
+                        @endphp
+                        @if($detailsOrigin !== null)
+                            <div class="flex items-baseline justify-between gap-3 py-1.5">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">Origin</dt>
+                                <dd class="min-w-0 break-all text-right font-mono text-[11px] text-gray-900 dark:text-gray-100">{{ $detailsOrigin }}</dd>
+                            </div>
+                        @endif
+                        @if($detailsCallSite !== null)
+                            <div class="flex items-baseline justify-between gap-3 py-1.5">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">Dispatched from</dt>
+                                <dd class="min-w-0 text-right">
+                                    <code class="break-all rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $detailsCallSite }}</code>
+                                </dd>
+                            </div>
+                        @endif
                     </dl>
 
                     @include('queue-insights::partials.parent-lineage-row', [

@@ -139,6 +139,15 @@
         }
         $mdLines[] = $parentLine;
     }
+    // Initiator — origin (coarse entry point) + call site (dispatch
+    // file:line), resolved lazily by DashboardData::resolveFailedInitiator.
+    // Omitted when absent, mirroring the Parent line above.
+    if (! empty($failed['origin'])) {
+        $mdLines[] = '- **Origin:** '.$failed['origin'];
+    }
+    if (! empty($failed['call_site'])) {
+        $mdLines[] = '- **Dispatched from:** `'.$failed['call_site'].'`';
+    }
     if (is_string($failedException) && $failedException !== '') {
         $fence = $fenceFor($failedException);
         $mdLines[] = '';
@@ -238,6 +247,31 @@
                                 <x-queue-insights::copy-button target="qi-failed-uuid" label="Copy UUID" variant="icon" class="shrink-0"/>
                             </dd>
                         </div>
+                        @php
+                            // Initiator — who started this job. Origin is the coarse
+                            // entry point (http/artisan/schedule); call_site is the
+                            // exact dispatch file:line. Both omitted when absent.
+                            $failedOrigin = is_string($failed['origin'] ?? null) && $failed['origin'] !== ''
+                                ? $failed['origin']
+                                : null;
+                            $failedCallSite = is_string($failed['call_site'] ?? null) && $failed['call_site'] !== ''
+                                ? $failed['call_site']
+                                : null;
+                        @endphp
+                        @if($failedOrigin !== null)
+                            <div class="flex items-baseline justify-between gap-3 py-2">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">Origin</dt>
+                                <dd class="min-w-0 break-all text-right font-mono text-[11px] text-gray-900 dark:text-gray-100">{{ $failedOrigin }}</dd>
+                            </div>
+                        @endif
+                        @if($failedCallSite !== null)
+                            <div class="flex items-baseline justify-between gap-3 py-2">
+                                <dt class="shrink-0 text-gray-500 dark:text-gray-400">Dispatched from</dt>
+                                <dd class="min-w-0 text-right">
+                                    <code class="break-all rounded bg-gray-950/5 px-1.5 py-0.5 font-mono text-[11px] text-gray-600 dark:bg-white/10 dark:text-gray-300">{{ $failed['call_site'] }}</code>
+                                </dd>
+                            </div>
+                        @endif
                     </dl>
 
                     @include('queue-insights::partials.parent-lineage-row', [

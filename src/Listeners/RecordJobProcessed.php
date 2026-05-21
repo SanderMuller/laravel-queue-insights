@@ -5,6 +5,7 @@ namespace SanderMuller\QueueInsights\Listeners;
 use Carbon\CarbonImmutable;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
@@ -14,6 +15,7 @@ use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\HourBucket;
+use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
@@ -206,6 +208,25 @@ final readonly class RecordJobProcessed
             $baseFields['parent_uuid'] = $parentUuid;
         }
 
+        // Initiator origin — restored from the job payload's hidden Context
+        // by the worker. Copy it into the durable stream row, conditionally,
+        // the same omit-when-empty way as parent_uuid above.
+        $origin = $this->resolveInitiatorOrigin();
+        if ($origin !== null) {
+            $baseFields['origin'] = $origin;
+        }
+
+        // Initiator call site — captured queue-side by RecordJobQueued and
+        // parked in the interim `qi:initiator:{uuid}` hash (call site can't
+        // ride Context). Read it back here and copy onto the durable row,
+        // same omit-when-empty pattern. The interim key is shortened to a
+        // 60s tail AFTER the XADDs land — never DEL'd — so a throw before
+        // the copy leaves the 7d TTL intact (spec §2.2).
+        $callSite = $this->resolveInitiatorCallSite($event);
+        if ($callSite !== null) {
+            $baseFields['call_site'] = $callSite;
+        }
+
         if (Config::enum('capture.payloads', CaptureMode::class, CaptureMode::Off)->writesPayloadFields()) {
             foreach ($this->sanitizer->sanitize($event) as $key => $value) {
                 $baseFields['payload_' . $key] = $this->encodeStreamValue($value);
@@ -233,6 +254,18 @@ final readonly class RecordJobProcessed
             $this->xaddApprox($redis, $perConnKey, $perConnMax, $baseFields);
         }
 
+        // The XADDs above have landed — the call site now lives durably on
+        // the completed stream, so the interim `qi:initiator:{uuid}` key is
+        // redundant. Shrink it to a 60s tail (never DEL — spec §2.2). Placed
+        // AFTER the XADDs, NOT in a finally, so a throw above keeps the key's
+        // full 7d TTL and no attribution is lost.
+        if ($callSite !== null) {
+            $uuid = $event->job->uuid();
+            if (is_string($uuid) && $uuid !== '') {
+                (new InitiatorStore())->shortenTtl($uuid);
+            }
+        }
+
         return $globalStreamId;
     }
 
@@ -258,6 +291,43 @@ final readonly class RecordJobProcessed
         //      the lineage hash is the safety net and a delete here would
         //      lose it before any durable record exists.
         return (new ChainLineageStore())->readLineage($uuid);
+    }
+
+    /**
+     * Read the coarse initiator origin off the worker's restored hidden
+     * `Context` (Laravel rehydrates it from the job payload before
+     * dispatching JobProcessed). Null when initiator capture is off or no
+     * origin was stamped at dispatch time.
+     */
+    private function resolveInitiatorOrigin(): ?string
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_origin', true)) {
+            return null;
+        }
+
+        $origin = Context::getHidden(Config::string('initiator.context_key', 'qi_origin'));
+
+        return is_string($origin) && $origin !== '' ? $origin : null;
+    }
+
+    /**
+     * Read the dispatch call site out of the interim `qi:initiator:{uuid}`
+     * hash (written queue-side by RecordJobQueued). Null when initiator
+     * capture or call-site capture is off, the uuid is missing, or no call
+     * site was stamped (no application frame resolved at dispatch time).
+     */
+    private function resolveInitiatorCallSite(JobProcessed $event): ?string
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_call_site', false)) {
+            return null;
+        }
+
+        $uuid = $event->job->uuid();
+        if (! is_string($uuid) || $uuid === '') {
+            return null;
+        }
+
+        return (new InitiatorStore())->read($uuid)['call_site'];
     }
 
     private function encodedChain(JobProcessed $event): ?string

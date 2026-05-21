@@ -5,6 +5,7 @@ namespace SanderMuller\QueueInsights\Listeners;
 use Carbon\CarbonImmutable;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Redis\Connections\Connection;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
@@ -12,6 +13,7 @@ use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\HourBucket;
+use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
@@ -112,6 +114,24 @@ final readonly class RecordJobFailed
                             (string) $failedJobsId,
                         ]);
                     }
+                }
+
+                // Initiator origin + call site — persist into the interim
+                // `qi:initiator:{uuid}` hash so the failed-job modal can
+                // resolve them lazily at render time (the dashboard request
+                // has no job Context). Origin is read off the worker's
+                // restored hidden Context; call_site is read back from the
+                // same key (RecordJobQueued may already have written it
+                // queue-side). Failed jobs never hit RecordJobProcessed, so
+                // the key keeps its full 7d TTL for the dashboard's read.
+                $origin = $this->resolveInitiatorOrigin();
+                $callSite = $this->resolveInitiatorCallSite($uuid);
+                if ($origin !== null || $callSite !== null) {
+                    (new InitiatorStore())->write(
+                        $uuid,
+                        ['origin' => $origin, 'call_site' => $callSite],
+                        Config::int('initiator.ttl_seconds', 604800),
+                    );
                 }
             }
 
@@ -216,6 +236,37 @@ final readonly class RecordJobFailed
             (string) 2592000,
             $isoNow,
         );
+    }
+
+    /**
+     * Read the coarse initiator origin off the worker's restored hidden
+     * `Context`. Null when initiator capture is off or no origin was
+     * stamped at dispatch time.
+     */
+    private function resolveInitiatorOrigin(): ?string
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_origin', true)) {
+            return null;
+        }
+
+        $origin = Context::getHidden(Config::string('initiator.context_key', 'qi_origin'));
+
+        return is_string($origin) && $origin !== '' ? $origin : null;
+    }
+
+    /**
+     * Read the dispatch call site out of the interim `qi:initiator:{uuid}`
+     * hash — RecordJobQueued may already have stamped it queue-side. Null
+     * when initiator capture or call-site capture is off, or no call site
+     * was resolved at dispatch time.
+     */
+    private function resolveInitiatorCallSite(string $uuid): ?string
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_call_site', false)) {
+            return null;
+        }
+
+        return (new InitiatorStore())->read($uuid)['call_site'];
     }
 
     /**

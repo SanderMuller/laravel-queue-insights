@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Console\Events\ScheduledTaskStarting;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -44,6 +45,16 @@ final readonly class RecordScheduledTaskStarting
             // Push the active frame so jobs queued inside the task's
             // run get attributed back via `RecordJobQueued`.
             ScheduleContext::push($taskKey, $runId);
+
+            // Initiator origin — stamp `schedule:{task_key}` onto hidden
+            // Context so jobs dispatched during the task carry it into
+            // their payload. Forgotten by the Finished / Failed listeners.
+            if (Config::bool('initiator.enabled', true) && Config::bool('initiator.capture_origin', true)) {
+                Context::addHidden(
+                    Config::string('initiator.context_key', 'qi_origin'),
+                    'schedule:' . $taskKey,
+                );
+            }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordScheduledTaskStarting failed', [
                 'exception' => $throwable::class,

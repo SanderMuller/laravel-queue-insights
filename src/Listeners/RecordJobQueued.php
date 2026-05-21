@@ -4,16 +4,19 @@ namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
+use SanderMuller\QueueInsights\Support\CallSiteResolver;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageClaim;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
+use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\PendingPayloadSnapshot;
@@ -66,10 +69,17 @@ final class RecordJobQueued
             $connection = ConnectionAlias::canonical((string) $event->connectionName);
             $queueKey = CanonicalQueueKey::fromOrDefault((string) $event->queue, $connection);
 
-            $this->writePendingTracking($redis, $event, $uuid, $payload, $connection, $queueKey);
+            // Resolve the dispatch call site once (when call-site capture is
+            // on) so it can be both written to the interim qi:initiator key
+            // AND stamped onto the pending hash. Empty string when capture is
+            // off or no application frame resolved (e.g. a chained 2nd+ link).
+            $callSite = $this->resolveCallSite();
+
+            $this->writePendingTracking($redis, $event, $uuid, $payload, $connection, $queueKey, $callSite);
             $this->writeBatchTracking($redis, $uuid, $payload, $connection);
             $this->resolveChainLineage($uuid, $payload, $connection, $queueKey);
             $this->writeScheduleAttribution($redis, $uuid);
+            $this->writeInitiatorTracking($uuid, $callSite);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
                 'exception' => $throwable::class,
@@ -85,8 +95,9 @@ final class RecordJobQueued
      * and database queues.
      *
      * @param  array<array-key, mixed>|null  $payload  Decoded JobQueued payload.
+     * @param  string  $callSite  Resolved dispatch `file:line`, '' when absent.
      */
-    private function writePendingTracking(RedisConnection $redis, JobQueued $event, string $uuid, ?array $payload, string $connection, string $queueKey): void
+    private function writePendingTracking(RedisConnection $redis, JobQueued $event, string $uuid, ?array $payload, string $connection, string $queueKey, string $callSite): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
@@ -135,6 +146,23 @@ final class RecordJobQueued
         // the same as empty strings, so the read contract is unchanged.
         if ($batchId !== '') {
             $fields['batch_id'] = $batchId;
+        }
+
+        // Initiator origin — read off the dispatching request's live hidden
+        // Context (set by SetInitiatorOrigin middleware / the CommandStarting
+        // listener / RecordScheduledTaskStarting). Omitted-when-empty exactly
+        // like batch_id; PendingJobsReader::parseHash treats absent the same
+        // as empty so the read contract is unchanged.
+        $origin = $this->resolveInitiatorOrigin();
+        if ($origin !== '') {
+            $fields['origin'] = $origin;
+        }
+
+        // Initiator call site — the resolved dispatch `file:line` (when
+        // call-site capture is on and an application frame resolved).
+        // Omitted-when-empty exactly like origin / batch_id above.
+        if ($callSite !== '') {
+            $fields['call_site'] = $callSite;
         }
 
         // Pending payload capture — gated on a per-surface `pending.capture.payloads`
@@ -207,6 +235,66 @@ final class RecordJobQueued
         }
 
         return $out;
+    }
+
+    /**
+     * Read the coarse initiator origin off hidden Laravel `Context`. Empty
+     * string when initiator capture is off or no entry-point hook stamped
+     * one (dispatched from tinker, a daemon, a custom route group, etc).
+     */
+    private function resolveInitiatorOrigin(): string
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_origin', true)) {
+            return '';
+        }
+
+        $origin = Context::getHidden(Config::string('initiator.context_key', 'qi_origin'));
+
+        return is_string($origin) ? $origin : '';
+    }
+
+    /**
+     * Resolve the dispatch call site (`file:line`) via a bounded, filtered
+     * `debug_backtrace()` walk. Empty string when initiator capture or
+     * call-site capture is off, or when no application frame was found
+     * within the depth cap (e.g. a chained 2nd+ link queued by the
+     * worker's chain machinery — no application frame above it).
+     */
+    private function resolveCallSite(): string
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_call_site', false)) {
+            return '';
+        }
+
+        return (new CallSiteResolver())->resolve(Config::int('initiator.call_site_max_depth', 30)) ?? '';
+    }
+
+    /**
+     * Persist the resolved call site into the interim `qi:initiator:{uuid}`
+     * hash so the worker (RecordJobProcessed) and the failed-job dashboard
+     * view can read it — the call site is captured queue-side but consumed
+     * elsewhere and cannot ride Laravel `Context`.
+     *
+     * Peer of `writePendingTracking` off `handle()` — gated ONLY on the
+     * initiator switches, NOT on `pending.enabled` (see spec §4 placement
+     * trap). No key is written at all under the default config
+     * (`capture_call_site = false`) or when no application frame resolved.
+     */
+    private function writeInitiatorTracking(string $uuid, string $callSite): void
+    {
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_call_site', false)) {
+            return;
+        }
+
+        if ($callSite === '') {
+            return;
+        }
+
+        (new InitiatorStore())->write(
+            $uuid,
+            ['call_site' => $callSite],
+            Config::int('initiator.ttl_seconds', 604800),
+        );
     }
 
     /**

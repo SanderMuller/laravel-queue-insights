@@ -336,6 +336,46 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the initiator block. Type-checks the four boolean toggles,
+     * the two positive-integer bounds, and the non-empty `context_key`.
+     * Missing keys take their defaults from config/queue-insights.php.
+     *
+     * @param  array<array-key, mixed>  $initiator
+     */
+    public static function validateInitiator(array $initiator): void
+    {
+        foreach (['enabled', 'capture_origin', 'capture_call_site', 'intern'] as $key) {
+            if (isset($initiator[$key]) && ! is_bool($initiator[$key])) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.initiator.{$key} must be a boolean."
+                );
+            }
+        }
+
+        foreach (['call_site_max_depth', 'ttl_seconds'] as $key) {
+            if (! isset($initiator[$key])) {
+                continue;
+            }
+
+            $value = $initiator[$key];
+            if (! is_int($value) || $value < 1) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.initiator.{$key} must be a positive integer."
+                );
+            }
+        }
+
+        if (isset($initiator['context_key'])) {
+            $contextKey = $initiator['context_key'];
+            if (! is_string($contextKey) || $contextKey === '') {
+                throw new QueueInsightsConfigException(
+                    'queue-insights.initiator.context_key must be a non-empty string.'
+                );
+            }
+        }
+    }
+
+    /**
      * Validate `connection_aliases`. Operator-declared single-hop map. Rules:
      *
      *  - associative array, keys + values non-empty strings

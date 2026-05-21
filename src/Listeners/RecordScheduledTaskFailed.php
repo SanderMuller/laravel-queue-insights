@@ -3,6 +3,7 @@
 namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Console\Events\ScheduledTaskFailed;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -11,6 +12,7 @@ use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
+use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
 
 final readonly class RecordScheduledTaskFailed
@@ -90,6 +92,24 @@ final readonly class RecordScheduledTaskFailed
             if (is_string($taskKey)) {
                 ScheduleContext::pop($taskKey);
             }
+
+            // Drop the initiator origin Starting set so a later task in
+            // the same `schedule:run` worker doesn't inherit it.
+            $this->forgetInitiatorOrigin();
+        }
+    }
+
+    private function forgetInitiatorOrigin(): void
+    {
+        try {
+            if (Config::bool('initiator.enabled', true) && Config::bool('initiator.capture_origin', true)) {
+                Context::forgetHidden(Config::string('initiator.context_key', 'qi_origin'));
+            }
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: RecordScheduledTaskFailed failed', [
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
         }
     }
 

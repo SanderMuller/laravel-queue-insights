@@ -475,6 +475,42 @@ return [
     ],
 
     /*
+     | Job initiator tracking. Records who started each queued job along
+     | two dimensions: the coarse `origin` (HTTP route / artisan command /
+     | scheduled task the work flowed from) and the exact `call_site`
+     | (file:line the dispatch ran from). Origin rides Laravel `Context`
+     | and propagates for free into nested dispatches; call site needs a
+     | small Redis side-key. See internal/specs/job-initiator-tracking.md.
+     */
+    'initiator' => [
+        // Master switch. Off → no listeners do initiator work, no keys written.
+        'enabled' => env('QUEUE_INSIGHTS_INITIATOR', true),
+
+        // Capture the coarse origin (HTTP route / artisan command / schedule
+        // task) via Laravel Context. No dedicated Redis key — see §2.1.
+        'capture_origin' => true,
+
+        // Capture the file:line dispatch call site. OFF by default: it costs
+        // one bounded debug_backtrace() per dispatch and writes a per-job
+        // qi:initiator:{uuid} key. Opt in when you need call-site precision.
+        'capture_call_site' => false,
+
+        // Max frames debug_backtrace() walks looking for the first app frame.
+        'call_site_max_depth' => 30,
+
+        // TTL of the qi:initiator:{uuid} key (seconds). Must stay readable for
+        // the failed-job modal's lazy resolve. Matches chain_lineage TTL.
+        // Completed-job keys are shortened to a 60s tail post-copy.
+        'ttl_seconds' => 604800,
+
+        // Hidden Context key the entry-point hooks write and the listeners read.
+        'context_key' => 'qi_origin',
+
+        // Phase 3 — intern origin/call_site strings to small ids. See §5.2.
+        'intern' => false,
+    ],
+
+    /*
      | Batched-jobs tracking. When enabled, the JobQueued listener stamps
      | per-batch metadata (uuids list + reverse uuid→batchId lookup +
      | recent-batches index) into Redis so the dashboard can surface

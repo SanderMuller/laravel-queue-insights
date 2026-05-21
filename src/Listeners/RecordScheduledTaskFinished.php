@@ -3,12 +3,14 @@
 namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Console\Events\ScheduledTaskFinished;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
+use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
 
 final readonly class RecordScheduledTaskFinished
@@ -75,6 +77,25 @@ final readonly class RecordScheduledTaskFinished
             if (is_string($taskKey)) {
                 ScheduleContext::pop($taskKey);
             }
+
+            // Drop the initiator origin Starting set, for the same
+            // leak-prevention reason — a later task in the same
+            // `schedule:run` worker must not inherit this task's origin.
+            $this->forgetInitiatorOrigin();
+        }
+    }
+
+    private function forgetInitiatorOrigin(): void
+    {
+        try {
+            if (Config::bool('initiator.enabled', true) && Config::bool('initiator.capture_origin', true)) {
+                Context::forgetHidden(Config::string('initiator.context_key', 'qi_origin'));
+            }
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: RecordScheduledTaskFinished failed', [
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
         }
     }
 }

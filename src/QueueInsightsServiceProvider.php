@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights;
 
+use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Console\Events\ScheduledBackgroundTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskFailed;
 use Illuminate\Console\Events\ScheduledTaskFinished;
@@ -46,6 +47,7 @@ use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
 use SanderMuller\QueueInsights\Http\Livewire\AlertRulesPanel;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
+use SanderMuller\QueueInsights\Http\Middleware\SetInitiatorOrigin;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
@@ -55,6 +57,7 @@ use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskSkipped;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
+use SanderMuller\QueueInsights\Listeners\SetInitiatorOriginFromCommand;
 use SanderMuller\QueueInsights\Prometheus\ClassFilter as PrometheusClassFilter;
 use SanderMuller\QueueInsights\Prometheus\Collector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\AlertActiveCollector;
@@ -278,6 +281,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         ConfigValidator::validateCapture($section($cfg, 'capture'));
         ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
+        ConfigValidator::validateInitiator($section($cfg, 'initiator'));
         ConfigValidator::validateWork($section($cfg, 'work'));
         ConfigValidator::validateRetention($section($cfg, 'retention'));
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
@@ -313,6 +317,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateSilencedPatterns($patterns);
 
         $this->registerListeners();
+        $this->registerInitiatorMiddleware();
         $this->registerSchedule();
         $this->registerDashboard();
         $this->registerPrometheus();
@@ -451,5 +456,33 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $events->listen(JobProcessing::class, RecordJobProcessing::class);
         $events->listen(JobProcessed::class, RecordJobProcessed::class);
         $events->listen(JobFailed::class, RecordJobFailed::class);
+
+        // Initiator origin capture for artisan commands — gated at runtime
+        // on `initiator.enabled` inside the listener so a config change
+        // doesn't need a redeploy. The daemon skip-list keeps the worker's
+        // own command name from leaking as a job origin.
+        $events->listen(CommandStarting::class, SetInitiatorOriginFromCommand::class);
+    }
+
+    /**
+     * Append the HTTP initiator-origin middleware to the `web` / `api`
+     * groups so jobs dispatched during a request carry `http:{route}` on
+     * hidden `Context`. Gated on `initiator.enabled` — disabled installs
+     * never touch the request pipeline.
+     */
+    private function registerInitiatorMiddleware(): void
+    {
+        if (! Config::bool('initiator.enabled', true)) {
+            return;
+        }
+
+        $router = $this->app->make(Router::class);
+        if (! $router instanceof Router) {
+            return;
+        }
+
+        foreach (['web', 'api'] as $group) {
+            $router->pushMiddlewareToGroup($group, SetInitiatorOrigin::class);
+        }
     }
 }

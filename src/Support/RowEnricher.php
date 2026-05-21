@@ -13,24 +13,10 @@ final class RowEnricher
      */
     public static function completed(array $recentCompleted): array
     {
-        $uuids = [];
-        foreach ($recentCompleted as $row) {
-            $u = $row['uuid'] ?? null;
-            if (is_string($u) && $u !== '') {
-                $uuids[] = $u;
-            }
-        }
-
+        $uuids = self::collectStringField($recentCompleted, 'uuid');
         $batchIds = BatchReader::batchIdsForUuids($uuids);
 
-        $parentUuids = [];
-        foreach ($recentCompleted as $row) {
-            $p = $row['parent_uuid'] ?? null;
-            if (is_string($p) && $p !== '') {
-                $parentUuids[] = $p;
-            }
-        }
-
+        $parentUuids = self::collectStringField($recentCompleted, 'parent_uuid');
         $parentClasses = $parentUuids === []
             ? []
             : ParentClassResolver::resolveMany($parentUuids);
@@ -52,6 +38,15 @@ final class RowEnricher
             $row['chain'] = self::decodeChain($chainEncoded);
             $row['parent_uuid'] = $parentUuid;
             $row['parent_class'] = $parentUuid !== null ? ($parentClasses[$parentUuid] ?? null) : null;
+            // Initiator origin + call site — RecordJobProcessed copied both
+            // onto the completed-stream entry, so they're already on `$row`.
+            // Normalise to a non-empty string or null so downstream views
+            // get a uniform shape regardless of whether the field was
+            // written.
+            $origin = $row['origin'] ?? null;
+            $row['origin'] = is_string($origin) && $origin !== '' ? $origin : null;
+            $callSite = $row['call_site'] ?? null;
+            $row['call_site'] = is_string($callSite) && $callSite !== '' ? $callSite : null;
 
             $rows[] = $row;
         }
@@ -132,7 +127,7 @@ final class RowEnricher
      */
     public static function failed(array $recentFailed): array
     {
-        $childUuids = self::collectUuids($recentFailed);
+        $childUuids = self::collectStringField($recentFailed, 'uuid');
         $parentUuids = Config::bool('chain_lineage.enabled', true)
             ? self::lineageMany($childUuids)
             : [];
@@ -181,24 +176,24 @@ final class RowEnricher
     }
 
     /**
-     * Extract the non-empty uuid strings from a list of failed-job rows.
-     * Shared by the lineage + runtime fan-outs so the foreach + type-guard
-     * pattern lives in one place.
+     * Collect the non-empty string values of `$field` across `$rows`.
+     * Shared by the completed + failed enrichment fan-outs so the
+     * foreach + type-guard pattern lives in one place.
      *
-     * @param  list<array<array-key, mixed>>  $recentFailed
+     * @param  list<array<array-key, mixed>>  $rows
      * @return list<string>
      */
-    private static function collectUuids(array $recentFailed): array
+    private static function collectStringField(array $rows, string $field): array
     {
-        $uuids = [];
-        foreach ($recentFailed as $row) {
-            $u = $row['uuid'] ?? null;
-            if (is_string($u) && $u !== '') {
-                $uuids[] = $u;
+        $out = [];
+        foreach ($rows as $row) {
+            $value = $row[$field] ?? null;
+            if (is_string($value) && $value !== '') {
+                $out[] = $value;
             }
         }
 
-        return $uuids;
+        return $out;
     }
 
     /**

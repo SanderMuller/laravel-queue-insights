@@ -537,3 +537,65 @@ it('rejects snapshots collision under post-alias canonical connections', functio
         ['connection' => 'redis-staging', 'queue' => 'foo'],
     ]))->toThrow(QueueInsightsConfigException::class, 'collision on connection [redis-staging]');
 });
+
+// --- initiator -------------------------------------------------------------
+
+it('accepts a well-formed initiator block (or empty defaults)', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateInitiator([]);
+        ConfigValidator::validateInitiator([
+            'enabled' => true,
+            'capture_origin' => true,
+            'capture_call_site' => false,
+            'intern' => false,
+            'call_site_max_depth' => 30,
+            'ttl_seconds' => 604800,
+            'context_key' => 'qi_origin',
+        ]);
+    })->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-boolean initiator.enabled', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['enabled' => 'yes']))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.enabled must be a boolean');
+});
+
+it('rejects a non-boolean initiator.capture_origin', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['capture_origin' => 1]))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.capture_origin must be a boolean');
+});
+
+it('rejects a non-boolean initiator.capture_call_site', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['capture_call_site' => 'off']))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.capture_call_site must be a boolean');
+});
+
+it('rejects a non-boolean initiator.intern', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['intern' => 'no']))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.intern must be a boolean');
+});
+
+it('rejects a non-int initiator.call_site_max_depth', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['call_site_max_depth' => '30']))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.call_site_max_depth must be a positive integer');
+});
+
+it('rejects a zero initiator.call_site_max_depth', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['call_site_max_depth' => 0]))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.call_site_max_depth must be a positive integer');
+});
+
+it('rejects a negative initiator.ttl_seconds', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['ttl_seconds' => -1]))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.ttl_seconds must be a positive integer');
+});
+
+it('rejects an empty initiator.context_key', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['context_key' => '']))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.context_key must be a non-empty string');
+});
+
+it('rejects a non-string initiator.context_key', function (): void {
+    expect(fn () => ConfigValidator::validateInitiator(['context_key' => 123]))
+        ->toThrow(QueueInsightsConfigException::class, 'initiator.context_key must be a non-empty string');
+});

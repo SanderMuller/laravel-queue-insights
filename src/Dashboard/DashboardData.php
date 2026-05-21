@@ -17,6 +17,7 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
 use SanderMuller\QueueInsights\Support\HorizonNotRunning;
+use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\QueueAggregates;
@@ -223,6 +224,14 @@ final readonly class DashboardData
             $selectedFailed['parent_uuid'] = $parentUuid;
             $selectedFailed['parent_class'] = $parentClass;
             $selectedFailed['parent_target'] = $this->resolveParentTargetFor($parentUuid);
+
+            // Initiator origin + call site — failed_jobs has no column for
+            // either, so RecordJobFailed persisted both into
+            // `qi:initiator:{uuid}`; resolve them lazily here, the same way
+            // as parent_uuid.
+            $initiator = $this->resolveFailedInitiator($failedUuid);
+            $selectedFailed['origin'] = $initiator['origin'];
+            $selectedFailed['call_site'] = $initiator['call_site'];
         }
 
         // Bulk-retry UI eligibility (server-side enforcement still applies in
@@ -649,6 +658,34 @@ final readonly class DashboardData
         }
 
         return [$parentUuid, ParentClassResolver::resolve($parentUuid)];
+    }
+
+    /**
+     * Hydrate the initiator origin + call site for a single failed-modal row.
+     * Failed_jobs has no column for either, so `RecordJobFailed` persisted
+     * them into the interim `qi:initiator:{uuid}` hash — read them back
+     * lazily here, mirroring `resolveFailedLineage()`. Both fields are null
+     * when initiator capture is off, the child uuid is missing, or the
+     * initiator hash has already aged out.
+     *
+     * @return array{origin: ?string, call_site: ?string}
+     */
+    private function resolveFailedInitiator(mixed $childUuid): array
+    {
+        if (! Config::bool('initiator.enabled', true)) {
+            return ['origin' => null, 'call_site' => null];
+        }
+
+        if (! is_string($childUuid) || $childUuid === '') {
+            return ['origin' => null, 'call_site' => null];
+        }
+
+        $initiator = (new InitiatorStore())->read($childUuid);
+
+        return [
+            'origin' => Config::bool('initiator.capture_origin', true) ? $initiator['origin'] : null,
+            'call_site' => Config::bool('initiator.capture_call_site', false) ? $initiator['call_site'] : null,
+        ];
     }
 
     /**
