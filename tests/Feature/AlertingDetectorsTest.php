@@ -5,6 +5,8 @@ use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Alerts\Detectors\OldestPendingDetector;
+use SanderMuller\QueueInsights\Alerts\Detectors\StuckInFlightDetector;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\IssueDetector;
 use SanderMuller\QueueInsights\Contracts\QueueSnapshotDriver;
@@ -198,6 +200,42 @@ it('auto-disables oldest_pending when pending.enabled = false and warns at boot'
     Artisan::call('queue-insights:snapshot');
 
     Event::assertNotDispatched(OldestPendingAging::class);
+});
+
+it('renders the oldest_pending wait as a human-readable duration, not raw seconds', function (): void {
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 600);
+
+    // 6d 22h 40m of waiting. The description must humanise it; the raw
+    // second count survives only in context as `age_seconds`.
+    $now = 2_000_000_000;
+    $availableAt = $now - 600_000;
+
+    $detector = resolve(OldestPendingDetector::class);
+    $issue = $detector->evaluate('sqsq', 'work', ['orphan-ish-uuid', $availableAt], null, $now);
+
+    expect($issue)->not->toBeNull();
+    assert($issue !== null);
+    expect($issue->description)
+        ->toContain('has been waiting 6d 22h.')
+        ->not->toContain('600000s')
+        ->and($issue->context['age_seconds'])->toBe(600_000);
+});
+
+it('renders the stuck_inflight runtime as a human-readable duration, not raw seconds', function (): void {
+    config()->set('queue-insights.alerts.rules.stuck_inflight.seconds', 300);
+
+    $now = 2_000_000_000;
+    $startedAt = $now - 7_200;
+
+    $detector = resolve(StuckInFlightDetector::class);
+    $issue = $detector->evaluate('sqsq', 'work', ['stuck-uuid', $startedAt], null, $now);
+
+    expect($issue)->not->toBeNull();
+    assert($issue !== null);
+    expect($issue->description)
+        ->toContain('has been running 2h.')
+        ->not->toContain('7200s')
+        ->and($issue->context['age_seconds'])->toBe(7_200);
 });
 
 it('excludes orphaned pending-zset members older than the retention window', function (): void {
