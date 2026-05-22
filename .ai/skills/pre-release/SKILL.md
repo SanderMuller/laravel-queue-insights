@@ -1,6 +1,6 @@
 ---
 name: pre-release
-description: "Pre-push / pre-release checklist for laravel-queue-insights. Runs Rector, Pint, Pest, PHPStan, audits README + `.ai/` docs for staleness, then commits + pushes, watches CI for green, and drafts release notes against the verified SHA. Activate before: pushing to remote, tagging a release, writing release notes, or when user mentions: pre-release, pre-push, release checklist, ship, cut release, release notes."
+description: 'Pre-push / pre-release checklist for laravel-queue-insights. Runs Rector, Pint, Pest, PHPStan, audits README + `.ai/` docs for staleness, then commits + pushes, watches CI for green, and drafts release notes against the verified SHA. Activate before: pushing to remote, tagging a release, writing release notes, or when user mentions: pre-release, pre-push, release checklist, ship, cut release, release notes.'
 ---
 
 # Pre-Release Checklist
