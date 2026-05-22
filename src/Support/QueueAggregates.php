@@ -7,7 +7,7 @@ final class QueueAggregates
 {
     /**
      * Partition the queue list into at-risk vs healthy + sum the depth
-     * and in-flight totals + return a depth-desc-sorted "deepest" copy.
+     * and in-flight totals.
      *
      * @param  list<array<string, mixed>>  $queues
      * @return array{
@@ -15,7 +15,6 @@ final class QueueAggregates
      *     total_inflight: int,
      *     at_risk: list<array<string, mixed>>,
      *     healthy: list<array<string, mixed>>,
-     *     deepest: list<array<string, mixed>>,
      * }
      */
     public static function aggregate(array $queues): array
@@ -38,57 +37,12 @@ final class QueueAggregates
             fn (array $q): bool => ! (bool) ($q['error'] ?? false) && ! (bool) ($q['stale'] ?? false),
         ));
 
-        $deepest = $queues;
-        usort($deepest, function (array $a, array $b): int {
-            $ad = is_numeric($a['depth'] ?? null) ? (int) $a['depth'] : 0;
-            $bd = is_numeric($b['depth'] ?? null) ? (int) $b['depth'] : 0;
-
-            return $bd <=> $ad;
-        });
-
         return [
             'total_depth' => $totalDepth,
             'total_inflight' => $totalInFlight,
             'at_risk' => $atRisk,
             'healthy' => $healthy,
-            'deepest' => $deepest,
         ];
-    }
-
-    /**
-     * Build the Overview "Queues" card preview: at-risk first, padded by
-     * the deepest queues until the cap is reached, deduplicating by
-     * `(connection, queue)` key.
-     *
-     * @param  list<array<string, mixed>>  $atRisk
-     * @param  list<array<string, mixed>>  $deepest
-     * @return list<array<string, mixed>>
-     */
-    public static function queuePreview(array $atRisk, array $deepest, int $cap = 5): array
-    {
-        $preview = $atRisk;
-        if (count($preview) < $cap) {
-            foreach ($deepest as $q) {
-                $dup = false;
-                foreach ($preview as $a) {
-                    if (($a['queue'] ?? null) === ($q['queue'] ?? null)
-                        && ($a['connection'] ?? null) === ($q['connection'] ?? null)) {
-                        $dup = true;
-                        break;
-                    }
-                }
-
-                if (! $dup) {
-                    $preview[] = $q;
-                }
-
-                if (count($preview) >= $cap) {
-                    break;
-                }
-            }
-        }
-
-        return array_slice($preview, 0, $cap);
     }
 
     /**

@@ -130,8 +130,6 @@
             </p>
         @endif
 
-        @include('queue-insights::partials.persistent-hero')
-
         @include('queue-insights::partials.tabs-workspace')
 
     </div>{{-- /#qi-dashboard-content --}}

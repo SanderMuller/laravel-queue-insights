@@ -1,10 +1,10 @@
 @php
     /**
-     * Persistent hero — sparkline (full card) alongside a 6-KPI panel.
-     * Always visible across tabs so the throughput trend is the last thing
-     * to fall off-screen. The sparkline component renders its own card
-     * chrome (ring + padding + axis labels), so we let it size itself
-     * rather than clamping its height.
+     * Overview hero — sparkline (full card) alongside a 6-KPI panel.
+     * Renders at the top of the Overview section as the throughput lede.
+     * The sparkline component renders its own card chrome (ring + padding
+     * + axis labels), so we let it size itself rather than clamping its
+     * height.
      *
      * Required scope vars:
      *   $throughput, $stats, $totalDepth, $totalInFlight, $fmtMs

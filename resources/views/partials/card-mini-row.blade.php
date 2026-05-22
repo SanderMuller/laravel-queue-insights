@@ -6,7 +6,7 @@
      * openFailed / openPending) so opening a modal works identically from a
      * card preview as from the full tab.
      *
-     * @var string $type   one of: completed, failed, pending, queue
+     * @var string $type   one of: completed, failed, pending, class
      * @var array  $item
      */
     $type = $type ?? 'completed';
@@ -131,22 +131,29 @@
         </span>
     </li>
 
-@elseif($type === 'queue')
+@elseif($type === 'class')
     @php
-        $depthNum = is_numeric($item['depth'] ?? null) ? (int) $item['depth'] : 0;
-        $depthCls = $depthNum === 0 ? 'text-gray-900 dark:text-gray-100' : ($depthNum > 1000 ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300');
-        $statusDot = ($item['error'] ?? false) ? 'bg-red-500' : (($item['stale'] ?? false) ? 'bg-amber-400' : 'bg-emerald-500');
-        $statusTxt = ($item['error'] ?? false) ? 'errored' : (($item['stale'] ?? false) ? 'stale' : 'healthy');
+        $fqcn = is_string($item['class'] ?? null) ? $item['class'] : '—';
+        $shortName = ($p = strrpos($fqcn, '\\')) !== false ? substr($fqcn, $p + 1) : $fqcn;
+        $processed = is_numeric($item['processed_24h'] ?? null) ? (int) $item['processed_24h'] : 0;
+        $failed = is_numeric($item['failed_24h'] ?? null) ? (int) $item['failed_24h'] : 0;
+        $silenced = ($item['silenced'] ?? false) === true;
     @endphp
     <li class="flex items-center justify-between gap-3 py-1.5">
         <span class="flex min-w-0 items-center gap-2">
-            <span class="size-1.5 shrink-0 rounded-full {{ $statusDot }}" title="{{ $statusTxt }}"></span>
-            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $item['queue'] }}</span>
-            <span class="hidden shrink-0 truncate text-[10px] text-gray-400 dark:text-gray-400 sm:inline">{{ $item['connection'] }}</span>
+            <span class="size-1.5 shrink-0 rounded-full {{ $failed > 0 ? 'bg-red-500' : 'bg-emerald-500' }}"></span>
+            <span class="min-w-0 truncate font-mono text-xs font-medium text-gray-900 dark:text-gray-100">{{ $shortName }}</span>
+            @if($silenced)
+                <span class="hidden shrink-0 rounded bg-gray-100 px-1 py-px text-[10px] font-medium text-gray-500 ring-1 ring-inset ring-gray-950/10 dark:bg-gray-800 dark:text-gray-300 dark:ring-white/10 sm:inline">silenced</span>
+            @endif
         </span>
         <span class="flex shrink-0 items-baseline gap-2 text-[11px] tabular-nums">
-            <span class="font-medium {{ $depthCls }}">{{ $item['depth'] }}</span>
-            <span class="text-gray-400 dark:text-gray-400">depth</span>
+            @if($failed > 0)
+                <span class="font-medium text-red-700 dark:text-red-300">{{ number_format($failed) }}</span>
+                <span class="text-gray-400 dark:text-gray-400">failed</span>
+            @endif
+            <span class="font-medium text-gray-900 dark:text-gray-100">{{ number_format($processed) }}</span>
+            <span class="text-gray-400 dark:text-gray-400">runs</span>
         </span>
     </li>
 @endif

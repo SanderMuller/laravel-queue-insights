@@ -164,10 +164,12 @@ it('Classes tab mounts the per-class table and renders the silenced badge for a 
         ->and($html)->toContain('App\\Jobs\\Quiet')
         ->and($html)->toContain('>silenced<');
 
-    // The badge only renders for the silenced class. Confirm by slicing
-    // a window around the badge and checking the nearest preceding FQCN
-    // is the silenced one.
-    $badgePos = strpos($html, '>silenced<');
+    // The badge only renders for the silenced class. Anchor on the Classes
+    // table badge specifically — it carries a descriptive `title`, unlike
+    // the Overview Classes card badge — then slice a window before it and
+    // confirm the nearest preceding FQCN is the silenced one.
+    $badgeMarker = 'title="Failures silenced via queue-insights.silenced">silenced<';
+    $badgePos = strpos($html, $badgeMarker);
     expect($badgePos)->toBeInt();
     $window = substr($html, max(0, (int) $badgePos - 500), 500);
     expect($window)->toContain('App\\Jobs\\Noisy')
@@ -213,7 +215,7 @@ it('Throughput sparkline wires Alpine hover state per bucket with a tooltip over
 });
 
 it('enforces viewQueueInsights gate if host app defines it', function (): void {
-    Gate::define('viewQueueInsights', fn (mixed $user = null): bool => false);
+    Gate::define('viewQueueInsights', fn (): bool => false);
 
     // Narrow middleware to just the gate check so we can isolate gate behavior
     // without setting up a full auth guard / session provider.

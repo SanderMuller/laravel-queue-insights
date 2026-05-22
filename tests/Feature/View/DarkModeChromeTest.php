@@ -38,8 +38,8 @@ it('emits dark variants on the persistent-hero card and KPI tiles', function ():
         ->toContain('text-amber-700 dark:text-amber-300');
 });
 
-it('emits dark variants on the tab strip wrapper and tab buttons', function (): void {
-    $html = View::make('queue-insights::partials.tabs.tab-button', [
+it('emits dark variants on the sidebar nav-item', function (): void {
+    $html = View::make('queue-insights::partials.tabs.nav-item', [
         'name' => 'overview',
         'label' => 'Overview',
         'badge' => 3,
@@ -47,10 +47,11 @@ it('emits dark variants on the tab strip wrapper and tab buttons', function (): 
 
     expect($html)
         // Active branch.
+        ->toContain('dark:bg-emerald-500/10')
         ->toContain('dark:text-emerald-300')
         // Inactive branch.
         ->toContain('dark:text-gray-300')
-        ->toContain('dark:hover:border-gray-700')
+        ->toContain('dark:hover:bg-white/5')
         ->toContain('dark:hover:text-gray-100');
 });
 
@@ -162,19 +163,19 @@ it('renders no banner classes when no issues are active', function (): void {
         ->not->toContain('dark:bg-amber-900/40');
 });
 
-it('emits dark variants on the tabs-workspace sticky strip', function (): void {
+it('emits dark variants on the tabs-workspace mobile-nav chrome', function (): void {
     // The workspace partial @includes every pane partial, each of which
     // expects a different chunk of DashboardData scope. Rendering the
     // workspace standalone would require seeding all of it. Since the
-    // sticky-strip wrapper is a static string in the source (not built
-    // by `@class` or conditionals), a source-file grep is the same
-    // guarantee as a render-time grep — the variant either exists in
+    // mobile-nav button + panel chrome is a static string in the source
+    // (not built by `@class` or conditionals), a source-file grep is the
+    // same guarantee as a render-time grep — the variant either exists in
     // the file or it doesn't.
     $source = file_get_contents(
         __DIR__ . '/../../../resources/views/partials/tabs-workspace.blade.php'
     );
 
     expect($source)
-        ->toContain('dark:border-white/10')
-        ->toContain('dark:bg-gray-950/90');
+        ->toContain('dark:bg-gray-900')
+        ->toContain('dark:ring-white/10');
 });
