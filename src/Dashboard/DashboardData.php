@@ -794,28 +794,35 @@ final readonly class DashboardData
             return null;
         }
 
+        // Enrich BEFORE re-checking scope so the comparison runs against the
+        // canonicalised connection/queue. failed_jobs.queue holds the raw
+        // queue — the full SQS queue URL on Vapor — while the scope keys are
+        // canonical; comparing the raw row would wrongly reject a legitimate
+        // SQS job here. RowEnricher canonicalises both fields.
+        $enriched = RowEnricher::failed([(array) $row])[0] ?? null;
+        if ($enriched === null) {
+            return null;
+        }
+
         // Re-enforce active scope on the fallback path. Without this, a deep-
         // linked or forged `selectedFailedId` could load a row from a
         // different connection/queue than the operator's scoped dashboard
         // is supposed to expose — silently bypassing the path-level scope.
         // The fallback is meant to surface silenced rows that the SQL filter
         // strips, NOT to widen the connection/queue surface.
-        $rowArray = (array) $row;
-        if ($component->scopeConnection !== null && ($rowArray['connection'] ?? null) !== $component->scopeConnection) {
+        if ($component->scopeConnection !== null && ($enriched['connection'] ?? null) !== $component->scopeConnection) {
             return null;
         }
 
         $queueScope = QueueScopeKey::decompose($component->selectedQueue);
         if ($queueScope !== null
-            && (($rowArray['connection'] ?? null) !== $queueScope['connection']
-                || ($rowArray['queue'] ?? null) !== $queueScope['queue'])
+            && (($enriched['connection'] ?? null) !== $queueScope['connection']
+                || ($enriched['queue'] ?? null) !== $queueScope['queue'])
         ) {
             return null;
         }
 
-        $enriched = RowEnricher::failed([$rowArray]);
-
-        return $enriched[0] ?? null;
+        return $enriched;
     }
 
     /**

@@ -108,6 +108,24 @@ it('failed leaves exception_message empty when there is no colon', function (): 
         ->toBeEmpty();
 });
 
+it('failed canonicalises a long SQS queue URL to the short queue key', function (): void {
+    // failed_jobs.queue holds the raw queue — on Vapor that is the full SQS
+    // URL. The enriched row must expose the short canonical key so the
+    // dashboard renders `staging_default`, not the URL (which broke layout).
+    $rows = [
+        [
+            'id' => 1, 'uuid' => 'u-1', 'connection' => 'sqs', 'failed_at' => 'x',
+            'payload' => null, 'exception' => 'X: y',
+            'queue' => 'https://sqs.eu-west-1.amazonaws.com/211264408001/staging_default',
+        ],
+    ];
+
+    $enriched = RowEnricher::failed($rows);
+
+    expect($enriched[0]['queue'])->toBe('staging_default')
+        ->and($enriched[0]['connection'])->toBe('sqs');
+});
+
 it('chainFromPayload returns null when payload data.command is absent or non-string', function (): void {
     expect(RowEnricher::chainFromPayload(null))->toBeNull()
         ->and(RowEnricher::chainFromPayload(['data' => null]))->toBeNull()

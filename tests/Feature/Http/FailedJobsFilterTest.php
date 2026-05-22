@@ -86,6 +86,29 @@ it('filters by queue', function (): void {
         ->and($rows[0]['queue'])->toBe('video');
 });
 
+it('filters by queue matching an SQS queue URL by its canonical name', function (): void {
+    // Vapor stores the full SQS URL in failed_jobs.queue; the filter value
+    // is the canonical key — match it by the URL's trailing /{name} segment.
+    seedFailedFilterRow(['queue' => 'https://sqs.eu-west-1.amazonaws.com/211264408001/staging_default']);
+    seedFailedFilterRow(['queue' => 'https://sqs.eu-west-1.amazonaws.com/211264408001/staging_video']);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(queue: 'staging_default'));
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['queue'])->toEndWith('/staging_default');
+});
+
+it('queue filter escapes the underscore so it is not a LIKE wildcard', function (): void {
+    // Without ESCAPE, `_` in the canonical key would wildcard-match any char.
+    seedFailedFilterRow(['queue' => 'https://sqs.eu-west-1.amazonaws.com/211264408001/staging_default']);
+    seedFailedFilterRow(['queue' => 'https://sqs.eu-west-1.amazonaws.com/211264408001/stagingXdefault']);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(queue: 'staging_default'));
+
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['queue'])->toEndWith('/staging_default');
+});
+
 it('filters by class FQCN with prefix substring on the JSON payload', function (): void {
     seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\SendEmail']]);
     seedFailedFilterRow(['payload' => ['displayName' => 'App\\Jobs\\SendEmailReceipt']]);
@@ -323,6 +346,24 @@ it('selectedFailed DB fallback opens silenced rows that match the active scope',
     // No scope — silenced row should still resolve via DB fallback so the
     // Silenced tab's click-through opens the modal.
     $component = Livewire::test(QueueInsightsDashboard::class)
+        ->call('openFailed', $id);
+
+    expect($component->viewData('selectedFailed'))->not->toBeNull();
+});
+
+it('selectedFailed DB fallback opens an SQS-URL row matching the canonical queue scope', function (): void {
+    // failed_jobs.queue holds the full SQS URL on Vapor; the queue scope is
+    // the canonical key. The fallback must canonicalise before the scope
+    // compare — otherwise a legitimate SQS job is wrongly rejected here.
+    config()->set('queue-insights.silenced', ['App\\Jobs\\NoisyVendor']);
+    $id = seedFailedFilterRow([
+        'connection' => 'sqs',
+        'queue' => 'https://sqs.eu-west-1.amazonaws.com/211264408001/staging_default',
+        'payload' => ['displayName' => 'App\\Jobs\\NoisyVendor', 'maxTries' => 3, 'attempts' => 1],
+    ]);
+
+    $component = Livewire::test(QueueInsightsDashboard::class)
+        ->call('selectQueue', 'sqs', 'staging_default')
         ->call('openFailed', $id);
 
     expect($component->viewData('selectedFailed'))->not->toBeNull();

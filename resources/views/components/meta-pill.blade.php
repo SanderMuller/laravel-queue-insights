@@ -11,5 +11,5 @@
 
 <dl class="inline-flex items-center divide-x divide-gray-950/10 overflow-hidden rounded-md ring-1 ring-inset ring-gray-950/10 dark:ring-white/10">
     <dt class="bg-gray-50 dark:bg-gray-800 {{ $padding }} py-0.5 font-medium text-gray-500 dark:text-gray-300">{{ $label }}</dt>
-    <dd class="bg-gray-50 dark:bg-gray-800 {{ $padding }} py-0.5 font-mono {{ $valueColor }}">{{ $value ?? '—' }}</dd>
+    <dd class="min-w-0 max-w-[12rem] truncate bg-gray-50 dark:bg-gray-800 {{ $padding }} py-0.5 font-mono {{ $valueColor }}" @if($value !== null && $value !== '') title="{{ $value }}" @endif>{{ $value ?? '—' }}</dd>
 </dl>

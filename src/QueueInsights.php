@@ -585,7 +585,19 @@ final class QueueInsights
         }
 
         if ($filters->queue !== '') {
-            $query->where('queue', $filters->queue);
+            // failed_jobs.queue is the RAW queue — a plain name on most
+            // drivers, but the full SQS queue URL on Vapor
+            // (https://sqs.{region}.amazonaws.com/{account}/{name}). The
+            // filter value is the canonical key, so match a plain value
+            // exactly OR an SQS URL by its trailing `/{name}` segment.
+            // `ESCAPE '|'` keeps a literal `_` in the key from acting as a
+            // wildcard across the MySQL / Postgres / SQLite matrix — same
+            // idiom as DisplayNamePayloadMatch.
+            $queueNeedle = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $filters->queue);
+            $query->where(function (Builder $q) use ($filters, $queueNeedle): void {
+                $q->where('queue', $filters->queue)
+                    ->orWhereRaw('queue LIKE ? ESCAPE ?', ['%/' . $queueNeedle, '|']);
+            });
         }
 
         if ($filters->class !== '') {

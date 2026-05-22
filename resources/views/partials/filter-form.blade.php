@@ -34,7 +34,9 @@
     @endif
     <label class="flex flex-col gap-1 font-medium text-gray-500 dark:text-gray-300">
         Queue
-        <select wire:model.live="{{ $models['queue'] }}" class="{{ $fieldClass }}">
+        {{-- Capped like the Class select below: queue options come straight
+             from snapshots[].queue, which on Vapor are full SQS URLs. --}}
+        <select wire:model.live="{{ $models['queue'] }}" class="{{ $fieldClass }} max-w-[18rem] truncate">
             <option value="">any</option>
             @foreach($queueOptions as $opt)
                 <option value="{{ $opt }}">{{ $opt }}</option>
@@ -43,7 +45,12 @@
     </label>
     <label class="flex flex-col gap-1 font-medium text-gray-500 dark:text-gray-300">
         Class
-        <select wire:model.live="{{ $models['class'] }}" class="{{ $fieldClass }} font-mono">
+        {{-- max-w + truncate caps the control: a native <select> auto-widens
+             to its longest option, and queued-closure labels (Closure plus a
+             file:line) can be very long — without the cap the filter row
+             blows out. The closed control ellipsises; the open native list
+             still shows each option in full. --}}
+        <select wire:model.live="{{ $models['class'] }}" class="{{ $fieldClass }} max-w-[18rem] truncate font-mono">
             <option value="">any</option>
             @foreach($classOptions as $opt)
                 <option value="{{ $opt }}">{{ $opt }}</option>

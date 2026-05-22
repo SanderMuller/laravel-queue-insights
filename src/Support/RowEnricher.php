@@ -147,12 +147,25 @@ final class RowEnricher
             $parentUuid = $uuid !== '' ? ($parentUuids[$uuid] ?? null) : null;
 
             $displayName = self::stringField($payload, 'displayName');
+
+            // failed_jobs stores the raw queue — an SQS queue URL on Vapor
+            // (`https://sqs.{region}.amazonaws.com/{acct}/{name}`). Canonicalise
+            // it so failed rows render the short queue key (`staging_default`)
+            // like completed/pending rows. `from()` — NOT `fromOrDefault()`:
+            // a stored empty queue stays empty (→ null), never invents the
+            // connection default, which would otherwise let the deep-link
+            // scope guard admit a row `applyFailedJobFilters()` would not.
+            $connectionRaw = is_string($row['connection'] ?? null) ? $row['connection'] : '';
+            $queueRaw = is_string($row['queue'] ?? null) ? $row['queue'] : '';
+            $connection = ConnectionAlias::canonical($connectionRaw);
+            $queueKey = $queueRaw !== '' ? CanonicalQueueKey::from($queueRaw) : null;
+
             $rows[] = [
                 'id' => is_numeric($row['id'] ?? null) ? (int) $row['id'] : null,
                 'uuid' => $uuid,
                 'short_uuid' => $uuid !== '' ? mb_substr($uuid, -8) : '',
-                'connection' => $row['connection'] ?? null,
-                'queue' => $row['queue'] ?? null,
+                'connection' => $connection !== '' ? $connection : null,
+                'queue' => $queueKey,
                 'failed_at' => $row['failed_at'] ?? null,
                 // `class` mirrors the completed-row contract so downstream
                 // filters (DashboardData::buildSilencedListings) can read
