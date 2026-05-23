@@ -12,6 +12,7 @@ on:
       - '.github/workflows/phpstan.yml'
       - 'composer.json'
       - 'composer.lock'
+      - 'testbench.yaml'
   pull_request:
     paths:
       - '**.php'
@@ -20,6 +21,7 @@ on:
       - '.github/workflows/phpstan.yml'
       - 'composer.json'
       - 'composer.lock'
+      - 'testbench.yaml'
 
 concurrency:
   group: phpstan-${{ github.ref }}
