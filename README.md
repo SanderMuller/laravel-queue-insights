@@ -50,7 +50,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Queues grouped *Needs attention* vs *Healthy*** so a broken queue can't hide in a long list.
 - **Per-class metrics** — 24h processed / failed, avg + max duration, last run.
 - **Recent completed + failed lists** with shared filter row (connection, queue, class, date range), per-page dropdown (10 / 25 / 50 / 100), all persisted in the URL. Failed rows surface runtime alongside Completed (computed via a 30 d `failed-runtime:{uuid}` side-key written when the worker's `start:` stamp survives to `JobFailed`).
-- **Global queue + class scope across every tab.** Click a queue row on the Queues tab or a class row on the Classes tab to scope Failed, Completed, Pending, Classes, and Silenced lists in one move. URL-shareable (`?qk={conn}:{queue}`, `?ck={fqcn}`); inline scope strip above the tabs shows the active scope with per-chip clear; click an already-selected row to toggle off. Scoping a silenced class auto-reveals its rows on Failed + Completed.
+- **Global queue + class scope across every section.** Click a queue row in the Overview section's queues tables or a class row on the Classes section to scope Failed, Completed, Pending, Classes, and Silenced lists in one move. URL-shareable (`?qk={conn}:{queue}`, `?ck={fqcn}`); inline scope strip above the section panes shows the active scope with per-chip clear; click an already-selected row to toggle off. Scoping a silenced class auto-reveals its rows on Failed + Completed.
 - **Retry badge** — pending, in-flight, and completed rows render an orange `retry N` chip with hover tooltip when the worker has picked the job up more than once. Backed by `attempts` stamped on the `pending:{uuid}` hash at `JobProcessing`.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
@@ -213,16 +213,16 @@ A failed retry never leaves the dashboard in a half-broken state. The row is eit
 
 ### Filtering & scoping
 
-There are two layers. **Global scope** (queue + class) is set by clicking a row on the Queues or Classes tab and applies to every list pane — Failed, Completed, Pending, Silenced. **Per-pane filters** narrow within a tab on top of the active scope.
+There are two layers. **Global scope** (queue + class) is set by clicking a row in the queues tables (Overview section) or on the Classes section and applies to every list pane — Failed, Completed, Pending, Silenced. **Per-pane filters** narrow within a section on top of the active scope.
 
 #### Global scope
 
 | Axis  | Set by                                                   | Cleared by                                     | Query-string key |
 |-------|----------------------------------------------------------|------------------------------------------------|------------------|
-| Class | clicking a class row on the **Classes** tab              | clicking the same row again, or the chip's `×` | `ck`             |
-| Queue | clicking the connection/queue cell on the **Queues** tab | clicking the same row again, or the chip's `×` | `qk`             |
+| Class | clicking a class row on the **Classes** section                 | clicking the same row again, or the chip's `×` | `ck`             |
+| Queue | clicking the connection/queue cell in the **Overview** section's queues tables | clicking the same row again, or the chip's `×` | `qk`             |
 
-Active scope renders as an inline `Filtering by queue=… · class=…` strip above the tab bar with a per-chip clear button. URL-shareable so a paste into chat preserves the operator's view.
+Active scope renders as an inline `Filtering by queue=… · class=…` strip above the section panes with a per-chip clear button. URL-shareable so a paste into chat preserves the operator's view.
 
 When the active class scope IS a class in `queue-insights.silenced`, both Failed and Completed auto-reveal silenced rows so the lists don't read empty after the click. The "Show silenced" checkbox on each pane stays available for an explicit override.
 
