@@ -4,6 +4,26 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.22.0 - 2026-05-23
+
+### What's changed
+
+#### Added
+
+- Dashboard now uses a left sidebar nav (Overview / Jobs / Classes / Schedule / Alert rules) in place of the horizontal section tab strip. Overview stacks the throughput hero, mission-grid summary cards, and the full queues tables; a new Classes summary card on Overview previews the busiest classes by 24h volume. Legacy `#qi-queues` bookmarks land on Overview and scroll to the queues tables. The mobile disclosure menu mirrors the desktop sidebar.
+
+#### Fixed
+
+- Long SQS / Vapor queue names no longer overflow dashboard cards.
+
+#### Internal
+
+- Migrated dev tooling from the `sandermuller/package-boost` monolith to the split `sandermuller/package-boost-laravel` umbrella (boost-core 0.6.0 + package-boost-php 0.7.0) plus `sandermuller/boost-skills` 1.2.0. `CLAUDE.md` / `AGENTS.md` / `.claude/skills/` / `.github/skills/` are now generated artifacts managed by boost-core; source of truth is `.ai/`.
+- Workflow path filters widened: `phpstan` now retriggers on `composer.json` / `composer.lock` / `testbench.yaml`; `run-tests` now retriggers on `testbench.yaml` / `workbench/**`. Config-only changes can't sneak past the matrix gates.
+- Detail-modal left rail widened from 20rem to 22rem (batch, schedule-run, schedule-task) for consistent column width across the three modals.
+
+**Full changelog:** 0.21.0...0.22.0
+
 ## 0.21.0 - 2026-05-21
 
 ### Highlights
@@ -33,6 +53,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   ```bash
   # .env
   QUEUE_INSIGHTS_REDIS_MEMORY_TILE=true
+  
   
   
   ```
@@ -85,6 +106,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -107,6 +129,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -274,6 +297,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -500,6 +524,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -619,6 +644,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -654,6 +680,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -787,6 +814,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
