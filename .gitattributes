@@ -18,6 +18,7 @@
 /.mcp.json              export-ignore
 /.phpunit.cache         export-ignore
 /AGENTS.md              export-ignore
+/boost.php              export-ignore
 /CLAUDE.md              export-ignore
 /composer.lock          export-ignore
 /CHANGELOG.md           export-ignore
