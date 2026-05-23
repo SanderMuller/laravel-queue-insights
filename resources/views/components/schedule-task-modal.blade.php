@@ -101,7 +101,7 @@
             ]);
             $attentionReasons = AggregatesQuery::attentionReasons($stats);
         @endphp
-        <div class="grid md:grid-cols-[20rem_1fr]">
+        <div class="grid md:grid-cols-[22rem_1fr]">
             {{-- Left rail — identity, cadence, flags, closure hint, timing.
                 Mirrors the failed/details modal rail (border-r divider, dl
                 rows with right-aligned values). --}}

@@ -85,7 +85,7 @@
                 </div>
             </div>
         @else
-            <div class="grid md:grid-cols-[20rem_1fr]">
+            <div class="grid md:grid-cols-[22rem_1fr]">
                 {{-- Left rail — identity + progress + counts + timeline. --}}
                 <div class="border-b border-gray-950/5 p-5 md:border-b-0 md:border-r dark:border-white/10">
                     <p class="mb-3 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-300">Batch</p>

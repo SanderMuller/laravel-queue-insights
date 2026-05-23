@@ -175,7 +175,7 @@
                 </div>
             </div>
 
-            <div class="grid md:grid-cols-[20rem_1fr]">
+            <div class="grid md:grid-cols-[22rem_1fr]">
                 {{-- Left rail — run metadata description list + skip reason
                     (short, fits the rail). Mirrors the failed/details modal
                     rail for cross-modal visual consistency. --}}
