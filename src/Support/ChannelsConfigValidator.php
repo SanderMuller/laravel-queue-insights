@@ -34,6 +34,7 @@ final class ChannelsConfigValidator
         self::validateLog($channels['log'] ?? null, "{$rootPath}.log");
         self::validateSlack($channels['slack'] ?? null, "{$rootPath}.slack");
         self::validateMail($channels['mail'] ?? null, "{$rootPath}.mail");
+        self::validateSentry($channels['sentry'] ?? null, "{$rootPath}.sentry");
     }
 
     private static function validateLog(mixed $channel, string $path): void
@@ -82,6 +83,26 @@ final class ChannelsConfigValidator
             throw new QueueInsightsConfigException(
                 "queue-insights.{$path}.channel must be a string (e.g. \"#queue-alerts\") or omitted."
             );
+        }
+    }
+
+    /**
+     * The sentry channel carries no DSN/URL of its own — it captures into the
+     * host's already-initialised Sentry hub — so only the enable toggle is
+     * validated (no "required when enabled" branch like slack/mail).
+     */
+    private static function validateSentry(mixed $channel, string $path): void
+    {
+        if ($channel === null) {
+            return;
+        }
+
+        if (! is_array($channel)) {
+            throw new QueueInsightsConfigException("queue-insights.{$path} must be an array.");
+        }
+
+        if (array_key_exists('enabled', $channel) && ! is_bool($channel['enabled'])) {
+            throw new QueueInsightsConfigException("queue-insights.{$path}.enabled must be a boolean.");
         }
     }
 

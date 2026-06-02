@@ -4,6 +4,7 @@ namespace SanderMuller\QueueInsights\Alerts;
 
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\SentryAvailability;
 
 /**
  * Internal value object for the alerts pipeline. Detectors construct
@@ -70,9 +71,16 @@ final readonly class Issue
             return 'alerts.channels';
         }
 
+        // Sentry additionally requires a bound client: a scheduler-sentry-only
+        // block with no initialised hub must NOT win the root, otherwise the
+        // sentry channel is skipped at send time and the scheduler issue is
+        // left with zero channels instead of falling back to queue-side.
+        // (log/slack/mail's runtime bindings are effectively always present in
+        // a real app, so only sentry needs the availability guard here.)
         if (Config::bool('scheduler.alerts.channels.log.enabled', false)
             || Config::bool('scheduler.alerts.channels.slack.enabled', false)
-            || Config::bool('scheduler.alerts.channels.mail.enabled', false)) {
+            || Config::bool('scheduler.alerts.channels.mail.enabled', false)
+            || (Config::bool('scheduler.alerts.channels.sentry.enabled', false) && SentryAvailability::available())) {
             return 'scheduler.alerts.channels';
         }
 

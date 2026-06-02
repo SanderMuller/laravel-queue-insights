@@ -92,6 +92,18 @@ it('rejects scheduler.alerts.channels.mail.enabled with empty to[]', function ()
     })->toThrow(QueueInsightsConfigException::class, 'scheduler.alerts.channels.mail.to');
 });
 
+it('rejects a non-bool scheduler.alerts.channels.sentry.enabled', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler([
+            'alerts' => [
+                'channels' => [
+                    'sentry' => ['enabled' => 1],
+                ],
+            ],
+        ]);
+    })->toThrow(QueueInsightsConfigException::class, 'scheduler.alerts.channels.sentry.enabled');
+});
+
 it('rejects a non-string log level inside scheduler.alerts.channels.log', function (): void {
     expect(function (): void {
         ConfigValidator::validateScheduler([

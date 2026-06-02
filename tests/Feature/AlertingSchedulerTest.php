@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Route;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\LogChannel;
+use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SentryChannel;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SlackWebhookChannel;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertNotification;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
@@ -275,6 +276,39 @@ it('via() honours scheduler-domain channels when scheduler block is non-empty', 
     expect($issue)->toBe([SlackWebhookChannel::class]);
 });
 
+it('channelConfigRoot picks the scheduler block when scheduler sentry is enabled and a hub client is bound', function (): void {
+    // Scheduler-only sentry override, every other scheduler channel off, and a
+    // bound Sentry client. The sentry branch in channelConfigRoot() selects the
+    // scheduler block so a sentry-only scheduler install delivers to Sentry.
+    config()->set('queue-insights.scheduler.alerts.channels.log.enabled', false);
+    config()->set('queue-insights.scheduler.alerts.channels.slack.enabled', false);
+    config()->set('queue-insights.scheduler.alerts.channels.mail.enabled', false);
+    config()->set('queue-insights.scheduler.alerts.channels.sentry.enabled', true);
+    config()->set('queue-insights.alerts.channels.log.enabled', false);
+
+    withBoundSentryHub(function (): void {
+        $channels = (new QueueAlertNotification(schedulerIssue()))->via(new QueueInsightsNotifiable());
+
+        expect($channels)->toBe([SentryChannel::class]);
+    });
+});
+
+it('scheduler sentry enabled but no bound client falls back to queue-side channels (no blackhole)', function (): void {
+    // SDK present but unconfigured: scheduler-sentry-only must NOT win the
+    // config root, otherwise the scheduler issue resolves zero channels and the
+    // alert is silently lost. It must degrade to the queue-side block instead.
+    config()->set('queue-insights.scheduler.alerts.channels.log.enabled', false);
+    config()->set('queue-insights.scheduler.alerts.channels.slack.enabled', false);
+    config()->set('queue-insights.scheduler.alerts.channels.mail.enabled', false);
+    config()->set('queue-insights.scheduler.alerts.channels.sentry.enabled', true);
+    config()->set('queue-insights.alerts.channels.log.enabled', true);
+
+    $channels = (new QueueAlertNotification(schedulerIssue()))->via(new QueueInsightsNotifiable());
+
+    // No bound Sentry client → scheduler block does not win → queue-side log fires.
+    expect($channels)->toBe([LogChannel::class]);
+});
+
 it('via() falls back to queue-side block when scheduler block is empty', function (): void {
     // Scheduler block ABSENT — pulled from a fresh config(). The queue-side
     // log channel default-on should still drive logging for scheduler issues.
@@ -375,7 +409,7 @@ it('mail subject + Slack title prefer the human task label over the opaque task_
     $mail = $notification->toMail(new QueueInsightsNotifiable());
     $slack = $notification->toSlack(new QueueInsightsNotifiable());
 
-    expect($mail->subject)->toBe('[Queue Insights] critical: scheduled_task_missed on Export nightly reports');
+    expect($mail->subject)->toBe('[Queue Insights][testing] critical: scheduled_task_missed on Export nightly reports');
 
     $targetField = findField($slack, 'Target');
     expect($targetField)->not->toBeNull();
@@ -394,7 +428,7 @@ it('mail subject falls back to task_command when no description is set', functio
 
     $mail = (new QueueAlertNotification($issue))->toMail(new QueueInsightsNotifiable());
 
-    expect($mail->subject)->toBe('[Queue Insights] critical: scheduled_task_missed on php artisan reports:export');
+    expect($mail->subject)->toBe('[Queue Insights][testing] critical: scheduled_task_missed on php artisan reports:export');
 });
 
 it('mail subject falls back to the bare task_key when neither label is in context', function (): void {
@@ -405,7 +439,7 @@ it('mail subject falls back to the bare task_key when neither label is in contex
 
     $mail = (new QueueAlertNotification($issue))->toMail(new QueueInsightsNotifiable());
 
-    expect($mail->subject)->toBe('[Queue Insights] critical: scheduled_task_missed on PruneCache');
+    expect($mail->subject)->toBe('[Queue Insights][testing] critical: scheduled_task_missed on PruneCache');
 });
 
 /**

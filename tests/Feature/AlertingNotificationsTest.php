@@ -3,12 +3,14 @@
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\Client\Response;
 use Illuminate\Notifications\AnonymousNotifiable;
+use Illuminate\Notifications\Notification as IlluminateNotification;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Notification;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\LogChannel;
+use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SentryChannel;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SlackWebhookChannel;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueAlertNotification;
 use SanderMuller\QueueInsights\Alerts\Notifications\QueueInsightsNotifiable;
@@ -270,6 +272,137 @@ it('host can override Notifiable to route slack to a different webhook', functio
     Artisan::call('queue-insights:snapshot');
 
     Http::assertSent(fn (Request $request): bool => $request->url() === 'https://hooks.example.com/CUSTOM');
+});
+
+it('SentryChannel captures an event with the mapped level, tags, fingerprint and context', function (): void {
+    $events = withBoundSentryHub(function (): void {
+        (new SentryChannel())->send(
+            new QueueInsightsNotifiable(),
+            new QueueAlertNotification(makeDepthIssue()),
+        );
+    });
+
+    expect($events)->toHaveCount(1);
+
+    $event = $events[0];
+    expect((string) $event->getLevel())->toBe('error')
+        ->and($event->getTags())->toMatchArray([
+            'queue_insights.rule' => 'depth',
+            'queue_insights.severity' => 'critical',
+            'queue_insights.connection' => 'sqsq',
+            'queue_insights.queue' => 'work',
+        ])
+        ->and($event->getFingerprint())->toBe(['queue-insights', 'depth', 'sqsq:work'])
+        ->and($event->getContexts())->toHaveKey('queue-insights')
+        ->and($event->getContexts()['queue-insights'])->toMatchArray(['depth' => 5_000, 'detected_at' => 1_700_000_000]);
+});
+
+it('SentryChannel ignores a notification that is not a QueueAlertNotification', function (): void {
+    $events = withBoundSentryHub(function (): void {
+        (new SentryChannel())->send(
+            new QueueInsightsNotifiable(),
+            new class extends IlluminateNotification {},
+        );
+    });
+
+    expect($events)->toBeEmpty();
+});
+
+it('SentryChannel no-ops safely when the SDK is loaded but no hub client is bound', function (): void {
+    // Default test env: sentry/sentry autoloaded, but no client initialised
+    // (SentryAvailability::available() is false — asserted via the via() omission
+    // test above). send() must skip capture rather than throw or silently drop
+    // into the SDK's null-client no-op.
+    expect(fn () => (new SentryChannel())->send(
+        new QueueInsightsNotifiable(),
+        new QueueAlertNotification(makeDepthIssue()),
+    ))->not->toThrow(Throwable::class);
+});
+
+it('dispatches through the sentry channel end to end via the snapshot command', function (): void {
+    configureFiringDepth();
+    config()->set('queue-insights.alerts.channels.log.enabled', false);
+    config()->set('queue-insights.alerts.channels.slack.enabled', false);
+    config()->set('queue-insights.alerts.channels.sentry.enabled', true);
+
+    Notification::fake();
+
+    withBoundSentryHub(function (): void {
+        Artisan::call('queue-insights:snapshot');
+    });
+
+    Notification::assertSentTo(
+        new QueueInsightsNotifiable(),
+        QueueAlertNotification::class,
+        fn (QueueAlertNotification $_, array $channels): bool => in_array(SentryChannel::class, $channels, true),
+    );
+});
+
+it('via() includes the sentry channel when enabled and a hub client is bound', function (): void {
+    config()->set('queue-insights.alerts.channels.log.enabled', false);
+    config()->set('queue-insights.alerts.channels.mail.enabled', false);
+    config()->set('queue-insights.alerts.channels.slack.enabled', false);
+    config()->set('queue-insights.alerts.channels.sentry.enabled', true);
+
+    withBoundSentryHub(function (): void {
+        $notification = new QueueAlertNotification(makeDepthIssue());
+
+        expect($notification->via(new QueueInsightsNotifiable()))->toBe([SentryChannel::class]);
+    });
+});
+
+it('via() excludes sentry when enabled but no hub client is bound', function (): void {
+    // SDK present (dev dep) but no client initialised — the channel must NOT
+    // be selected, otherwise alerts route into the SDK's silent null no-op.
+    config()->set('queue-insights.alerts.channels.log.enabled', false);
+    config()->set('queue-insights.alerts.channels.sentry.enabled', true);
+
+    expect((new QueueAlertNotification(makeDepthIssue()))->via(new QueueInsightsNotifiable()))
+        ->toBeEmpty();
+});
+
+it('toSentry() maps critical severity to the error level', function (): void {
+    $payload = (new QueueAlertNotification(makeDepthIssue()))->toSentry(new QueueInsightsNotifiable());
+
+    expect($payload['level'])->toBe('error')
+        ->and($payload['message'])->toContain('[Queue Insights]')
+        ->and($payload['message'])->toContain('critical');
+});
+
+it('toSentry() maps warning severity to the warning level', function (): void {
+    $issue = new Issue(
+        rule: 'depth',
+        severity: AlertSeverity::Warning,
+        connection: 'sqsq',
+        queue: 'work',
+        jobClass: null,
+        title: 'Queue depth elevated',
+        description: 'warn',
+        context: [],
+        detectedAt: 1_700_000_000,
+    );
+
+    expect((new QueueAlertNotification($issue))->toSentry(new QueueInsightsNotifiable())['level'])
+        ->toBe('warning');
+});
+
+it('toSentry() fingerprints per rule+target so Sentry dedupes', function (): void {
+    $payload = (new QueueAlertNotification(makeDepthIssue()))->toSentry(new QueueInsightsNotifiable());
+
+    // jobClass is null on a depth issue → target is connection:queue.
+    expect($payload['fingerprint'])->toBe(['queue-insights', 'depth', 'sqsq:work']);
+});
+
+it('toSentry() filters out empty tag values and folds context into extra', function (): void {
+    $payload = (new QueueAlertNotification(makeDepthIssue()))->toSentry(new QueueInsightsNotifiable());
+
+    expect($payload['tags'])->toBe([
+        'queue_insights.rule' => 'depth',
+        'queue_insights.severity' => 'critical',
+        'queue_insights.connection' => 'sqsq',
+        'queue_insights.queue' => 'work',
+    ]) // job_class dropped (null → '')
+        ->and($payload['extra'])->toMatchArray(['depth' => 5_000, 'threshold' => 1_000, 'detected_at' => 1_700_000_000]);
 });
 
 function makeDepthIssue(): Issue

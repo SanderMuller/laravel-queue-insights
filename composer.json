@@ -54,8 +54,9 @@
         "predis/predis": "^2.2 || ^3.0",
         "rector/rector": "^2.4.1",
         "rector/type-perfect": "^2.1.2",
-        "sandermuller/boost-skills": "^1.2",
-        "sandermuller/package-boost-laravel": "^0.7",
+        "sandermuller/boost-skills": "^2.0",
+        "sandermuller/package-boost-laravel": "^0.11",
+        "sentry/sentry": "^4.23",
         "spaze/phpstan-disallowed-calls": "^4.10",
         "symplify/phpstan-extensions": "^12.0.2",
         "tomasvotruba/cognitive-complexity": "^1.1",
@@ -69,7 +70,8 @@
         "laravel-notification-channels/discord": "Optional — extend `QueueAlertNotification::via()` to add Discord routing.",
         "laravel-notification-channels/microsoft-teams": "Optional — extend `QueueAlertNotification::via()` to add Microsoft Teams routing.",
         "laravel-notification-channels/pagerduty": "Optional — extend `QueueAlertNotification::via()` to add PagerDuty incident routing.",
-        "laravel-notification-channels/telegram": "Optional — extend `QueueAlertNotification::via()` to add Telegram routing."
+        "laravel-notification-channels/telegram": "Optional — extend `QueueAlertNotification::via()` to add Telegram routing.",
+        "sentry/sentry-laravel": "Required only when the sentry alert channel is enabled (provides the initialised Sentry hub the channel captures into; wires the DSN from SENTRY_LARAVEL_DSN)."
     },
     "autoload": {
         "psr-4": {

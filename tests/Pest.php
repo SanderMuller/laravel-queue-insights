@@ -4,6 +4,13 @@ use DG\BypassFinals;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Tests\TestCase;
+use Sentry\ClientBuilder;
+use Sentry\Event as SentryEvent;
+use Sentry\SentrySdk;
+use Sentry\State\Hub;
+use Sentry\Transport\Result;
+use Sentry\Transport\ResultStatus;
+use Sentry\Transport\TransportInterface;
 
 // Strip `final` from a tightly-scoped allowlist of package classes
 // during the test run so Mockery can substitute `final readonly class`
@@ -42,4 +49,50 @@ function seedStream(RedisConnection $redis, string $key, array $fields, string $
         $id,
         ...$flat,
     );
+}
+
+/**
+ * Run $send against a spy Sentry hub that has a bound client (a no-op
+ * transport recording sent events) and return the captured events. The test
+ * environment installs no Sentry hub by default — `SentryAvailability::available()`
+ * is false until a client is bound — so any test exercising the sentry channel's
+ * available path must run inside this helper. The process-global hub is always
+ * restored, even when $send throws.
+ *
+ * @param  Closure():void  $send
+ * @return list<SentryEvent>
+ */
+function withBoundSentryHub(Closure $send): array
+{
+    $transport = new class implements TransportInterface {
+        /** @var list<SentryEvent> */
+        public array $events = [];
+
+        public function send(SentryEvent $event): Result
+        {
+            $this->events[] = $event;
+
+            return new Result(ResultStatus::success(), $event);
+        }
+
+        public function close(?int $timeout = null): Result
+        {
+            return new Result(ResultStatus::success());
+        }
+    };
+
+    $client = ClientBuilder::create(['dsn' => 'https://public@sentry.example.test/1'])
+        ->setTransport($transport)
+        ->getClient();
+
+    $previous = SentrySdk::getCurrentHub();
+    SentrySdk::setCurrentHub(new Hub($client));
+
+    try {
+        $send();
+    } finally {
+        SentrySdk::setCurrentHub($previous);
+    }
+
+    return $transport->events;
 }

@@ -164,6 +164,35 @@ function alertChannelDetail(string $key, AlertRulesPanelBuilder $builder): strin
     throw new RuntimeException("Channel {$key} not in panel");
 }
 
+it('channels panel includes a sentry row that reads disabled by default', function (): void {
+    config()->set('queue-insights.alerts.channels.sentry.enabled', false);
+
+    expect(alertChannelDetail('sentry', new AlertRulesPanelBuilder()))->toBe('disabled');
+});
+
+it('channels detail reports hub-not-configured when sentry is enabled but no client is bound', function (): void {
+    if (! function_exists('Sentry\captureMessage')) {
+        $this->markTestSkipped('sentry/sentry not installed; this state is reported as SDK not installed instead');
+    }
+
+    // SDK loaded (dev dep) but the default test env binds no Sentry client.
+    config()->set('queue-insights.alerts.channels.sentry.enabled', true);
+
+    expect(alertChannelDetail('sentry', new AlertRulesPanelBuilder()))->toBe('hub not configured');
+});
+
+it('channels detail reports capturing-to-host-hub when sentry is enabled and a client is bound', function (): void {
+    if (! function_exists('Sentry\captureMessage')) {
+        $this->markTestSkipped('sentry/sentry not installed; SDK-present detail unreachable');
+    }
+
+    config()->set('queue-insights.alerts.channels.sentry.enabled', true);
+
+    withBoundSentryHub(function (): void {
+        expect(alertChannelDetail('sentry', new AlertRulesPanelBuilder()))->toBe('capturing to host hub');
+    });
+});
+
 it('channels detail surfaces the configured slack channel label', function (): void {
     config()->set('queue-insights.alerts.channels.slack.enabled', true);
     config()->set('queue-insights.alerts.channels.slack.webhook_url', 'https://hooks.slack.com/services/T0DEMO/B0DEMO/secret');

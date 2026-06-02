@@ -54,9 +54,9 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Retry badge** — pending, in-flight, and completed rows render an orange `retry N` chip with hover tooltip when the worker has picked the job up more than once. Backed by `attempts` stamped on the `pending:{uuid}` hash at `JobProcessing`.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
-- **Alerting** — nine detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing, connection-drift) with per-rule cooldown + `log` / `slack` / `mail` channels + typed events.
+- **Alerting** — nine detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing, connection-drift) with per-rule cooldown + `log` / `slack` / `mail` / `sentry` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
-- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
+- **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail / sentry; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
 - **Horizon integration** — supervisor queue auto-discovery from `horizon.environments`, `horizon.silenced` merged into our suppression filter, operator-declared `connection_aliases` collapses dispatcher/worker connection drift onto a canonical key.
 - **Light / dark / system theme** with a tri-state toggle in the header. Persists per operator; default follows OS `prefers-color-scheme`.
 - **12h / 24h clock toggle** in the header (12h / auto / 24h). `auto` follows browser locale + OS 24-hour preference. Persists per operator.
@@ -600,6 +600,7 @@ Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}
         'log' => ['enabled' => true, 'level' => 'warning'],
         'slack' => ['enabled' => false, 'webhook_url' => env('QUEUE_INSIGHTS_SLACK_WEBHOOK')],
         'mail' => ['enabled' => false, 'to' => ['ops@example.com']],
+        'sentry' => ['enabled' => false],
     ],
 ],
 ```
@@ -609,13 +610,14 @@ Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}
 
 ### Notification channels
 
-The package ships three channels out of the box:
+The package ships four channels out of the box:
 
 - **`log`** — zero-dep, on by default; one structured log line per issue at the configured level (`alerts.channels.log.level`).
 - **`slack`** — `Http::post` to a Slack-compatible incoming webhook (works with Slack, Mattermost, Rocket.Chat). Block Kit payload with severity-coloured attachment; falls back to plain `text` if the receiver rejects Block Kit. Set `QUEUE_INSIGHTS_SLACK_WEBHOOK` and `alerts.channels.slack.enabled = true`. `QUEUE_INSIGHTS_SLACK_CHANNEL` (queue alerts) and `QUEUE_INSIGHTS_SCHEDULER_SLACK_CHANNEL` (scheduler alerts) are optional display labels surfaced in the dashboard's alert-rules panel — they don't override the webhook's destination, since Slack incoming-webhooks bind the channel server-side at creation time.
 - **`mail`** — uses Laravel's first-party mail channel; subject prefix `[Queue Insights] {severity}: {rule} on {target}`. Recipients from `alerts.channels.mail.to` (array of addresses).
+- **`sentry`** — captures each issue into your application's existing Sentry project as a grouped event. No DSN config here: the channel uses whatever Sentry hub the host has initialised. Recommended setup is [`sentry/sentry-laravel`](https://github.com/getsentry/sentry-laravel) with `SENTRY_LARAVEL_DSN` set (any initialised `sentry/sentry` hub works too); then set `alerts.channels.sentry.enabled = true`. Severity maps fixed — `critical → error`, `warning → warning` — and events fingerprint per `[queue-insights, rule, target]` so Sentry groups one issue per rule+target instead of opening a new one each snapshot tick. Tags (`queue_insights.rule`/`severity`/`connection`/`queue`/`job_class`) and the full issue context (as a `queue-insights` context block) ride along.
 
-Both `slack` and `mail` feature-detect the underlying binding (`Illuminate\Http\Client\Factory` and `mail.manager` respectively) — if the binding is missing they're silently skipped.
+`slack`, `mail`, and `sentry` feature-detect their underlying dependency (`Illuminate\Http\Client\Factory`, `mail.manager`, and — for sentry — a *bound* Sentry hub client, not merely the loaded SDK) — if it's missing the channel is silently skipped, and the dashboard's alert-rules panel shows the reason (sentry's row reads `SDK not installed` when the package is absent, or `hub not configured` when the SDK is present but no DSN/hub is initialised). Because sentry requires a live client, a misconfigured scheduler-sentry-only setup falls back to the queue-side channels rather than dropping the alert.
 
 ### Adding more channels (Discord, Teams, PagerDuty, Telegram, …)
 
@@ -928,7 +930,7 @@ SanderMuller\QueueInsights\Events\ScheduledTaskHung     { taskKey, runId, task?,
 SanderMuller\QueueInsights\Events\ScheduledTaskFailed   { taskKey, runId, task, … }
 ```
 
-Scheduler alerts route through the same `QueueAlertNotification` pipeline as queue alerts — `log` / `slack` / `mail` channels, Spatie-style notifiable, host-extensible. Operators get one mental model and one set of channels to wire.
+Scheduler alerts route through the same `QueueAlertNotification` pipeline as queue alerts — `log` / `slack` / `mail` / `sentry` channels, Spatie-style notifiable, host-extensible. Operators get one mental model and one set of channels to wire.
 
 #### Per-domain channel routing
 

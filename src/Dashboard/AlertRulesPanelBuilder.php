@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Date;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\SentryAvailability;
 
 /**
  * Read-only resolved view of `alerts.rules` + `alerts.channels` for the
@@ -284,10 +285,19 @@ final readonly class AlertRulesPanelBuilder
             default => sprintf('webhook: %s', $this->slackWebhookFingerprint($slackUrl)),
         };
 
+        $sentryEnabled = Config::bool('alerts.channels.sentry.enabled', false);
+        $sentryDetail = match (true) {
+            ! $sentryEnabled => 'disabled',
+            ! function_exists('Sentry\captureMessage') => 'SDK not installed',
+            ! SentryAvailability::available() => 'hub not configured',
+            default => 'capturing to host hub',
+        };
+
         return [
             ['key' => 'log', 'enabled' => $log, 'detail' => "level: {$level}"],
             ['key' => 'mail', 'enabled' => $mailEnabled, 'detail' => $mailDetail],
             ['key' => 'slack', 'enabled' => $slackEnabled, 'detail' => $slackDetail],
+            ['key' => 'sentry', 'enabled' => $sentryEnabled, 'detail' => $sentryDetail],
         ];
     }
 

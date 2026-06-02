@@ -164,6 +164,22 @@ it('rejects mail channel enabled with empty to', function (): void {
     ]))->toThrow(QueueInsightsConfigException::class, 'mail.to');
 });
 
+it('rejects a non-bool sentry channel enabled flag', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'channels' => [
+            'sentry' => ['enabled' => 'yes'],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'alerts.channels.sentry.enabled must be a boolean');
+});
+
+it('accepts a bool sentry channel enabled flag', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'channels' => [
+            'sentry' => ['enabled' => true],
+        ],
+    ]))->not->toThrow(QueueInsightsConfigException::class);
+});
+
 it('rejects a non-int depth threshold value', function (): void {
     expect(fn () => ConfigValidator::validateAlerts([
         'thresholds' => [

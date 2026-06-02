@@ -318,6 +318,16 @@ return [
                 'enabled' => false,
                 'to' => [],
             ],
+            'sentry' => [
+                // No DSN here — this channel captures into whatever Sentry hub
+                // the host app already has initialised. The recommended setup
+                // is sentry/sentry-laravel with SENTRY_LARAVEL_DSN set; install
+                // that, then flip this on. Any initialised sentry/sentry hub
+                // works too. Severity maps fixed: critical → error, warning →
+                // warning. Events fingerprint per rule+target so Sentry groups
+                // them instead of opening a new issue per snapshot tick.
+                'enabled' => false,
+            ],
         ],
     ],
 
@@ -639,6 +649,12 @@ return [
                 'mail' => [
                     'enabled' => false,
                     'to' => [],
+                ],
+                'sentry' => [
+                    // Captures scheduler-domain alerts into the host's Sentry
+                    // hub. Same fixed severity map + fingerprint behaviour as
+                    // the queue-side sentry channel.
+                    'enabled' => false,
                 ],
             ],
         ],

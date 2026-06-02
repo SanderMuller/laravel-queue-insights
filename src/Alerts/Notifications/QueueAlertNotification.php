@@ -8,9 +8,11 @@ use Illuminate\Notifications\Notification;
 use Illuminate\Support\Facades\URL;
 use SanderMuller\QueueInsights\Alerts\Issue;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\LogChannel;
+use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SentryChannel;
 use SanderMuller\QueueInsights\Alerts\Notifications\Channels\SlackWebhookChannel;
 use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\SentryAvailability;
 use Throwable;
 
 /**
@@ -52,6 +54,10 @@ class QueueAlertNotification extends Notification
             $channels[] = SlackWebhookChannel::class;
         }
 
+        if (Config::bool("{$root}.sentry.enabled", false) && $this->sentryAvailable()) {
+            $channels[] = SentryChannel::class;
+        }
+
         return $channels;
     }
 
@@ -59,7 +65,9 @@ class QueueAlertNotification extends Notification
     {
         $target = $this->issueTarget();
 
-        $subject = "[Queue Insights] {$this->issue->severity->value}: {$this->issue->rule} on {$target}";
+        $environment = app()->environment();
+
+        $subject = "[Queue Insights][{$environment}] {$this->issue->severity->value}: {$this->issue->rule} on {$target}";
 
         $message = (new MailMessage())
             ->subject($subject)
@@ -91,6 +99,7 @@ class QueueAlertNotification extends Notification
     {
         $colour = $this->issue->severity === AlertSeverity::Critical ? '#dc2626' : '#f59e0b';
         $target = $this->issueTarget();
+        $environment = app()->environment();
 
         $fields = [
             ['title' => 'Rule', 'value' => $this->issue->rule, 'short' => true],
@@ -110,7 +119,7 @@ class QueueAlertNotification extends Notification
         }
 
         return [
-            'text' => "[{$this->issue->severity->value}] {$this->issueIcon()} {$this->issue->title}",
+            'text' => "[{$environment}][{$this->issue->severity->value}] {$this->issueIcon()} {$this->issue->title}",
             'attachments' => [[
                 'color' => $colour,
                 'title' => $this->issue->title,
@@ -118,6 +127,42 @@ class QueueAlertNotification extends Notification
                 'fields' => $fields,
                 'ts' => $this->issue->detectedAt,
             ]],
+        ];
+    }
+
+    /**
+     * Sentry capture descriptor. Returned as a plain array so it stays pure +
+     * host-overridable (no SDK calls here); `SentryChannel` translates it into
+     * `withScope` + `captureMessage`. The fingerprint mirrors the cooldown-key
+     * shape (`Issue::cooldownKeySuffix`) so Sentry groups one issue per
+     * (rule, target) instead of a new issue per snapshot tick.
+     *
+     * @return array{
+     *   level: 'warning'|'error',
+     *   message: string,
+     *   fingerprint: list<string>,
+     *   tags: array<string, string>,
+     *   extra: array<string, mixed>,
+     * }
+     */
+    public function toSentry(object $notifiable): array
+    {
+        $target = $this->issueTarget();
+
+        $tags = array_filter([
+            'queue_insights.rule' => $this->issue->rule,
+            'queue_insights.severity' => $this->issue->severity->value,
+            'queue_insights.connection' => $this->issue->connection,
+            'queue_insights.queue' => $this->issue->queue,
+            'queue_insights.job_class' => $this->issue->jobClass ?? '',
+        ], static fn (string $value): bool => $value !== '');
+
+        return [
+            'level' => $this->issue->severity === AlertSeverity::Critical ? 'error' : 'warning',
+            'message' => "[Queue Insights] {$this->issue->severity->value}: {$this->issue->title}",
+            'fingerprint' => ['queue-insights', $this->issue->rule, $target],
+            'tags' => $tags,
+            'extra' => $this->issue->context + ['detected_at' => $this->issue->detectedAt],
         ];
     }
 
@@ -205,6 +250,11 @@ class QueueAlertNotification extends Notification
     private function httpAvailable(): bool
     {
         return app()->bound(Factory::class);
+    }
+
+    private function sentryAvailable(): bool
+    {
+        return SentryAvailability::available();
     }
 
     /**
