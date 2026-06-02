@@ -4,6 +4,21 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.23.0 - 2026-06-02
+
+<!-- verified-sha: ee19b09ac8df405a72d0986902f1dbb269596609 -->
+### What's changed
+
+#### Added
+
+- New **`sentry` alert channel**. When enabled, each cooldown-gated alert is captured into your application's existing Sentry project as a grouped event — severity mapped (`critical → error`, `warning → warning`), tagged by rule / connection / queue / job class, and fingerprinted per `[queue-insights, rule, target]` so Sentry collapses repeats into one issue with a rising event count instead of opening a fresh issue every snapshot tick. The full alert context rides along as a `queue-insights` context block. No DSN lives in the package: the channel captures into whatever Sentry hub the host has already initialised — install [`sentry/sentry-laravel`](https://github.com/getsentry/sentry-laravel), set `SENTRY_LARAVEL_DSN`, then flip `alerts.channels.sentry.enabled` (a matching `scheduler.alerts.channels.sentry` block routes scheduler alerts to the same place). The channel only fires when a Sentry client is actually bound — not merely when the SDK is installed — so a half-configured SDK can't silently swallow alerts: the dashboard's alert-rules panel reports the live state (`disabled` / `SDK not installed` / `hub not configured` / `capturing to host hub`), and a scheduler-sentry-only block with no bound client falls back to the queue-side channels rather than dropping the alert. Host apps can reshape the payload by overriding `QueueAlertNotification::toSentry()`.
+
+#### Internal
+
+- Restored PHPStan compatibility with Symfony 8 / Laravel 13.12. The supported range (`illuminate/* ^11||^12||^13`) now resolves Symfony 8 on a fresh install, which tightened several array-shape inferences; aligned the affected PHPDoc shapes (scheduler task-summary, pending-job rows, schedule aggregates, dashboard panel) and scope-ignored one upstream Testbench PHPDoc mismatch (`Application::create()` reads `enables_package_discoveries` but types it `enabled_…`). No runtime behaviour change.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.22.0...0.23.0
+
 ## 0.22.0 - 2026-05-23
 
 ### What's changed
@@ -53,6 +68,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   ```bash
   # .env
   QUEUE_INSIGHTS_REDIS_MEMORY_TILE=true
+  
   
   
   
@@ -107,6 +123,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -129,6 +146,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -297,6 +315,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -525,6 +544,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -645,6 +665,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -680,6 +701,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -814,6 +836,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
