@@ -54,8 +54,8 @@ it('build renders "(none)" for the depth row when no thresholds match the scope'
 });
 
 /**
- * @param  array{rules: list<array{key: string, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}>, ...}  $panel
- * @return array{key: string, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}
+ * @param  array{rules: list<array{key: string, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>, ...}>, ...}  $panel
+ * @return array{key: string, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>, ...}
  */
 function alertRuleRow(array $panel, string $key): array
 {

@@ -20,7 +20,7 @@ final class PendingJobsReader
      * Min/max use Redis ZRANGEBYSCORE syntax — `-inf`, `+inf`, or `(N` for
      * exclusive bounds.
      *
-     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, ...}>
      */
     public static function readZset(string $connection, string $queue, string $min, string $max, int $limit): array
     {
@@ -411,7 +411,7 @@ final class PendingJobsReader
      * `pending:{uuid}` hash has been raced out from under us by a worker.
      *
      * @param  list<string>  $uuids
-     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, ...}>
      */
     public static function hydrate(array $uuids): array
     {
@@ -456,7 +456,7 @@ final class PendingJobsReader
     }
 
     /**
-     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int, origin: ?string, call_site: ?string, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string}|null
+     * @return array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, attempts: ?int, origin: ?string, call_site: ?string, payload_body: ?string, payload_displayName: ?string, payload_maxTries: ?string, payload_timeout: ?string, payload_backoff: ?string, payload_note: ?string, payload_reason: ?string, payload_error: ?string, payload_size: ?string, ...}|null
      */
     private static function readHash(string $uuid): ?array
     {

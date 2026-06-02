@@ -203,6 +203,23 @@ parameters:
             identifier: disallowed.function
             path: tests/Fixtures/SnapshotterRaceRunner.php
             reportUnmatched: false
+        # Upstream Testbench PHPDoc bug: `Application::configure()` reads the
+        # option key `enables_package_discoveries` at runtime
+        # (testbench-core Foundation/Application.php — `isset($options['enables_package_discoveries'])`),
+        # but its `create()` PHPDoc types the option as `enabled_package_discoveries`.
+        # Our fixtures pass the runtime-correct `enables_…` key (renaming to the
+        # typed `enabled_…` would make Testbench silently ignore it, so package
+        # discovery would not be disabled and the fixture boot would fail on the
+        # missing `livewire.finder` binding). No value satisfies both the type
+        # and the runtime, so we scope-ignore the type error on these two files
+        # until the upstream PHPDoc is corrected. Mirrors the Livewire-generics
+        # cross-version exception above.
+        -
+            message: '#Application::create\(\) expects .* array\{enables_package_discoveries: false\} given\.#'
+            paths:
+                - tests/Fixtures/SnapshotterRaceRunner.php
+                - tests/Fixtures/SupervisorLauncher.php
+            reportUnmatched: false
         -
             identifier: staticMethod.void
             path: tests/Feature/QueueInsightsWorkSignalTest.php

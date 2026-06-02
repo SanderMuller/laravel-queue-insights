@@ -456,7 +456,7 @@ final readonly class IssueDispatcher
      * out of the operator-facing payload.
      *
      * @param  array<string, mixed>  $context
-     * @param  ?array{description: ?string, command: string, expression: string, timezone: ?string, type: 'command'|'closure'|'exec', mutexName: string}  $summary
+     * @param  ?array{description: ?string, command: string, expression: string, timezone: ?string, type: 'command'|'closure'|'exec', mutexName: string, ...}  $summary
      * @return array<string, mixed>
      */
     private function mergeTaskSummary(array $context, ?array $summary): array

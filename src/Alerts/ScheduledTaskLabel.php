@@ -81,7 +81,7 @@ final class ScheduledTaskLabel
     }
 
     /**
-     * @param  ?array{description: ?string, command: string, type: 'command'|'closure'|'exec'}  $summary
+     * @param  ?array{description: ?string, command: string, type: 'command'|'closure'|'exec', ...}  $summary
      */
     private static function label(?array $summary, string $taskKey): string
     {

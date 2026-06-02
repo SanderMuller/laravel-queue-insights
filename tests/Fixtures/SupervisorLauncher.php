@@ -86,6 +86,7 @@ $factory = new readonly class ($stubEnv, $packageRoot) implements WorkerProcessF
 
     public function make(string $connection, array $queues, array $forwardedFlags): Process
     {
+        /** @var array<string, string|Stringable|false> $env */
         $env = is_array($this->envSpec) && isset($this->envSpec[$connection]) && is_array($this->envSpec[$connection])
             ? $this->envSpec[$connection]
             : [];

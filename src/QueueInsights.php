@@ -257,7 +257,7 @@ final class QueueInsights
      * hash. Driver-agnostic — works for Redis, Database, AND SQS because
      * the data lives entirely in our Redis namespace.
      *
-     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, ...}>
      */
     public function pendingJobs(string $connection, string $queue, int $limit = 50): array
     {
@@ -273,7 +273,7 @@ final class QueueInsights
     /**
      * Delayed jobs (available_at > now) for a queue, soonest-first.
      *
-     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}>
+     * @return list<array{uuid: string, class: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, ...}>
      */
     public function delayedJobs(string $connection, string $queue, int $limit = 50): array
     {
@@ -309,7 +309,7 @@ final class QueueInsights
      * pending hash twice in one render to catch a retry race — the second
      * read can return a different value than the first.
      *
-     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int}|null
+     * @return array{uuid: string, class: string, connection: string, queue: string, queued_at: int, available_at: int, batch_id: ?string, state: ?string, started_at: ?int, ...}|null
      *
      * @phpstan-impure
      */

@@ -46,7 +46,7 @@ final class AggregatesQuery
      * panel doesn't re-fetch them after walking the same task list for
      * its needs-attention/healthy split.
      *
-     * @param  list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}}>  $tasksWithStats
+     * @param  list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}, ...}>  $tasksWithStats
      * @return array{
      *   runs_24h: int,
      *   failed_24h: int,
@@ -130,7 +130,7 @@ final class AggregatesQuery
      * Returns an ordered list (failed → hung → missed) so the modal renders
      * the most-severe condition first. Empty list ⇔ task is healthy.
      *
-     * @param  array{failed: int, hung: int, missed: int}  $stats
+     * @param  array{failed: int, hung: int, missed: int, ...}  $stats
      * @return list<array{kind: string, count: int}>
      */
     public static function attentionReasons(array $stats): array
