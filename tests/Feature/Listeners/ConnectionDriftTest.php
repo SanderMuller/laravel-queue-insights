@@ -11,7 +11,6 @@ use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
-use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -138,7 +137,7 @@ it('reconciles queued→failed lifecycle under aliases', function (): void {
     (new RecordJobQueued())->handle(driftPendingEvent($uuid, 'redis'));
 
     $event = new JobFailed(connectionName: 'redis-staging', job: driftJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
         ->and(R::int('zcard', 'qmtest:pending-zset:redis-staging:premium-calculator'))->toBe(0);
@@ -200,7 +199,7 @@ it('routes per-class failed-total counter through the canonical side on JobFaile
 
     (new RecordJobQueued())->handle(driftPendingEvent($uuid, 'redis'));
     $event = new JobFailed(connectionName: 'redis-staging', job: driftJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     // KeyPrefix::classKey('failed-total', $class, $connection) canonicalises.
     expect(R::int('exists', 'qmtest:failed-total:App\\Jobs\\Premium\\CalculatePremium:redis-staging'))->toBe(1)

@@ -254,6 +254,26 @@ return [
                 'severity' => AlertSeverity::Warning->value,
             ],
 
+            /*
+             | Per-job failure alert. Fires once on a job's FINAL failure
+             | (retries exhausted) — the spatie/laravel-failed-job-monitor
+             | use case, but with cooldown, silencing, and multi-channel
+             | routing. Event-driven (no detector): dispatched straight from
+             | the `JobFailed` listener, so it works on ANY queue driver with
+             | no Redis snapshot needed.
+             |
+             | `notify => false` keeps the `JobFailedAlert` event firing while
+             | skipping this rule's synchronous package channels — for
+             | high-volume apps that prefer to listen to the event and dispatch
+             | their own async notification. See the worker hot-path note in
+             | the README's alerting section.
+             */
+            'job_failed' => [
+                'enabled' => false,
+                'severity' => AlertSeverity::Warning->value,
+                'notify' => true,
+            ],
+
             'slow_p95' => [
                 'enabled' => false,
                 // Per-class opt-in: ['App\Jobs\Foo' => 30000]

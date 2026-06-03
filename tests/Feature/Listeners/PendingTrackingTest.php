@@ -15,7 +15,6 @@ use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
-use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -271,7 +270,7 @@ it('RecordJobFailed cleans pending tracking as belt-and-suspenders', function ()
     (new RecordJobQueued())->handle(makePendingEvent($uuid, 'redis', 'work'));
 
     $event = new JobFailed(connectionName: 'redis', job: makePendingJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
         ->and(R::int('zcard', 'qmtest:pending-zset:redis:work'))
@@ -287,7 +286,7 @@ it('RecordJobFailed stamps failed-runtime:{uuid} when start:{uuid} was set', fun
         ->command('set', ['qmtest:start:' . $uuid, (string) $start]);
 
     $event = new JobFailed(connectionName: 'redis', job: makePendingJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     $runtimeMs = (int) (R::str('get', 'qmtest:failed-runtime:' . $uuid) ?? '');
     expect($runtimeMs)->toBeGreaterThanOrEqual(200)
@@ -300,7 +299,7 @@ it('RecordJobFailed skips failed-runtime:{uuid} when start:{uuid} is absent', fu
     $uuid = '01ARZ3NDEKTSV4RRFFQ69NOSTRT';
 
     $event = new JobFailed(connectionName: 'redis', job: makePendingJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:failed-runtime:' . $uuid))->toBe(0);
 });

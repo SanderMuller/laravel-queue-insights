@@ -54,8 +54,8 @@ it('build renders "(none)" for the depth row when no thresholds match the scope'
 });
 
 /**
- * @param  array{rules: list<array{key: string, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>, ...}>, ...}  $panel
- * @return array{key: string, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>, ...}
+ * @param  array{rules: list<array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}>, ...}  $panel
+ * @return array{key: string, enabled: bool, severity: ?AlertSeverity, params: list<array{label: string, value: string}>, firing_count: int, firing_severity: ?AlertSeverity, firing_issues: list<array{target: string, target_type: string, title: string, description: string, severity: AlertSeverity, age_seconds: int, context: array<string, scalar>}>}
  */
 function alertRuleRow(array $panel, string $key): array
 {
@@ -219,4 +219,21 @@ it('channels detail falls back to a non-secret webhook hash when no channel labe
     foreach (['abcd', 'EFGH', 'ijkl', 'MNOP', 'qrst', 'UVWX', 'yz12'] as $secretSlice) {
         expect(str_contains($detail, $secretSlice))->toBeFalse();
     }
+});
+
+it('surfaces the job_failed notify mode as "channels + event" by default', function (): void {
+    $row = alertRuleRow((new AlertRulesPanelBuilder())->build(), 'job_failed');
+
+    expect($row['enabled'])->toBeFalse()
+        ->and($row['params'][0]['label'])->toBe('notify')
+        ->and($row['params'][0]['value'])->toBe('channels + event');
+});
+
+it('surfaces the job_failed notify mode as "event only" when notify is false', function (): void {
+    config()->set('queue-insights.alerts.rules.job_failed', ['enabled' => true, 'notify' => false]);
+
+    $row = alertRuleRow((new AlertRulesPanelBuilder())->build(), 'job_failed');
+
+    expect($row['enabled'])->toBeTrue()
+        ->and($row['params'][0]['value'])->toBe('event only (no channels)');
 });

@@ -208,6 +208,46 @@ it('rejects ratio outside [0, 1]', function (): void {
     ]))->toThrow(QueueInsightsConfigException::class, 'ratio');
 });
 
+it('accepts a well-formed job_failed rule', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'job_failed' => ['enabled' => true, 'notify' => false, 'severity' => 'critical'],
+        ],
+    ]))->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-bool job_failed.notify', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'job_failed' => ['notify' => 'yes'],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'alerts.rules.job_failed.notify must be a boolean');
+});
+
+it('rejects a non-bool job_failed.enabled', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'job_failed' => ['enabled' => 'yes'],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'alerts.rules.job_failed.enabled must be a boolean');
+});
+
+it('rejects an invalid job_failed.severity', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'job_failed' => ['severity' => 'urgent'],
+        ],
+    ]))->toThrow(QueueInsightsConfigException::class, 'warning, critical');
+});
+
+it('tolerates a published config missing the job_failed key', function (): void {
+    expect(fn () => ConfigValidator::validateAlerts([
+        'rules' => [
+            'failure_rate' => ['enabled' => true],
+        ],
+    ]))->not->toThrow(Throwable::class);
+});
+
 it('accepts a well-formed retention block (or empty defaults)', function (): void {
     // No assertion — both calls returning without exception IS the assertion.
     // Throwing would fail the test; reaching the end means validation passed.

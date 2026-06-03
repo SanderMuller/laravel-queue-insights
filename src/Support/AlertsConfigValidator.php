@@ -78,6 +78,7 @@ final class AlertsConfigValidator
         self::validateOldestPendingRule($rules['oldest_pending'] ?? null);
         self::validateStuckInFlightRule($rules['stuck_inflight'] ?? null);
         self::validateFailureRateRule($rules['failure_rate'] ?? null);
+        self::validateJobFailedRule($rules['job_failed'] ?? null);
         self::validateSlowP95Rule($rules['slow_p95'] ?? null);
         self::validateSnapshotErroredRule($rules['snapshot_errored'] ?? null);
         self::validateBacklogGrowingRule($rules['backlog_growing'] ?? null);
@@ -207,6 +208,21 @@ final class AlertsConfigValidator
         }
 
         self::assertOptionalSeverity($rule, 'severity', 'alerts.rules.failure_rate.severity');
+    }
+
+    private static function validateJobFailedRule(mixed $rule): void
+    {
+        if ($rule === null) {
+            return;
+        }
+
+        if (! is_array($rule)) {
+            throw new QueueInsightsConfigException('queue-insights.alerts.rules.job_failed must be an array.');
+        }
+
+        self::assertOptionalBool($rule, 'enabled', 'alerts.rules.job_failed.enabled');
+        self::assertOptionalBool($rule, 'notify', 'alerts.rules.job_failed.notify');
+        self::assertOptionalSeverity($rule, 'severity', 'alerts.rules.job_failed.severity');
     }
 
     private static function validateSlowP95Rule(mixed $rule): void

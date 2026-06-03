@@ -33,6 +33,7 @@ final readonly class AlertRulesPanelBuilder
         'oldest_pending' => true,
         'stuck_inflight' => true,
         'failure_rate' => true,
+        'job_failed' => false,
         'slow_p95' => false,
         'snapshot_errored' => true,
         'backlog_growing' => false,
@@ -76,7 +77,7 @@ final readonly class AlertRulesPanelBuilder
         $rules = Config::array('alerts.rules');
 
         $out = [];
-        foreach (['depth', 'stalled', 'oldest_pending', 'stuck_inflight', 'failure_rate', 'slow_p95', 'snapshot_errored', 'backlog_growing', 'connection_drift'] as $key) {
+        foreach (['depth', 'stalled', 'oldest_pending', 'stuck_inflight', 'failure_rate', 'job_failed', 'slow_p95', 'snapshot_errored', 'backlog_growing', 'connection_drift'] as $key) {
             $candidate = $rules[$key] ?? null;
             /** @var array<string, mixed> $rule */
             $rule = is_array($candidate) ? $candidate : [];
@@ -189,6 +190,11 @@ final readonly class AlertRulesPanelBuilder
             'failure_rate' => [
                 ['label' => 'min_jobs', 'value' => $this->scalar($rule['min_jobs'] ?? null)],
                 ['label' => 'ratio', 'value' => $this->scalar($rule['ratio'] ?? null)],
+            ],
+            'job_failed' => [
+                // Surface the notify mode so the read-only panel can't mislead:
+                // notify=false is "event-only", no package channels fire.
+                ['label' => 'notify', 'value' => ($rule['notify'] ?? true) === false ? 'event only (no channels)' : 'channels + event'],
             ],
             'slow_p95' => [
                 ['label' => 'classes', 'value' => $this->formatClassThresholds($rule)],

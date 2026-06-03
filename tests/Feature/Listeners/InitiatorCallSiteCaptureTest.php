@@ -12,7 +12,6 @@ use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
 use SanderMuller\QueueInsights\Support\CallSiteResolver;
 use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
-use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Support\RowEnricher;
 use SanderMuller\QueueInsights\Tests\Support\InitiatorDispatchingJob;
 use SanderMuller\QueueInsights\Tests\Support\R;
@@ -217,7 +216,7 @@ it('RecordJobFailed persists call_site into qi:initiator:{uuid}', function (): v
     // RecordJobQueued already stamped call_site queue-side.
     (new RecordJobQueued())->handle(makeCallSiteQueuedEvent($uuid));
 
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle(
+    resolve(RecordJobFailed::class)->handle(
         new JobFailed(connectionName: 'redis', job: makeCallSiteJobMock($uuid), exception: new RuntimeException('boom')),
     );
 

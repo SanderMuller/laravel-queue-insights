@@ -14,6 +14,7 @@ use SanderMuller\QueueInsights\Enums\AlertSeverity;
 use SanderMuller\QueueInsights\Events\BacklogGrowing;
 use SanderMuller\QueueInsights\Events\JobClassFailureRateExceeded;
 use SanderMuller\QueueInsights\Events\JobClassP95Exceeded;
+use SanderMuller\QueueInsights\Events\JobFailedAlert;
 use SanderMuller\QueueInsights\Events\OldestPendingAging;
 use SanderMuller\QueueInsights\Events\QueueDepthExceeded;
 use SanderMuller\QueueInsights\Events\QueueStalled;
@@ -224,13 +225,7 @@ final readonly class IssueDispatcher
 
     private function handle(Issue $issue): void
     {
-        // Silencing is failure-noise scoped, not perf — slow_p95 also sets
-        // jobClass but stays unfiltered (silenced-jobs spec §1). Place
-        // BEFORE cooldown::acquire — guarding inside fireEvent burns the
-        // cooldown and notify() still fires.
-        if ($issue->rule === FailureRateDetector::RULE
-            && $issue->jobClass !== null && $issue->jobClass !== ''
-            && $this->container->make(SilencedJobs::class)->isSilenced($issue->jobClass)) {
+        if ($this->isSilenced($issue)) {
             return;
         }
 
@@ -240,6 +235,105 @@ final readonly class IssueDispatcher
 
         $this->safelyFireEvent($issue);
         $this->notify($issue);
+    }
+
+    /**
+     * Shared silencing predicate. Silencing is failure-noise scoped, not perf —
+     * `slow_p95` also sets `jobClass` but stays unfiltered (silenced-jobs spec
+     * §1). Evaluated BEFORE `cooldown::acquire` — guarding later would burn the
+     * cooldown while notify() still fired. Covers the poll-driven `failure_rate`
+     * rule and the event-driven `job_failed` rule.
+     */
+    private function isSilenced(Issue $issue): bool
+    {
+        $silenceableRules = [FailureRateDetector::RULE, 'job_failed'];
+
+        return in_array($issue->rule, $silenceableRules, true)
+            && $issue->jobClass !== null && $issue->jobClass !== ''
+            && $this->container->make(SilencedJobs::class)->isSilenced($issue->jobClass);
+    }
+
+    /**
+     * Queue-domain event entry — job failed. Builds a class-scoped Issue and
+     * routes through the standard cooldown → typed-event → notify pipeline.
+     * Gates internally on `alerts.enabled` + `alerts.rules.job_failed.enabled`
+     * so the listener can call unconditionally.
+     */
+    public function dispatchJobFailed(string $jobClass, string $connection, string $queue, ?string $uuid, ?Throwable $exception): void
+    {
+        if (! Config::bool('alerts.enabled', false) || ! Config::bool('alerts.rules.job_failed.enabled', false)) {
+            return;
+        }
+
+        $severity = AlertSeverity::tryFrom(
+            Config::string('alerts.rules.job_failed.severity', AlertSeverity::Warning->value)
+        ) ?? AlertSeverity::Warning;
+
+        $issue = new Issue(
+            rule: 'job_failed',
+            severity: $severity,
+            connection: $connection,
+            queue: $queue,
+            jobClass: $jobClass,
+            title: "Job failed: {$jobClass}",
+            description: $exception instanceof Throwable
+                ? sprintf('%s — %s', $exception::class, $exception->getMessage())
+                : 'Job failed.',
+            context: [
+                'uuid' => $uuid,
+                'exception_class' => $exception instanceof Throwable ? $exception::class : null,
+                'exception_message' => $exception?->getMessage() ?? '',
+            ],
+            detectedAt: Date::now()->getTimestamp(),
+        );
+
+        $this->handleQueueEvent($issue, fn (): JobFailedAlert => new JobFailedAlert(
+            $jobClass,
+            $connection,
+            $queue,
+            $uuid,
+            $exception,
+            $severity->value,
+        ));
+    }
+
+    /**
+     * Queue-domain twin of `handleScheduled`: cooldown + prebuilt typed event +
+     * notify, but it also runs the silencing predicate and gates the package's
+     * synchronous channels on the per-rule `notify` flag. The typed event carries
+     * a live `Throwable` that can't round-trip the `Issue::context` array, so the
+     * caller builds it eagerly as a closure (lazy so cooldown-suppressed calls
+     * don't pay the construction cost).
+     *
+     * The shared poll-driven `handle()` is deliberately left untouched — this
+     * keeps the hot path's blast radius bounded.
+     *
+     * @param Closure():object $eventBuilder
+     */
+    private function handleQueueEvent(Issue $issue, Closure $eventBuilder): void
+    {
+        if ($this->isSilenced($issue)) {
+            return;
+        }
+
+        if (! $this->cooldown->acquire($issue)) {
+            return;
+        }
+
+        try {
+            event($eventBuilder());
+        } catch (Throwable $throwable) {
+            Log::warning('queue-insights: job_failed alert event listener threw', [
+                'rule' => $issue->rule,
+                'job_class' => $issue->jobClass,
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+        }
+
+        if (Config::bool('alerts.rules.job_failed.notify', true)) {
+            $this->notify($issue);
+        }
     }
 
     /**

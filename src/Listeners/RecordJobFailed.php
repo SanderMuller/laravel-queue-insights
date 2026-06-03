@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
+use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
@@ -39,6 +40,7 @@ final readonly class RecordJobFailed
 
     public function __construct(
         private ResolveJobClass $resolveJobClass,
+        private IssueDispatcher $dispatcher,
     ) {}
 
     public function handle(JobFailed $event): void
@@ -151,12 +153,35 @@ final readonly class RecordJobFailed
                     $class,
                 ]);
             }
+
+            // Per-job failure alert. Gated internally on alerts.enabled +
+            // alerts.rules.job_failed.enabled, so the call is unconditional
+            // (mirrors RecordScheduledTaskFailed). Lives inside this try so a
+            // dispatch throw is caught by the same Log::warning net and never
+            // loses the counter writes above; the dispatcher's event/notify
+            // paths are independently try-wrapped.
+            $this->dispatchFailureAlert($event, $class, $connectionName, $queueKey, $uuid);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobFailed failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Fire the per-job failure alert. Extracted so the uuid-normalisation
+     * ternary stays out of `handle()`'s cognitive-complexity budget.
+     */
+    private function dispatchFailureAlert(JobFailed $event, string $class, string $connectionName, string $queueKey, ?string $uuid): void
+    {
+        $this->dispatcher->dispatchJobFailed(
+            $class,
+            $connectionName,
+            $queueKey,
+            $uuid !== null && $uuid !== '' ? $uuid : null,
+            $event->exception,
+        );
     }
 
     /**

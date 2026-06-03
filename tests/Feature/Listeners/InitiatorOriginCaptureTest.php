@@ -17,7 +17,6 @@ use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
 use SanderMuller\QueueInsights\Listeners\SetInitiatorOriginFromCommand;
 use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
-use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 use SanderMuller\QueueInsights\Tests\Support\StreamEntries;
@@ -245,7 +244,7 @@ it('RecordJobFailed persists the origin into qi:initiator:{uuid}', function (): 
     Context::addHidden('qi_origin', 'http:checkout.store');
 
     $uuid = '01ARZ3NDEKTSV4RRFFQ69FAILED';
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle(
+    resolve(RecordJobFailed::class)->handle(
         new JobFailed(connectionName: 'redis', job: makeInitiatorJobMock($uuid), exception: new RuntimeException('boom')),
     );
 
@@ -257,7 +256,7 @@ it('RecordJobFailed persists the origin into qi:initiator:{uuid}', function (): 
 
 it('RecordJobFailed writes no initiator key when no origin is on Context', function (): void {
     $uuid = '01ARZ3NDEKTSV4RRFFQ69FAILNONE';
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle(
+    resolve(RecordJobFailed::class)->handle(
         new JobFailed(connectionName: 'redis', job: makeInitiatorJobMock($uuid), exception: new RuntimeException('boom')),
     );
 

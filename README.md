@@ -559,6 +559,21 @@ A dashboard-only watchdog (`snapshot_command_dead`) renders a top-level red bann
 
 Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}:{c}:{q}`, TTL `cooldown_seconds`). The dashboard always reflects live state.
 
+### Alert on individual job failures (`job_failed`)
+
+The nine rules above are poll-driven. `job_failed` is a tenth, **event-driven** rule (opt-in, default off): it fires once on a job's **final** failure (Laravel's `JobFailed` — i.e. retries exhausted), the same trigger as [spatie/laravel-failed-job-monitor](https://github.com/spatie/laravel-failed-job-monitor) — so you don't need both. On top of a bare per-failure ping it adds per-class **cooldown**, **silencing** (`queue-insights.silenced`), and the same multi-channel routing (Slack / mail / Sentry / log) as every other rule. Because the only signal is the event, it works on **any** queue driver — no Redis snapshot required.
+
+```php
+'job_failed' => ['enabled' => true, 'severity' => 'warning', 'notify' => true],
+```
+
+A typed `SanderMuller\QueueInsights\Events\JobFailedAlert` event is dispatched (cooldown-gated, silencing-filtered) carrying the job class, connection, queue, uuid, and the live exception — subscribe to forward it anywhere.
+
+**`vs failure_rate`:** pick `job_failed` for "tell me about every failure", `failure_rate` for "tell me when a class is failing *a lot*" (a ratio over the hour bucket). They're complementary; enabling both gives an alert per incident *and* a trend alert.
+
+> [!IMPORTANT]
+> Unlike the poll-driven rules (which notify from the snapshot command), `job_failed` notifies **synchronously inside the worker**. With Slack/mail/Sentry enabled, the first failure of each class per cooldown window blocks the worker on that network call. For high-failure-volume apps, set `'notify' => false` to keep the `JobFailedAlert` event firing while skipping the package's synchronous channels, and dispatch your own queued notification from a listener.
+
 ### Config example
 
 ```php
@@ -581,6 +596,10 @@ Cooldown applies to **outbound notifications only** (key: `alert:cooldown:{rule}
         'oldest_pending' => ['enabled' => true, 'seconds' => 600, 'severity' => 'warning'],
         'stuck_inflight' => ['enabled' => true, 'seconds' => 300, 'severity' => 'warning'],
         'failure_rate' => ['enabled' => true, 'min_jobs' => 20, 'ratio' => 0.10, 'severity' => 'warning'],
+        // Per-job failure alert (event-driven, opt-in). See "Alert on
+        // individual job failures" below. `notify => false` keeps the
+        // JobFailedAlert event but skips this rule's package channels.
+        'job_failed' => ['enabled' => false, 'severity' => 'warning', 'notify' => true],
         'slow_p95' => [
             'enabled' => false,
             'class_threshold_ms' => ['App\\Jobs\\GenerateReport' => 30_000],

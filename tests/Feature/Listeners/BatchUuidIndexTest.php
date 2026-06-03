@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Schema;
 use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
-use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -107,7 +106,7 @@ it('RecordJobFailed writes uuid → failed_jobs-id mapping when the row exists',
     ]);
 
     $event = new JobFailed(connectionName: 'redis', job: makeBatchJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::str('get', 'qmtest:uuid-failed:' . $uuid))->toBe((string) $rowId);
 });
@@ -119,7 +118,7 @@ it('RecordJobFailed silently skips when no failed_jobs row matches the uuid', fu
     $uuid = '01ARZ3NDEKTSV4RRFFQ69NOFAILROW';
 
     $event = new JobFailed(connectionName: 'redis', job: makeBatchJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:uuid-failed:' . $uuid))->toBe(0);
 });
@@ -150,7 +149,7 @@ it('RecordJobFailed indexes the most recent failed_jobs row when a uuid has retr
     ]);
 
     $event = new JobFailed(connectionName: 'redis', job: makeBatchJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::str('get', 'qmtest:uuid-failed:' . $uuid))->toBe((string) $newestId);
 });
@@ -174,7 +173,7 @@ it('RecordJobFailed skips uuid → failed mapping only when both batches and cha
     ]);
 
     $event = new JobFailed(connectionName: 'redis', job: makeBatchJobMock($uuid), exception: new RuntimeException('boom'));
-    (new RecordJobFailed(resolve(ResolveJobClass::class)))->handle($event);
+    resolve(RecordJobFailed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:uuid-failed:' . $uuid))->toBe(0);
 });

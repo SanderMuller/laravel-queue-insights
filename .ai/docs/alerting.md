@@ -57,6 +57,21 @@ QueueInsightsDashboard::render
 
 Snapshot command path **always runs the detector fresh** so cooldown decisions reflect truth. Dashboard path **always reads the cache** (5 s TTL + per-request memoise) to bound thunder-herd across concurrent tabs.
 
+### Event-driven rules (no detector, no poll)
+
+Two rule families are **not** poll-driven and have no entry in the detector catalogue above — they're dispatched straight from a listener when a framework event fires:
+
+| Rule | Listener | Dispatch entry | Handle path |
+|---|---|---|---|
+| `scheduled_task_failed` / `_hung` / `_missed` | `RecordScheduledTask*` | `IssueDispatcher::dispatchScheduledTask*` | `handleScheduled()` |
+| `job_failed` | `RecordJobFailed` | `IssueDispatcher::dispatchJobFailed` | `handleQueueEvent()` |
+
+`job_failed` fires once on a job's **final** failure (Laravel `JobFailed` — retries exhausted), class-scoped, cooldown key `alert:cooldown:job_failed:class:{class}`. It works on **any** queue driver (no Redis snapshot needed — the only signal is the event). Gated on `alerts.enabled` + `alerts.rules.job_failed.enabled`.
+
+**`handleQueueEvent()` vs `handleScheduled()`:** the queue twin additionally (a) runs the shared `isSilenced(Issue)` predicate and (b) gates the package's synchronous channels on `alerts.rules.job_failed.notify` (default `true`). `notify=false` fires the typed `JobFailedAlert` event but skips all package channels — the escape hatch for high-volume apps that handle the event async. The typed event is built eagerly as a closure so it carries the live `Throwable` (which can't round-trip `Issue::context`).
+
+**Worker hot-path caveat:** unlike poll-driven rules (which notify from the snapshot command), `job_failed` notifies *inside the worker* via `notifyNow()` — a synchronous Slack/mail/Sentry round-trip on first-failure-per-class-per-window. Cooldown bounds frequency per class; `notify=false` removes the cost entirely.
+
 ## Cooldown — namespaced by rule
 
 Key shape:
@@ -120,7 +135,7 @@ Touchpoints (read these before extending):
 - `src/Support/DisplayNamePayloadMatch.php` — single-source `LOWER(payload) … ESCAPE '|'` pattern builder, shared between the include filter (class LIKE) and the silenced exclusion (NOT LIKE).
 - `src/Support/ConfigValidator.php::validateSilenced` — list-shape + non-empty + relaxed class-label regex (allows `@:/` for synthetic `Closure@hash` / `Encrypted@hash` labels). Wired in `QueueInsightsServiceProvider::boot` **outside** the `alerts.enabled` gate (silencing affects dashboard reads regardless of alerts).
 - `src/Alerts/Detectors/FailureRateDetector.php` — silence short-circuit before any Redis read.
-- `src/Alerts/IssueDispatcher.php::handle` — belt-and-suspenders silencing guard at the top of `handle()`, **before** `cooldown::acquire`. Scoped to `rule === FailureRateDetector::RULE` only — `slow_p95` also sets `jobClass` but stays unfiltered (silencing is failure-noise, not perf).
+- `src/Alerts/IssueDispatcher.php::isSilenced` — shared silencing predicate, called **before** `cooldown::acquire` by both `handle()` (poll-driven `failure_rate`) and `handleQueueEvent()` (event-driven `job_failed`). Scoped to `[FailureRateDetector::RULE, 'job_failed']` only — `slow_p95` also sets `jobClass` but stays unfiltered (silencing is failure-noise, not perf).
 - `src/QueueInsights.php::hourlyThroughput` — silenced classes filtered out of the failed-bucket fan-out only; processed bucket stays exact.
 - `src/QueueInsights.php::applyFailedJobFilters` — calls `SilencedJobs::appendExclusion` when `includeSilenced` is false. Routes through the same builder as `recentFailed` and `FailedJobUuidCollector` (bulk-retry) so they inherit the exclusion.
 - `src/Support/FailedJobFilters.php::$includeSilenced` — DTO toggle. **Default false** treated as "no filter" by `isEmpty()` so the bulk-retry footgun guard still rejects empty-filter retries.
