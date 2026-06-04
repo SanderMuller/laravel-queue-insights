@@ -118,8 +118,13 @@
         {{-- Sparkline --}}
         @if($sparkline !== [])
             <div class="rounded-xl bg-white dark:bg-gray-900 p-5 ring-1 ring-gray-950/5 dark:ring-white/10">
-                <header class="flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Hourly throughput</h3>
+                <header class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="flex items-center gap-2.5">
+                        <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400">
+                            <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path d="M15.5 2A1.5 1.5 0 0 0 14 3.5v13a1.5 1.5 0 0 0 3 0v-13A1.5 1.5 0 0 0 15.5 2Zm-6 5A1.5 1.5 0 0 0 8 8.5v8a1.5 1.5 0 0 0 3 0v-8A1.5 1.5 0 0 0 9.5 7Zm-6 5A1.5 1.5 0 0 0 2 13.5v3a1.5 1.5 0 0 0 3 0v-3A1.5 1.5 0 0 0 3.5 12Z"/></svg>
+                        </span>
+                        <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Hourly throughput</h3>
+                    </div>
                     <p class="text-xs tabular-nums text-gray-500 dark:text-gray-300">
                         <span class="text-emerald-700 dark:text-emerald-300">✓ {{ number_format($sparklineSuccess) }}</span>
                         <span class="mx-1.5 text-gray-300 dark:text-gray-500">·</span>
@@ -154,8 +159,13 @@
 
         {{-- Tasks: needs attention + healthy --}}
         <div class="rounded-xl bg-white dark:bg-gray-900 p-5 ring-1 ring-gray-950/5 dark:ring-white/10">
-            <header class="flex items-baseline justify-between gap-3">
-                <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Tasks</h3>
+            <header class="flex items-center justify-between gap-3">
+                <div class="flex items-center gap-2.5">
+                    <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                        <svg class="size-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 18H4.75A2.75 2.75 0 0 1 2 15.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-1.5 5.5a.75.75 0 0 0 0 1.5h11.5a.75.75 0 0 0 0-1.5H4.25Z" clip-rule="evenodd"/></svg>
+                    </span>
+                    <h3 class="text-sm font-semibold tracking-tight text-gray-900 dark:text-gray-100">Tasks</h3>
+                </div>
                 @if($tasksAll !== [])
                     <span class="text-xs tabular-nums text-gray-400 dark:text-gray-400">{{ count($tasksAll) }} captured</span>
                 @endif
