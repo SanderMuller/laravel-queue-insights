@@ -17,6 +17,11 @@ use Throwable;
  */
 final readonly class JobFailedAlert
 {
+    /**
+     * @param  array<string, mixed>|null  $context  sanitized failure-context snapshot
+     *                                              (`['app_context' => [...], 'environment' => [...]]`),
+     *                                              or null when `failure_context` is disabled
+     */
     public function __construct(
         public string $jobClass,
         public string $connection,
@@ -24,5 +29,6 @@ final readonly class JobFailedAlert
         public ?string $uuid,
         public ?Throwable $exception,
         public string $severity,
+        public ?array $context = null,
     ) {}
 }

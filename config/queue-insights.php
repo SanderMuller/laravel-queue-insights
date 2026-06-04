@@ -125,9 +125,60 @@ return [
          | custom PayloadSanitizer. See SECURITY.md.
          */
         'payloads' => env('QUEUE_INSIGHTS_CAPTURE_PAYLOADS', CaptureMode::Off->value),
-        'redact_keys' => ['password', 'token', 'secret', 'api_?key', 'authorization'],
+        /*
+         | Key-NAME redaction patterns (regex, anchored `^…$`, case-insensitive)
+         | applied to payload + failure-context fields. The `.*…*` wrapping
+         | matches the secret token ANYWHERE in the key, so common variants
+         | (`access_token`, `db_password`, `x_api_key`, `client_secret`) are
+         | caught — not just the bare word. This filters by key name only; it
+         | does NOT scan values, so a secret stored under an innocuous key still
+         | slips through (bind a custom PayloadSanitizer for that — see
+         | SECURITY.md). Narrow this list if the defaults over-redact a
+         | legitimate key in your domain.
+         */
+        'redact_keys' => ['.*password.*', '.*secret.*', '.*token.*', '.*api[_-]?key.*', '.*authorization.*', '.*credential.*'],
         'max_field_bytes' => 2048,
         'max_payload_bytes' => 16384,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Failure context capture
+    |--------------------------------------------------------------------------
+    |
+    | When a job or scheduled task fails, capture surrounding context to debug
+    | it without re-running: a snapshot of the Laravel `Context` facade (the
+    | modern breadcrumb mechanism — request id, user id, tenant, trace id) plus
+    | a small environment snapshot (worker host, pid, app env, release). Shown
+    | in the failure modal, the markdown export, and carried on the failure
+    | events. Cheap (failures are rare), sanitized, and size-capped.
+    |
+    | Context VALUES are run through the same `capture.redact_keys` regex pass
+    | as payloads before storage — the markdown export is pasted into AI/issue
+    | trackers, so secrets must be redacted by key name. Hidden Context is never
+    | captured (it holds package internals like `qi_origin`).
+    */
+    'failure_context' => [
+        'enabled' => env('QUEUE_INSIGHTS_FAILURE_CONTEXT', true),
+
+        // Laravel `Context` facade snapshot (visible keys only), sanitized.
+        'capture_app_context' => true,
+        // [] = all visible Context keys (still sanitized). A non-empty list
+        // restricts capture to exactly these keys.
+        'context_keys' => [],
+
+        // host / pid / app env / release at failure time.
+        'capture_environment' => true,
+        // Deploy/release identifier. null → read env('APP_VERSION'); a string
+        // is treated as a config key; a callable is invoked.
+        // NOTE: a closure here is NOT `config:cache`-safe — `php artisan
+        // config:cache` fails on closures in config. For cached config, prefer
+        // null (APP_VERSION) or a string config-key, or set the resolver from a
+        // service provider via `config()->set(...)` at boot.
+        'release_resolver' => null,
+
+        'max_value_bytes' => 2048,
+        'ttl_seconds' => 604800,
     ],
 
     'retention' => [

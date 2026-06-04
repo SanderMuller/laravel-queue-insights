@@ -130,6 +130,7 @@ final class ScheduleReader
      *   total_runs: int,
      *   total_failed: int,
      *   total_skipped: int,
+     *   consecutive_failures: int,
      *   last_run_at: ?int,
      *   last_failed_at: ?int,
      *   last_success_at: ?int,
@@ -145,6 +146,7 @@ final class ScheduleReader
             'total_runs' => HashFields::int($hash, 'total_runs'),
             'total_failed' => HashFields::int($hash, 'total_failed'),
             'total_skipped' => HashFields::int($hash, 'total_skipped'),
+            'consecutive_failures' => HashFields::int($hash, 'consecutive_failures'),
             'last_run_at' => HashFields::nullableInt($hash, 'last_run_at'),
             'last_failed_at' => HashFields::nullableInt($hash, 'last_failed_at'),
             'last_success_at' => HashFields::nullableInt($hash, 'last_success_at'),
@@ -356,6 +358,8 @@ final class ScheduleReader
      *   is_background: bool,
      *   recovered_from_hung: bool,
      *   exception: ?array<array-key, mixed>,
+     *   app_context: ?array<array-key, mixed>,
+     *   environment: ?array<array-key, mixed>,
      *   has_output: bool,
      *   correlated_jobs: list<string>,
      * }
@@ -385,6 +389,8 @@ final class ScheduleReader
             'is_background' => HashFields::bool01($hash, 'is_background'),
             'recovered_from_hung' => HashFields::bool01($hash, 'recovered_from_hung'),
             'exception' => HashFields::decodeJson($hash['exception'] ?? null),
+            'app_context' => HashFields::decodeJson($hash['app_context'] ?? null),
+            'environment' => HashFields::decodeJson($hash['environment'] ?? null),
             'has_output' => is_string($hash['output'] ?? null) && $hash['output'] !== '',
             'correlated_jobs' => $this->jobsDispatchedDuring($runId),
         ];
@@ -487,7 +493,10 @@ final class ScheduleReader
      *   skipped: int,
      *   hung: int,
      *   missed: int,
+     *   consecutive_failures: int,
      *   last_run_at_ms: ?int,
+     *   last_success_at_ms: ?int,
+     *   last_failed_at_ms: ?int,
      *   p95_ms: ?int,
      * }
      */

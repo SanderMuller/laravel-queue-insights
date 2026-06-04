@@ -11,9 +11,9 @@
     /**
      * Window stats for this task.
      *
-     * @var array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}
+     * @var array{runs: int, failed: int, skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at_ms: ?int, last_success_at_ms: ?int, last_failed_at_ms: ?int, p95_ms: ?int}
      */
-    'stats' => ['runs' => 0, 'failed' => 0, 'skipped' => 0, 'hung' => 0, 'missed' => 0, 'last_run_at_ms' => null, 'p95_ms' => null],
+    'stats' => ['runs' => 0, 'failed' => 0, 'skipped' => 0, 'hung' => 0, 'missed' => 0, 'consecutive_failures' => 0, 'last_run_at_ms' => null, 'last_success_at_ms' => null, 'last_failed_at_ms' => null, 'p95_ms' => null],
     /**
      * host_id → run count, sorted desc.
      *
@@ -135,6 +135,24 @@
                             <x-queue-insights::qi-time :at="$stats['last_run_at_ms']"/>
                         </dd>
                     </div>
+                    <div class="flex items-baseline justify-between gap-3 py-2">
+                        <dt class="shrink-0 text-gray-500 dark:text-gray-400">Last success</dt>
+                        <dd class="min-w-0 text-right font-medium text-gray-900 dark:text-gray-100">
+                            @if($stats['last_success_at_ms'] !== null)
+                                <x-queue-insights::qi-time :at="$stats['last_success_at_ms']"/>
+                            @else
+                                <span class="text-gray-400 dark:text-gray-500">never</span>
+                            @endif
+                        </dd>
+                    </div>
+                    @if($stats['consecutive_failures'] > 0)
+                        <div class="flex items-baseline justify-between gap-3 py-2">
+                            <dt class="shrink-0 text-gray-500 dark:text-gray-400">Failing streak</dt>
+                            <dd class="min-w-0 text-right font-semibold text-red-600 dark:text-red-400 tabular-nums">
+                                {{ number_format($stats['consecutive_failures']) }} in a row
+                            </dd>
+                        </div>
+                    @endif
                     <div class="flex items-baseline justify-between gap-3 py-2">
                         <dt class="shrink-0 text-gray-500 dark:text-gray-400">Next due</dt>
                         <dd class="min-w-0 text-right font-medium text-gray-900 dark:text-gray-100">

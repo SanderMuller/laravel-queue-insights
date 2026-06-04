@@ -376,6 +376,18 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the `failure_context` block. Delegates to
+     * `FailureContextConfigValidator` to keep this class under the
+     * cognitive-complexity cap (same split as `validateAlerts`).
+     *
+     * @param  array<array-key, mixed>  $failureContext
+     */
+    public static function validateFailureContext(array $failureContext): void
+    {
+        FailureContextConfigValidator::validate($failureContext);
+    }
+
+    /**
      * Validate `connection_aliases`. Operator-declared single-hop map. Rules:
      *
      *  - associative array, keys + values non-empty strings

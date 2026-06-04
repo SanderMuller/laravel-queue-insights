@@ -282,6 +282,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateCapture($section($cfg, 'capture'));
         ConfigValidator::validateChainLineage($section($cfg, 'chain_lineage'));
         ConfigValidator::validateInitiator($section($cfg, 'initiator'));
+        ConfigValidator::validateFailureContext($section($cfg, 'failure_context'));
         ConfigValidator::validateWork($section($cfg, 'work'));
         ConfigValidator::validateRetention($section($cfg, 'retention'));
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));

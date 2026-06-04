@@ -655,3 +655,49 @@ it('rejects a non-string initiator.context_key', function (): void {
     expect(fn () => ConfigValidator::validateInitiator(['context_key' => 123]))
         ->toThrow(QueueInsightsConfigException::class, 'initiator.context_key must be a non-empty string');
 });
+
+it('accepts a well-formed failure_context block', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext([
+        'enabled' => true,
+        'capture_app_context' => true,
+        'context_keys' => ['user_id', 'tenant'],
+        'capture_environment' => false,
+        'release_resolver' => 'app.version',
+        'max_value_bytes' => 1024,
+        'ttl_seconds' => 3600,
+    ]))->not->toThrow(Throwable::class);
+});
+
+it('accepts an empty failure_context block (missing-key tolerant)', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext([]))->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-bool failure_context.capture_app_context', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext(['capture_app_context' => 'yes']))
+        ->toThrow(QueueInsightsConfigException::class, 'failure_context.capture_app_context must be a boolean');
+});
+
+it('rejects a non-positive failure_context.max_value_bytes', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext(['max_value_bytes' => 0]))
+        ->toThrow(QueueInsightsConfigException::class, 'failure_context.max_value_bytes must be a positive integer');
+});
+
+it('rejects a non-list failure_context.context_keys', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext(['context_keys' => ['k' => 'v']]))
+        ->toThrow(QueueInsightsConfigException::class, 'context_keys must be a list of strings');
+});
+
+it('rejects a non-string entry in failure_context.context_keys', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext(['context_keys' => ['ok', 123]]))
+        ->toThrow(QueueInsightsConfigException::class, 'context_keys entries must be non-empty strings');
+});
+
+it('rejects a non-string/non-callable failure_context.release_resolver', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext(['release_resolver' => 123]))
+        ->toThrow(QueueInsightsConfigException::class, 'release_resolver must be null, a config-key string, or a callable');
+});
+
+it('accepts a callable failure_context.release_resolver', function (): void {
+    expect(fn () => ConfigValidator::validateFailureContext(['release_resolver' => fn (): string => '1.0']))
+        ->not->toThrow(Throwable::class);
+});

@@ -16,6 +16,8 @@
      *   is_background: bool,
      *   recovered_from_hung: bool,
      *   exception: ?array<string, mixed>,
+     *   app_context: ?array<array-key, mixed>,
+     *   environment: ?array<array-key, mixed>,
      *   has_output: bool,
      *   correlated_jobs: list<string>,
      * }
@@ -100,6 +102,12 @@
             $mdLines[] = '';
             $mdLines[] = '```';
             $mdLines[] = $exClass . ': ' . $exMsg;
+            // Inner (root-cause) exception — captured discretely because the
+            // 4000-char trace tail can truncate it out.
+            if (is_string($run['exception']['inner_class'] ?? null)) {
+                $innerMsg = is_string($run['exception']['inner_message'] ?? null) ? $run['exception']['inner_message'] : '';
+                $mdLines[] = 'Caused by: ' . $run['exception']['inner_class'] . ': ' . $innerMsg;
+            }
             if (is_string($run['exception']['file'] ?? null)) {
                 $mdLines[] = 'at ' . $run['exception']['file'] . (isset($run['exception']['line']) ? ':' . $run['exception']['line'] : '');
             }
@@ -108,6 +116,30 @@
                 $mdLines[] = $run['exception']['trace_tail'];
             }
             $mdLines[] = '```';
+        }
+        $runEnvironment = is_array($run['environment'] ?? null) ? $run['environment'] : [];
+        $runAppContext = is_array($run['app_context'] ?? null) ? $run['app_context'] : [];
+        if ($runEnvironment !== []) {
+            $mdLines[] = '';
+            $mdLines[] = '## Environment';
+            $mdLines[] = '';
+            foreach (['host', 'pid', 'env', 'release'] as $envKey) {
+                $envVal = $runEnvironment[$envKey] ?? null;
+                if ($envVal !== null && $envVal !== '') {
+                    $mdLines[] = '- **' . ucfirst($envKey) . ':** ' . str_replace(["\r", "\n"], ' ', (string) $envVal);
+                }
+            }
+        }
+        if ($runAppContext !== []) {
+            $mdLines[] = '';
+            $mdLines[] = '## Context';
+            $mdLines[] = '';
+            foreach ($runAppContext as $ctxKey => $ctxVal) {
+                $rendered = is_scalar($ctxVal) ? (string) $ctxVal : json_encode($ctxVal, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                // Collapse newlines — a context value must not break the export
+                // list or inject markdown headings/fences into the AI paste.
+                $mdLines[] = '- **' . $ctxKey . ':** ' . str_replace(["\r", "\n"], ' ', (string) $rendered);
+            }
         }
         if ($run['correlated_jobs'] !== []) {
             $mdLines[] = '';
@@ -243,6 +275,11 @@
                                 @if(is_string($run['exception']['message'] ?? null))
                                     <p class="mt-1 text-sm text-red-800 dark:text-red-200">{{ $run['exception']['message'] }}</p>
                                 @endif
+                                @if(is_string($run['exception']['inner_class'] ?? null))
+                                    <p class="mt-2 break-all font-mono text-[11px] text-red-700 dark:text-red-300">
+                                        Caused by: <span class="font-medium">{{ $run['exception']['inner_class'] }}</span>@if(is_string($run['exception']['inner_message'] ?? null) && $run['exception']['inner_message'] !== ''): {{ $run['exception']['inner_message'] }}@endif
+                                    </p>
+                                @endif
                                 @if(is_string($run['exception']['file'] ?? null))
                                     <p class="mt-2 break-all font-mono text-[11px] text-red-700 dark:text-red-300">
                                         at {{ $run['exception']['file'] }}@if(isset($run['exception']['line'])):{{ $run['exception']['line'] }}@endif
@@ -254,6 +291,11 @@
                             </div>
                         </section>
                     @endif
+
+                    @include('queue-insights::partials.failure-context-section', [
+                        'appContext' => is_array($run['app_context'] ?? null) ? $run['app_context'] : [],
+                        'environment' => is_array($run['environment'] ?? null) ? $run['environment'] : [],
+                    ])
 
                     @if($run['has_output'])
                         @if($isClosure)

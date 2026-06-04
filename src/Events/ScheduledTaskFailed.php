@@ -15,10 +15,17 @@ use Throwable;
  */
 final readonly class ScheduledTaskFailed
 {
+    /**
+     * @param  array<string, mixed>|null  $failureContext  sanitized failure-context
+     *         snapshot (`['app_context' => [...], 'environment' => [...]]`), or null
+     *         when `failure_context` is disabled. Trailing + defaulted so existing
+     *         host constructions of this shipped event keep working.
+     */
     public function __construct(
         public string $taskKey,
         public string $runId,
         public Event $task,
         public ?Throwable $exception,
+        public ?array $failureContext = null,
     ) {}
 }

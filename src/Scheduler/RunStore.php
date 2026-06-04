@@ -178,8 +178,15 @@ final class RunStore
         if ($args['status'] === 'failed') {
             $redis->command('hincrby', [$countersKey, 'total_failed', 1]);
             $redis->command('hset', [$countersKey, 'last_failed_at', (string) $args['finished_at_ms']]);
+            // Consecutive-failure streak — distinguishes a flapping task
+            // (streak resets often) from a persistently broken one (streak
+            // climbs). Reset to 0 on the next clean success; skipped/missed
+            // runs leave it untouched (they're neither a failure nor a
+            // success of the task body).
+            $redis->command('hincrby', [$countersKey, 'consecutive_failures', 1]);
         } elseif ($args['status'] === 'success') {
             $redis->command('hset', [$countersKey, 'last_success_at', (string) $args['finished_at_ms']]);
+            $redis->command('hset', [$countersKey, 'consecutive_failures', '0']);
         }
     }
 
@@ -286,6 +293,39 @@ final class RunStore
             'exception',
             $encoded,
         ]);
+    }
+
+    /**
+     * Stamp the sanitized failure-context snapshot (Context + environment) onto
+     * an existing run hash. HSET-only (no EXPIRE) — the fields inherit the run
+     * hash's TTL from `recordFinish`/`recordStarting`. No-op when both sections
+     * are empty.
+     *
+     * @param  array{app_context: array<array-key, mixed>, environment: array<string, scalar|null>}  $context
+     */
+    public function stampFailureContext(string $taskKey, string $runId, array $context): void
+    {
+        $fields = [];
+        foreach (['app_context', 'environment'] as $section) {
+            if ($context[$section] === []) {
+                continue;
+            }
+
+            $encoded = json_encode($context[$section]);
+            if (is_string($encoded)) {
+                $fields[$section] = $encoded;
+            }
+        }
+
+        if ($fields === []) {
+            return;
+        }
+
+        $runKey = KeyPrefix::make("sched:run:{$taskKey}:{$runId}");
+        $redis = $this->connection();
+        foreach ($fields as $field => $value) {
+            $redis->command('hset', [$runKey, $field, $value]);
+        }
     }
 
     /**

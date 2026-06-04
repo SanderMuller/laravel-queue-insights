@@ -166,6 +166,34 @@
         $mdLines[] = $failedPayloadPretty;
         $mdLines[] = $fence;
     }
+    // Failure context (sanitized Context + environment snapshot), hydrated by
+    // DashboardData from `qi:failure-ctx:{uuid}`. Makes the failure
+    // self-describing for AI triage (user / tenant / trace / release).
+    $failedFailureContext = $failed['failure_context'] ?? ['app_context' => [], 'environment' => []];
+    $failedAppContext = is_array($failedFailureContext['app_context'] ?? null) ? $failedFailureContext['app_context'] : [];
+    $failedEnvironment = is_array($failedFailureContext['environment'] ?? null) ? $failedFailureContext['environment'] : [];
+    if ($failedEnvironment !== []) {
+        $mdLines[] = '';
+        $mdLines[] = '## Environment';
+        $mdLines[] = '';
+        foreach (['host', 'pid', 'env', 'release'] as $envKey) {
+            $envVal = $failedEnvironment[$envKey] ?? null;
+            if ($envVal !== null && $envVal !== '') {
+                $mdLines[] = '- **'.ucfirst($envKey).':** '.str_replace(["\r", "\n"], ' ', (string) $envVal);
+            }
+        }
+    }
+    if ($failedAppContext !== []) {
+        $mdLines[] = '';
+        $mdLines[] = '## Context';
+        $mdLines[] = '';
+        foreach ($failedAppContext as $ctxKey => $ctxVal) {
+            $rendered = is_scalar($ctxVal) ? (string) $ctxVal : json_encode($ctxVal, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            // Collapse newlines — a context value pasted into the AI/tracker
+            // export must not break the list or inject markdown headings/fences.
+            $mdLines[] = '- **'.$ctxKey.':** '.str_replace(["\r", "\n"], ' ', (string) $rendered);
+        }
+    }
     $failedMarkdown = implode("\n", $mdLines)."\n";
 @endphp
 
@@ -321,6 +349,11 @@
                             <x-queue-insights::stack-trace :exception="$failedException"/>
                         </section>
                     @endif
+
+                    @include('queue-insights::partials.failure-context-section', [
+                        'appContext' => $failedAppContext,
+                        'environment' => $failedEnvironment,
+                    ])
 
                     @if(is_string($failedPayloadRaw) && $failedPayloadRaw !== '')
                         {{-- Payload — shared underline-tab partial. Structured tab

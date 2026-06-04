@@ -97,7 +97,10 @@ final readonly class IssueDispatcher
      * Gates internally on `scheduler.alerts.enabled` so callers don't need
      * to repeat the check.
      */
-    public function dispatchScheduledTaskFailed(string $taskKey, string $runId, Event $task, ?Throwable $exception): void
+    /**
+     * @param  array<string, mixed>|null  $failureContext  sanitized Context + environment snapshot
+     */
+    public function dispatchScheduledTaskFailed(string $taskKey, string $runId, Event $task, ?Throwable $exception, ?array $failureContext = null): void
     {
         if (! Config::bool('scheduler.alerts.enabled', false)) {
             return;
@@ -132,6 +135,7 @@ final readonly class IssueDispatcher
             $runId,
             $task,
             $exception,
+            $failureContext,
         ));
     }
 
@@ -258,8 +262,10 @@ final readonly class IssueDispatcher
      * routes through the standard cooldown → typed-event → notify pipeline.
      * Gates internally on `alerts.enabled` + `alerts.rules.job_failed.enabled`
      * so the listener can call unconditionally.
+     *
+     * @param  array<string, mixed>|null  $failureContext  sanitized Context + environment snapshot
      */
-    public function dispatchJobFailed(string $jobClass, string $connection, string $queue, ?string $uuid, ?Throwable $exception): void
+    public function dispatchJobFailed(string $jobClass, string $connection, string $queue, ?string $uuid, ?Throwable $exception, ?array $failureContext = null): void
     {
         if (! Config::bool('alerts.enabled', false) || ! Config::bool('alerts.rules.job_failed.enabled', false)) {
             return;
@@ -294,6 +300,7 @@ final readonly class IssueDispatcher
             $uuid,
             $exception,
             $severity->value,
+            $failureContext,
         ));
     }
 

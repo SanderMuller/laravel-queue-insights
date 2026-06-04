@@ -13,6 +13,7 @@ use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\FailureContextCollector;
 use Throwable;
 
 final readonly class RecordScheduledTaskFailed
@@ -39,6 +40,21 @@ final readonly class RecordScheduledTaskFailed
                 'trace_tail' => $this->truncate($exception->getTraceAsString(), 4000),
             ];
 
+            // Inner (deepest previous) exception as discrete fields. Unlike a
+            // queued job — whose `failed_jobs.exception` keeps the full nested
+            // chain — a task run stores only the 4000-char trace tail, which
+            // can truncate the root cause out. Capturing it explicitly keeps
+            // it visible.
+            $previous = $this->deepestPrevious($exception);
+            if ($previous instanceof Throwable) {
+                $exceptionPayload['inner_class'] = $previous::class;
+                $exceptionPayload['inner_message'] = $this->truncate($previous->getMessage(), 2000);
+            }
+
+            $failureContext = Config::bool('failure_context.enabled', true)
+                ? (new FailureContextCollector())->collect()
+                : null;
+
             $running = $this->store->readRunning($taskKey);
 
             if ($running === null) {
@@ -53,7 +69,11 @@ final readonly class RecordScheduledTaskFailed
                 $existingRunId = $this->store->recentlyFinishedRunId($taskKey);
                 if ($existingRunId !== null) {
                     $this->store->stampException($taskKey, $existingRunId, $exceptionPayload);
-                    $this->maybeFireDomainEvent($taskKey, $existingRunId, $event);
+                    if ($failureContext !== null) {
+                        $this->store->stampFailureContext($taskKey, $existingRunId, $failureContext);
+                    }
+
+                    $this->maybeFireDomainEvent($taskKey, $existingRunId, $event, $failureContext);
 
                     return;
                 }
@@ -82,7 +102,11 @@ final readonly class RecordScheduledTaskFailed
                 'exception' => $exceptionPayload,
             ]);
 
-            $this->maybeFireDomainEvent($taskKey, $runId, $event);
+            if ($failureContext !== null) {
+                $this->store->stampFailureContext($taskKey, $runId, $failureContext);
+            }
+
+            $this->maybeFireDomainEvent($taskKey, $runId, $event, $failureContext);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordScheduledTaskFailed failed', [
                 'exception' => $throwable::class,
@@ -113,18 +137,40 @@ final readonly class RecordScheduledTaskFailed
         }
     }
 
-    private function maybeFireDomainEvent(string $taskKey, string $runId, ScheduledTaskFailed $event): void
+    /**
+     * @param  array<string, mixed>|null  $failureContext
+     */
+    private function maybeFireDomainEvent(string $taskKey, string $runId, ScheduledTaskFailed $event, ?array $failureContext): void
     {
         $this->dispatcher->dispatchScheduledTaskFailed(
             $taskKey,
             $runId,
             $event->task,
             $event->exception,
+            $failureContext,
         );
     }
 
     private function truncate(string $value, int $cap): string
     {
         return strlen($value) <= $cap ? $value : substr($value, 0, $cap) . '…';
+    }
+
+    /**
+     * Walk the `getPrevious()` chain to the deepest wrapped exception — the
+     * usual root cause. Null when the exception has no previous.
+     */
+    private function deepestPrevious(Throwable $exception): ?Throwable
+    {
+        $previous = $exception->getPrevious();
+        if (! $previous instanceof Throwable) {
+            return null;
+        }
+
+        while (($next = $previous->getPrevious()) instanceof Throwable) {
+            $previous = $next;
+        }
+
+        return $previous;
     }
 }

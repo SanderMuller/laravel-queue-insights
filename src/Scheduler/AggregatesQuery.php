@@ -46,7 +46,7 @@ final class AggregatesQuery
      * panel doesn't re-fetch them after walking the same task list for
      * its needs-attention/healthy split.
      *
-     * @param  list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}, ...}>  $tasksWithStats
+     * @param  list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at_ms: ?int, last_success_at_ms: ?int, last_failed_at_ms: ?int, p95_ms: ?int}, ...}>  $tasksWithStats
      * @return array{
      *   runs_24h: int,
      *   failed_24h: int,
@@ -109,7 +109,7 @@ final class AggregatesQuery
      * slot is missing. Single source for the empty-stats literal so the
      * shape can't drift between this reader and the panel that consumes it.
      *
-     * @return array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}
+     * @return array{runs: int, failed: int, skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at_ms: ?int, last_success_at_ms: ?int, last_failed_at_ms: ?int, p95_ms: ?int}
      */
     public static function emptyStats(): array
     {
@@ -119,7 +119,10 @@ final class AggregatesQuery
             'skipped' => 0,
             'hung' => 0,
             'missed' => 0,
+            'consecutive_failures' => 0,
             'last_run_at_ms' => null,
+            'last_success_at_ms' => null,
+            'last_failed_at_ms' => null,
             'p95_ms' => null,
         ];
     }
@@ -164,7 +167,7 @@ final class AggregatesQuery
      * it bites.
      *
      * @param  list<array{task_key: string}>|list<array<string, mixed>>  $tasks
-     * @return list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}}>
+     * @return list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at_ms: ?int, last_success_at_ms: ?int, last_failed_at_ms: ?int, p95_ms: ?int}}>
      */
     public function computeStatsForTasks(array $tasks): array
     {
@@ -206,7 +209,7 @@ final class AggregatesQuery
      * …, counters]` of size `2*N+1` starting at `$base`.
      *
      * @param  list<mixed>  $results
-     * @return array{runs: int, failed: int, skipped: int, hung: int, missed: int, last_run_at_ms: ?int, p95_ms: ?int}
+     * @return array{runs: int, failed: int, skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at_ms: ?int, last_success_at_ms: ?int, last_failed_at_ms: ?int, p95_ms: ?int}
      */
     private function projectTaskStats(array $results, int $base, int $bucketsPerTask): array
     {
@@ -237,7 +240,10 @@ final class AggregatesQuery
             'skipped' => HashFields::int($countersHash, 'total_skipped'),
             'hung' => HashFields::int($countersHash, 'total_hung'),
             'missed' => HashFields::int($countersHash, 'total_missed'),
+            'consecutive_failures' => HashFields::int($countersHash, 'consecutive_failures'),
             'last_run_at_ms' => HashFields::nullableInt($countersHash, 'last_run_at'),
+            'last_success_at_ms' => HashFields::nullableInt($countersHash, 'last_success_at'),
+            'last_failed_at_ms' => HashFields::nullableInt($countersHash, 'last_failed_at'),
             'p95_ms' => $this->p95FromSamples($samples),
         ];
     }
@@ -262,27 +268,33 @@ final class AggregatesQuery
      *   skipped: int,
      *   hung: int,
      *   missed: int,
+     *   consecutive_failures: int,
      *   last_run_at_ms: ?int,
+     *   last_success_at_ms: ?int,
+     *   last_failed_at_ms: ?int,
      *   p95_ms: ?int,
      * }
      */
     public function taskWindowStats(string $taskKey): array
     {
         [$runs, $failed, $samples] = $this->aggregateBucketSums($taskKey);
-        [$skipped, $hung, $missed, $lastRun] = $this->lifetimeCountersSlice($taskKey);
+        $counters = $this->lifetimeCountersSlice($taskKey);
 
         return [
             'runs' => $runs,
             'failed' => $failed,
-            'skipped' => $skipped,
+            'skipped' => $counters['skipped'],
             // `total_hung`/`total_missed` are lifetime counters; the
             // 24h aggregate buckets don't track them. Sweeper writes
             // are bounded by `runs_index_max`; in steady-state these
             // reflect "outstanding hung/missed runs visible in the
             // recent window" closely enough for the headline tile.
-            'hung' => $hung,
-            'missed' => $missed,
-            'last_run_at_ms' => $lastRun,
+            'hung' => $counters['hung'],
+            'missed' => $counters['missed'],
+            'consecutive_failures' => $counters['consecutive_failures'],
+            'last_run_at_ms' => $counters['last_run_at'],
+            'last_success_at_ms' => $counters['last_success_at'],
+            'last_failed_at_ms' => $counters['last_failed_at'],
             'p95_ms' => $this->p95FromSamples($samples),
         ];
     }
@@ -422,21 +434,24 @@ final class AggregatesQuery
     }
 
     /**
-     * @return array{0: int, 1: int, 2: int, 3: ?int}  [skipped, hung, missed, last_run_at]
+     * @return array{skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at: ?int, last_success_at: ?int, last_failed_at: ?int}
      */
     private function lifetimeCountersSlice(string $taskKey): array
     {
         $redis = $this->redis();
         $hash = $redis->command('hgetall', [KeyPrefix::make("sched:counters:{$taskKey}")]);
         if (! is_array($hash)) {
-            return [0, 0, 0, null];
+            return ['skipped' => 0, 'hung' => 0, 'missed' => 0, 'consecutive_failures' => 0, 'last_run_at' => null, 'last_success_at' => null, 'last_failed_at' => null];
         }
 
         return [
-            HashFields::int($hash, 'total_skipped'),
-            HashFields::int($hash, 'total_hung'),
-            HashFields::int($hash, 'total_missed'),
-            HashFields::nullableInt($hash, 'last_run_at'),
+            'skipped' => HashFields::int($hash, 'total_skipped'),
+            'hung' => HashFields::int($hash, 'total_hung'),
+            'missed' => HashFields::int($hash, 'total_missed'),
+            'consecutive_failures' => HashFields::int($hash, 'consecutive_failures'),
+            'last_run_at' => HashFields::nullableInt($hash, 'last_run_at'),
+            'last_success_at' => HashFields::nullableInt($hash, 'last_success_at'),
+            'last_failed_at' => HashFields::nullableInt($hash, 'last_failed_at'),
         ];
     }
 

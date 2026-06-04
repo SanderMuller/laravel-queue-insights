@@ -13,6 +13,8 @@ use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
+use SanderMuller\QueueInsights\Support\FailureContextCollector;
+use SanderMuller\QueueInsights\Support\FailureContextStore;
 use SanderMuller\QueueInsights\Support\HourBucket;
 use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
@@ -160,7 +162,8 @@ final readonly class RecordJobFailed
             // dispatch throw is caught by the same Log::warning net and never
             // loses the counter writes above; the dispatcher's event/notify
             // paths are independently try-wrapped.
-            $this->dispatchFailureAlert($event, $class, $connectionName, $queueKey, $uuid);
+            $failureContext = $this->captureFailureContext($uuid);
+            $this->dispatchFailureAlert($event, $class, $connectionName, $queueKey, $uuid, $failureContext);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobFailed failed', [
                 'exception' => $throwable::class,
@@ -170,10 +173,40 @@ final readonly class RecordJobFailed
     }
 
     /**
+     * Collect the sanitized Context + environment snapshot for the failed job,
+     * store it by uuid for the dashboard modal + markdown export, and return it
+     * so the alert event can carry it too. Returns null when disabled. The
+     * store write is skipped for an empty uuid (the read surfaces key by uuid),
+     * but the snapshot is still returned for the event.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function captureFailureContext(?string $uuid): ?array
+    {
+        if (! Config::bool('failure_context.enabled', true)) {
+            return null;
+        }
+
+        $context = (new FailureContextCollector())->collect();
+
+        if ($uuid !== null && $uuid !== '') {
+            (new FailureContextStore())->write(
+                $uuid,
+                $context,
+                Config::int('failure_context.ttl_seconds', 604800),
+            );
+        }
+
+        return $context;
+    }
+
+    /**
      * Fire the per-job failure alert. Extracted so the uuid-normalisation
      * ternary stays out of `handle()`'s cognitive-complexity budget.
+     *
+     * @param  array<string, mixed>|null  $failureContext
      */
-    private function dispatchFailureAlert(JobFailed $event, string $class, string $connectionName, string $queueKey, ?string $uuid): void
+    private function dispatchFailureAlert(JobFailed $event, string $class, string $connectionName, string $queueKey, ?string $uuid, ?array $failureContext): void
     {
         $this->dispatcher->dispatchJobFailed(
             $class,
@@ -181,6 +214,7 @@ final readonly class RecordJobFailed
             $queueKey,
             $uuid !== null && $uuid !== '' ? $uuid : null,
             $event->exception,
+            $failureContext,
         );
     }
 

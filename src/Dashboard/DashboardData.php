@@ -16,6 +16,7 @@ use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
 use SanderMuller\QueueInsights\Support\FailedJobUuidCollector;
+use SanderMuller\QueueInsights\Support\FailureContextStore;
 use SanderMuller\QueueInsights\Support\HorizonNotRunning;
 use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
@@ -231,6 +232,13 @@ final readonly class DashboardData
             $initiator = $this->resolveFailedInitiator($failedUuid);
             $selectedFailed['origin'] = $initiator['origin'];
             $selectedFailed['call_site'] = $initiator['call_site'];
+
+            // Failure context (sanitized Context + environment snapshot) —
+            // RecordJobFailed wrote it to `qi:failure-ctx:{uuid}`. One HGETALL,
+            // only on the selected-failed modal row.
+            $selectedFailed['failure_context'] = is_string($failedUuid) && $failedUuid !== ''
+                ? (new FailureContextStore())->read($failedUuid)
+                : ['app_context' => [], 'environment' => []];
         }
 
         // Bulk-retry UI eligibility (server-side enforcement still applies in

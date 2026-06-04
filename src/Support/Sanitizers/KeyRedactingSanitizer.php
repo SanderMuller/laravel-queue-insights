@@ -4,6 +4,7 @@ namespace SanderMuller\QueueInsights\Support\Sanitizers;
 
 use Illuminate\Queue\Events\JobProcessed;
 use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
+use SanderMuller\QueueInsights\Support\KeyRedacter;
 use Throwable;
 
 final readonly class KeyRedactingSanitizer implements PayloadSanitizer
@@ -29,7 +30,7 @@ final readonly class KeyRedactingSanitizer implements PayloadSanitizer
             return ['note' => 'payload_not_persisted', 'reason' => 'closure_or_encrypted'];
         }
 
-        $redacted = $this->walk($payload);
+        $redacted = (new KeyRedacter($this->redactKeys, $this->maxFieldBytes))->redact($payload);
 
         $encoded = json_encode($redacted, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
@@ -62,54 +63,5 @@ final readonly class KeyRedactingSanitizer implements PayloadSanitizer
         $command = $data['command'] ?? null;
 
         return is_string($command) && $command !== '' && ! str_starts_with($command, 'O:') && ! str_starts_with($command, 'C:');
-    }
-
-    private function walk(mixed $value): mixed
-    {
-        if (is_array($value)) {
-            $out = [];
-
-            foreach ($value as $key => $inner) {
-                if (is_string($key) && $this->keyShouldRedact($key)) {
-                    $out[$key] = '[REDACTED]';
-
-                    continue;
-                }
-
-                $out[$key] = $this->walk($inner);
-            }
-
-            return $out;
-        }
-
-        if (is_string($value) && strlen($value) > $this->maxFieldBytes) {
-            // Keep PHP-serialized object/array blobs intact — truncating them would
-            // produce invalid serialized data that downstream tooling (the modal's
-            // structured-payload extractor) can't unserialize. The outer
-            // max_payload_bytes cap on the whole encoded body still bounds growth.
-            if ($this->looksSerialized($value)) {
-                return $value;
-            }
-
-            return substr($value, 0, $this->maxFieldBytes) . '…[truncated]';
-        }
-
-        return $value;
-    }
-
-    private function looksSerialized(string $value): bool
-    {
-        return str_starts_with($value, 'O:') || str_starts_with($value, 'C:') || str_starts_with($value, 'a:');
-    }
-
-    private function keyShouldRedact(string $key): bool
-    {
-        foreach ($this->redactKeys as $pattern) {
-            if (@preg_match('/^' . $pattern . '$/i', $key) === 1) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
