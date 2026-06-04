@@ -43,9 +43,6 @@ phpstan.neon
 .agents/skills/
 .claude/commands/
 .claude/skills/
-.github/copilot-instructions.md
+.config/boost/
 .github/prompts/
-.github/skills/
-AGENTS.md
-CLAUDE.md
 # <<< boost (managed) <<<

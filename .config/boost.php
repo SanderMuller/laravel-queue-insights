@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use SanderMuller\BoostCore\Config\BoostConfig;
 use SanderMuller\BoostCore\Enums\Agent;
+use SanderMuller\BoostCore\Enums\Tag;
 
 /**
  * boost-core configuration — which AI agents `composer boost:sync` writes to,
@@ -37,8 +38,27 @@ return BoostConfig::configure()
         'sandermuller/boost-skills',
         'sandermuller/package-boost-laravel',
         'sandermuller/package-boost-php',
+        // NOTE: `laravel/boost` is deliberately NOT allowlisted. It ships no
+        // boost-core-consumable skills (no conventions-schema / boost-tags) —
+        // it uses its own MCP skill system, which LQI already gets via the
+        // laravel-boost MCP server. Allowlisting it here was verified to be a
+        // pure no-op (doctor: "allowlisted but not publishing").
     ])
-    ->withTags('php', 'github')
+    ->withTags([
+        Tag::Php,
+        Tag::Github,
+        // LQI ships a Livewire + Tailwind dashboard — `frontend` unlocks
+        // boost-skills' frontend-quality (a real, allowlisted skill).
+        Tag::Frontend,
+        // The package's own `pre-release` skill delegates to these.
+        // `release-automation` is a string tag (no enum case) → readme,
+        // release-notes, upgrading from boost-skills.
+        'release-automation',
+        // NOTE: Pest/Livewire/Tailwind enum tags are intentionally omitted —
+        // only `laravel/boost` publishes skills under them, and it isn't
+        // boost-core-consumable (see allowlist note), so declaring them is a
+        // dead no-op + doctor noise. They live in `Tag` as autocomplete only.
+    ])
     ->withExcludedSkills([
         'sandermuller/boost-skills:pre-release',
     ])
