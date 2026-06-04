@@ -1,7 +1,12 @@
 @php($qiThemeEnabled = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.theme.enabled', false))
 @php($qiClockEnabled = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.clock.enabled', true))
+@php($qiCloudEnabled = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.theme.cloud_enabled', true))
 <!DOCTYPE html>
-<html lang="en">
+{{-- `data-qi-skin="cloud"` re-skins LIGHT mode as the Laravel-Cloud-inspired
+     look (soft gradient sky + frosted header + floating cards). Static
+     server-emitted marker; the CSS keys off it with `:not(.dark)` so dark mode
+     is untouched. Opt out via QUEUE_INSIGHTS_CLOUD_THEME=false. --}}
+<html lang="en"@if($qiCloudEnabled) data-qi-skin="cloud"@endif>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -278,6 +283,42 @@
             font-variant-numeric: tabular-nums;
         }
         html.dark #qi-pop { background: rgb(55 65 81); }
+
+        @if($qiCloudEnabled)
+        /* ───────── Cloud skin — Laravel-Cloud-inspired LIGHT look ─────────
+           Re-skins light mode only: keyed on html[data-qi-skin="cloud"]
+           (server-emitted when cloud_enabled) AND :not(.dark) so dark / system-
+           dark are left completely untouched. Soft gradient-sky backdrop, a
+           frosted translucent header, and floating content cards — the
+           Laravel Cloud signature. Emitted only when cloud_enabled, so opting
+           out ships zero extra bytes. */
+        html[data-qi-skin="cloud"]:not(.dark) body {
+            /* Layered sky: a warm sun-glow low-right + a cool sky-glow top-left
+               over a pale lavender base — the Laravel Cloud sunset, kept light
+               enough that white cards float and dark text stays high-contrast. */
+            background:
+                radial-gradient(1200px 620px at 86% 112%, rgba(255, 210, 180, 0.50), transparent 60%),
+                radial-gradient(1080px 560px at 8% -12%, rgba(180, 211, 255, 0.45), transparent 58%),
+                linear-gradient(162deg, #eaf2fd 0%, #eef0fb 34%, #f4edfb 64%, #fcf1ec 100%);
+            background-attachment: fixed;
+        }
+        /* Frosted translucent header — the sky shows through the top bar; the
+           emerald aurora glow + diagonal strip sit behind the frost. */
+        html[data-qi-skin="cloud"]:not(.dark) header {
+            background-color: rgba(255, 255, 255, 0.72);
+            -webkit-backdrop-filter: saturate(1.4) blur(12px);
+            backdrop-filter: saturate(1.4) blur(12px);
+            border-bottom-color: rgba(2, 6, 23, 0.06);
+        }
+        /* Float the content cards on the gradient + soften their corners to
+           the Laravel-Cloud radius. Scoped to rounded WHITE panels inside
+           <main> so chips / badges (rounded-full, rounded-md) stay flat. */
+        html[data-qi-skin="cloud"]:not(.dark) main :is(.rounded-xl, .rounded-2xl).bg-white {
+            border-radius: 1rem;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
+                        0 14px 34px -14px rgba(30, 58, 110, 0.24);
+        }
+        @endif
 
         /* Aurora accent keyframes — defined globally so any dashboard
            surface (header, hero panel, queue rows) can reuse them. */

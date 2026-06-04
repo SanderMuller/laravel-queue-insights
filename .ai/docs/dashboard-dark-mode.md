@@ -160,9 +160,33 @@ follow the same pairings or update the spec.
     // ...
     'theme' => [
         'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
+        'cloud_enabled' => env('QUEUE_INSIGHTS_CLOUD_THEME', true),
     ],
 ],
 ```
+
+## Cloud skin (light-mode re-skin)
+
+`cloud_enabled` re-skins **light mode** as a Laravel-Cloud-inspired look:
+a layered sunset-sky gradient `<body>` backdrop, a frosted translucent
+`<header>`, and floating white cards (soft shadow + `border-radius: 1rem`).
+
+- It is a **pure CSS skin** in `layouts/app.blade.php`'s big `<style>` block,
+  keyed on `html[data-qi-skin="cloud"]:not(.dark)`. The `data-qi-skin="cloud"`
+  attribute is emitted server-side on `<html>` (gated on `$qiCloudEnabled`); the
+  `:not(.dark)` guard means **dark / system-dark are never touched** — they fall
+  through to the existing dark theme. So the skin is orthogonal to the
+  light/dark/system toggle: it rides whatever renders light.
+- Independent of `theme.enabled`: an always-light host (toggle disabled) still
+  gets the Cloud skin. Both the `data-qi-skin` marker and the skin CSS are
+  emitted **only** when `cloud_enabled`, so opting out ships zero extra bytes.
+- The head script is **not** involved — `cloud` is not a 4th toggle preference;
+  it's a server-static skin. No `readPref`/`apply` change, no toggle change.
+- Card-float selector is scoped to `main :is(.rounded-xl, .rounded-2xl).bg-white`
+  so chips/badges (`rounded-full` / `rounded-md`) stay flat.
+- Tested in `tests/Feature/View/DarkModeLayoutTest.php` (marker + CSS present
+  when on, absent when off, `:not(.dark)` guard, rides light independent of the
+  toggle flag); validated in `ConfigValidator::validateDashboard`.
 
 When `enabled = false`: the FOIT head script + `<meta name="color-scheme">`
 + body dark classes + theme-toggle component all skip emission. Tailwind

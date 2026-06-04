@@ -136,3 +136,51 @@ it('apply() dispatches qi-theme-applied with preference + resolved scheme', func
         ->toContain('preference: pref')
         ->toContain("resolved: dark ? 'dark' : 'light'");
 });
+
+// ── Cloud skin (Laravel-Cloud-inspired light look) ──────────────────────
+
+it('emits the cloud skin marker + CSS when cloud_enabled (default on)', function (): void {
+    $html = View::make('queue-insights::layouts.app', ['slot' => ''])->render();
+
+    expect($html)
+        ->toContain('data-qi-skin="cloud"')
+        ->toContain('html[data-qi-skin="cloud"]:not(.dark) body')
+        ->toContain('background-attachment: fixed')
+        ->toContain('backdrop-filter');
+});
+
+it('cloud skin is guarded by :not(.dark) so dark mode is untouched', function (): void {
+    $html = View::make('queue-insights::layouts.app', ['slot' => ''])->render();
+
+    // Every cloud selector carries the :not(.dark) guard — it can only paint
+    // light mode; dark / system-dark fall through to the existing dark theme.
+    expect($html)
+        ->toContain('html[data-qi-skin="cloud"]:not(.dark) header')
+        ->toContain('html[data-qi-skin="cloud"]:not(.dark) main');
+});
+
+it('omits the cloud skin entirely when cloud_enabled is false', function (): void {
+    config()->set('queue-insights.dashboard.theme.cloud_enabled', false);
+
+    $html = View::make('queue-insights::layouts.app', ['slot' => ''])->render();
+
+    expect($html)
+        ->not->toContain('data-qi-skin="cloud"')
+        ->not->toContain('html[data-qi-skin="cloud"]');
+});
+
+it('cloud skin rides light mode independently of the dark-mode toggle flag', function (): void {
+    // The cloud skin is a light-mode re-skin; it does not require the
+    // light/dark/system toggle to be enabled. With the theme toggle off the
+    // dashboard is always-light, and the cloud skin still applies.
+    config()->set('queue-insights.dashboard.theme.enabled', false);
+    config()->set('queue-insights.dashboard.theme.cloud_enabled', true);
+
+    $html = View::make('queue-insights::layouts.app', ['slot' => ''])->render();
+
+    expect($html)
+        ->toContain('data-qi-skin="cloud"')
+        // ...but the dark-mode head script + toggle stay absent (flag off).
+        ->not->toContain("var KEY = 'qi-theme'")
+        ->not->toContain('aria-label="Theme"');
+});

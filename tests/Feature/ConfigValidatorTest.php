@@ -484,6 +484,13 @@ it('rejects a non-array dashboard.theme', function (): void {
         ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme must be an array');
 });
 
+it('accepts and type-checks dashboard.theme.cloud_enabled', function (): void {
+    expect(fn () => ConfigValidator::validateDashboard(['theme' => ['cloud_enabled' => true]]))
+        ->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateDashboard(['theme' => ['cloud_enabled' => 'yes']]))
+        ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme.cloud_enabled must be a boolean');
+});
+
 it('rejects a non-bool dashboard.theme.enabled', function (): void {
     expect(fn () => ConfigValidator::validateDashboard(['theme' => ['enabled' => 'yes']]))
         ->toThrow(QueueInsightsConfigException::class, 'dashboard.theme.enabled must be a boolean')

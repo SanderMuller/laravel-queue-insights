@@ -423,6 +423,15 @@ return [
         // internal/specs/dashboard-dark-mode.md for rationale.
         'theme' => [
             'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
+
+            // "Cloud" theme — a light-based skin inspired by Laravel Cloud:
+            // a soft gradient-sky backdrop with a frosted header and floating
+            // cards. Adds a 4th option to the theme toggle (Light / System /
+            // Dark / Cloud). Requires `enabled` above (it rides the same head
+            // script + toggle). Opt out via QUEUE_INSIGHTS_CLOUD_THEME=false to
+            // keep the classic 3-way toggle. The default selection is still
+            // `system` — Cloud is offered, not forced.
+            'cloud_enabled' => env('QUEUE_INSIGHTS_CLOUD_THEME', true),
         ],
         // 12-hour / 24-hour clock toggle. When enabled, the dashboard
         // header renders a tri-state segmented control (12h / auto / 24h)

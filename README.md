@@ -461,6 +461,22 @@ Persistence lives in `localStorage['qi-theme']`. A blocking inline script in `<h
 
 Operators on system-dark hosts (terminal, IDE, Linear) get a coherent dark dashboard; operators on light hosts see the same look they had before. Disable via `QUEUE_INSIGHTS_DARK_MODE=false` in `.env` if needed — the inline script, color-scheme meta, and toggle component all skip emission and the dashboard reverts to the pre-feature always-light rendering.
 
+### Cloud look (light mode)
+
+Light mode is re-skinned with a **Laravel Cloud–inspired** look: a soft sunset-sky gradient backdrop, a frosted translucent header, and floating cards with gently rounded corners. It's a pure CSS skin keyed on `html[data-qi-skin="cloud"]:not(.dark)` — **dark mode is completely untouched** (the `:not(.dark)` guard), and the light/dark/system toggle is unchanged. The skin rides whatever renders light (including always-light hosts that disabled the toggle).
+
+```php
+// config/queue-insights.php
+'dashboard' => [
+    'theme' => [
+        'enabled' => env('QUEUE_INSIGHTS_DARK_MODE', true),
+        'cloud_enabled' => env('QUEUE_INSIGHTS_CLOUD_THEME', true),
+    ],
+],
+```
+
+Prefer the plain flat-light look? Set `QUEUE_INSIGHTS_CLOUD_THEME=false` — the `data-qi-skin` marker and the skin's CSS are then never emitted (zero extra bytes), and light mode renders exactly as before.
+
 ### Custom payload sanitizer
 
 The default `KeyRedactingSanitizer` can't see inside PHP-serialized `data.command` bodies. Apps with sensitive jobs should bind their own:

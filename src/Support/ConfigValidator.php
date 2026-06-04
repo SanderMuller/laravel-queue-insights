@@ -512,6 +512,12 @@ final class ConfigValidator
                 'queue-insights.dashboard.theme.enabled must be a boolean.'
             );
         }
+
+        if (array_key_exists('cloud_enabled', $theme) && ! is_bool($theme['cloud_enabled'])) {
+            throw new QueueInsightsConfigException(
+                'queue-insights.dashboard.theme.cloud_enabled must be a boolean.'
+            );
+        }
     }
 
     private static function assertNoRedisGlobMeta(string $value, string $path): void
