@@ -4,6 +4,20 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.25.0 - 2026-06-04
+
+<!-- verified-sha: e7229f5ede1de02585bb073f69cc355183afc59f -->
+### What's changed
+
+#### Added
+
+- **Failure context capture** — when a job or scheduled task fails, the package now records a snapshot of the surrounding context so you can debug without re-running anything. It captures the visible [Laravel `Context`](https://laravel.com/docs/context) facade at failure time (request id, user id, tenant, trace id — whatever your app puts there, including context added *during* execution) plus a small environment snapshot (worker `host`, `pid`, app `env`, and an optional `release`/deploy identifier). The snapshot shows in the failed-job and scheduled-run modals, rides along in the **Copy as Markdown** export so a failure pasted into an AI agent or issue tracker is self-describing, and is carried on both the `JobFailedAlert` and scheduler `ScheduledTaskFailed` events for host listeners. For scheduled tasks the **root-cause inner exception** (deepest `getPrevious()`) is captured discretely so it survives stack-trace truncation. Context values are redacted by key name through the same `capture.redact_keys` vocabulary as payloads before storage (the export is paste-safe), and hidden context is never captured. On by default (`failure_context.enabled`, `QUEUE_INSIGHTS_FAILURE_CONTEXT`); works on any queue driver. Capture breadth, the redaction allowlist, the release resolver, byte caps, and TTL are all configurable under `failure_context.*`.
+  
+- **Scheduler failure triage signals** — the scheduled-task modal now surfaces **Last success** (relative time) and a **Failing streak: N in a row** badge, backed by a new `consecutive_failures` counter (increments on failure, resets on the next success), so a flapping task is distinguishable from a persistently broken one at a glance.
+  
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.24.0...0.25.0
+
 ## 0.24.0 - 2026-06-03
 
 <!-- verified-sha: 53aa475817fb20974f3fc4e0836ac07ba200e8d1 -->
@@ -84,6 +98,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   
   
   
+  
   ```
 - **Horizon autodiscovery is now runtime-gated, with a "Horizon not running" banner.** `horizon.autodiscover` becomes tri-state (`true` / `false` / `'force'`). Default `true` only autodiscovers when Horizon's service provider is **actually loaded** in the running app — important for Vapor and similar setups where `config/horizon.php` defines supervisors that are never run from this app context (jobs route to SQS, Horizon's provider is excluded). When `'force'` is set without the provider loaded, the dashboard surfaces a top-level red banner so operators don't read empty supervisor rows as a healthy state. See [README.md](README.md#horizon-supervisor-auto-discovery) for the full tri-state matrix.
 - **Sharpened alert output across mail / Slack / scheduler channels.** Every detector now produces operator-readable single-line descriptions (multi-line stack traces collapsed); the typed `SnapshotErrored` event payload still keeps the **raw** `error_message` so host listeners forwarding to Sentry / external systems get the full text. Scheduler alerts gained human-readable task labels in their notification subject + body so on-call doesn't have to map task keys back to commands.
@@ -137,6 +152,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -159,6 +175,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -329,6 +346,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -561,6 +579,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -683,6 +702,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -718,6 +738,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -854,6 +875,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
