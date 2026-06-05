@@ -54,15 +54,6 @@
         };
     };
 
-    $accentStripe = static function (string $status): string {
-        return match ($status) {
-            'failed', 'hung' => 'bg-red-500 dark:bg-red-400',
-            'skipped', 'missed' => 'bg-amber-500 dark:bg-amber-400',
-            'success' => 'bg-emerald-500 dark:bg-emerald-400',
-            default => 'bg-sky-500 dark:bg-sky-400',
-        };
-    };
-
     $skipReasonExplanation = static function (string $reason): string {
         return match ($reason) {
             'mutex' => 'A previous run of this task was still in progress (`withoutOverlapping`).',
@@ -161,7 +152,7 @@
      class="fixed inset-0 z-50 flex items-center justify-center bg-gray-950/40 p-4"
      wire:click="closeRunModal">
     <div x-trap.noscroll="true"
-         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
+         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-2xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/10 dark:ring-white/10"
          @click.stop>
         @if($run === null)
             {{-- Expired empty state --}}
@@ -182,10 +173,8 @@
             </div>
         @else
             @php $badge = $statusBadge($run['status']); @endphp
-            {{-- Accent stripe --}}
-            <div class="h-1 {{ $accentStripe($run['status']) }}"></div>
-
-            {{-- Header --}}
+            {{-- Header (no coloured accent stripe — LC modals are clean white;
+                 the status badge below carries the colour). --}}
             <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
                 <div class="flex items-center gap-2 min-w-0">
                     <span class="inline-flex items-center rounded-md py-1 pr-2 pl-1.5 text-xs font-medium ring-1 ring-inset {{ $badge['cls'] }}">{{ $badge['label'] }}</span>
