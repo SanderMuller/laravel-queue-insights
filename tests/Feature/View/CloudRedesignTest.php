@@ -48,6 +48,30 @@ it('throughput, classes and schedule cards share the icon-square header language
         ->toContain('rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400');
 });
 
+it('the headline LIVE panel uses LC metric-card vertical dividers', function (): void {
+    $blade = qiView('partials/persistent-hero.blade.php');
+
+    // Columns 2 & 3 carry a hairline left border (dark-paired) and per-column
+    // padding — the LC sub-stats-split-by-vertical-rules pattern.
+    expect($blade)
+        ->toContain('border-l border-gray-950/5 px-4 dark:border-white/10')
+        ->toContain('border-l border-gray-950/5 pl-4 dark:border-white/10')
+        // 4 bordered columns (cols 2 & 3 across the two stat rows).
+        ->and(substr_count($blade, 'border-l border-gray-950/5'))->toBe(4);
+});
+
+it('the sidebar nav is icon-led with a per-section heroicon', function (): void {
+    expect(qiView('partials/tabs/nav-item.blade.php'))
+        ->toContain('<path fill-rule="evenodd" clip-rule="evenodd" d="{{ $icon }}"/>');
+
+    // One icon path per section in the nav map.
+    $nav = qiView('partials/tabs/sidebar-nav.blade.php');
+    expect($nav)->toContain("'overview' =>")
+        ->and($nav)->toContain("'schedule' =>")
+        ->and($nav)->toContain("'alerts' =>")
+        ->and($nav)->toContain("'icon' => \$navIcons['overview']");
+});
+
 it('the Horizon banner uses the calm LC notice tone, not the loud amber-100 block', function (): void {
     $blade = qiView('partials/horizon-not-running-banner.blade.php');
 
