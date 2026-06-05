@@ -80,7 +80,7 @@
         </dl>
         <div class="col-span-2 flex flex-wrap items-center justify-end gap-1.5 text-sm">
             @if($q['error'])
-                <x-queue-insights::hint triggerClass="rounded bg-red-50 dark:bg-red-900/40 px-1.5 py-0.5 font-medium text-red-700 dark:text-red-300 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30 cursor-help">
+                <x-queue-insights::hint triggerClass="rounded-md bg-red-50 dark:bg-red-900/40 px-1.5 py-0.5 font-medium text-red-700 dark:text-red-300 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30 cursor-help">
                     error
                     <x-slot:tip>
                         Most recent snapshot for this queue raised an error. The driver-reported message: <code class="rounded bg-white/10 px-1 font-mono">{{ $q['error'] }}</code>. Check the worker host can reach the queue backend (SQS credentials, Redis connectivity, DB grants) and look for a stack trace in the Laravel log alongside the next <code class="rounded bg-white/10 px-1 font-mono">queue-insights:snapshot</code> run.
@@ -88,19 +88,19 @@
                 </x-queue-insights::hint>
             @endif
             @if($q['stale'])
-                <x-queue-insights::hint triggerClass="rounded bg-amber-50 dark:bg-amber-900/40 px-1.5 py-0.5 font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30 cursor-help">
+                <x-queue-insights::hint triggerClass="rounded-md bg-amber-50 dark:bg-amber-900/40 px-1.5 py-0.5 font-medium text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-600/20 dark:ring-amber-400/30 cursor-help">
                     stale
                     <x-slot:tip>
                         Last snapshot is older than 120s. The <code class="rounded bg-white/10 px-1 font-mono">queue-insights:snapshot</code> command should run every minute via Laravel's scheduler &mdash; check <code class="rounded bg-white/10 px-1 font-mono">schedule:run</code> is wired into cron and the worker host can reach Redis.
                     </x-slot:tip>
                 </x-queue-insights::hint>
             @endif
-            <span class="rounded bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-gray-700 dark:text-gray-300">{{ $q['driver'] }}</span>
+            <span class="rounded-md bg-gray-950/5 dark:bg-white/10 px-1.5 py-0.5 font-mono text-gray-700 dark:text-gray-300">{{ $q['driver'] }}</span>
 
             @if($hasInspector)
                 <button type="button"
                         wire:click.stop="toggleQueueInspector(@js($q['inspector_key']))"
-                        class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-700 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
+                        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-gray-500 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-700 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"
                         aria-label="{{ $q['inspector_open'] ? 'Collapse pending inspector' : 'Expand pending inspector' }}">
                     <x-queue-insights::icon-chevron-right class="size-3 transition-transform {{ $q['inspector_open'] ? 'rotate-90' : '' }}"/>
                     <span class="tabular-nums">{{ number_format($q['tracked_count']) }} queued</span>

@@ -19,8 +19,8 @@
                             x-on:keydown.escape.window="open = false"
                             x-bind:aria-expanded="open"
                             aria-haspopup="menu"
-                            class="inline-flex items-center gap-2 rounded-lg bg-gray-950/[0.04] px-3 py-1.5 text-sm font-medium text-gray-900 ring-1 ring-inset ring-gray-950/10 transition hover:bg-gray-950/[0.08] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 dark:bg-white/5 dark:text-white dark:ring-white/10 dark:hover:bg-white/10">
-                        <span class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">Connection</span>
+                            class="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-gray-900 shadow-sm ring-1 ring-inset ring-gray-950/10 transition hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 dark:bg-gray-900 dark:text-white dark:ring-white/10 dark:hover:bg-gray-800">
+                        <span class="text-xs font-medium text-gray-500 dark:text-gray-400">Connection</span>
                         @if($activeTab !== null)
                             @if($activeTab['name'] === null)
                                 <span>{{ $activeTab['label'] }}</span>

@@ -293,23 +293,26 @@
            Laravel Cloud signature. Emitted only when cloud_enabled, so opting
            out ships zero extra bytes. */
         html[data-qi-skin="cloud"]:not(.dark) body {
-            /* Layered sky: a warm sun-glow low-right + a cool sky-glow top-left
-               over a pale lavender base — the Laravel Cloud sunset, kept light
-               enough that white cards float and dark text stays high-contrast. */
+            /* Calm near-white canvas with only a whisper of sky — a faint warm
+               glow low-right + cool glow top-left over a barely-tinted base.
+               Low contrast on purpose so cards float quietly (not a busy
+               sunset); LC keeps the backdrop subtle. */
             background:
-                radial-gradient(1200px 620px at 86% 112%, rgba(255, 210, 180, 0.50), transparent 60%),
-                radial-gradient(1080px 560px at 8% -12%, rgba(180, 211, 255, 0.45), transparent 58%),
-                linear-gradient(162deg, #eaf2fd 0%, #eef0fb 34%, #f4edfb 64%, #fcf1ec 100%);
+                radial-gradient(1300px 680px at 90% 118%, rgba(255, 224, 205, 0.22), transparent 62%),
+                radial-gradient(1150px 600px at 4% -18%, rgba(200, 221, 255, 0.20), transparent 60%),
+                linear-gradient(168deg, #f4f8fc 0%, #f5f5fb 42%, #f8f5fb 72%, #fcf7f3 100%);
             background-attachment: fixed;
         }
-        /* Frosted translucent header — the sky shows through the top bar; the
-           emerald aurora glow + diagonal strip sit behind the frost. */
+        /* Frosted translucent top bar — the sky shows through; clean and calm
+           like Laravel Cloud. The emerald aurora glow + diagonal shimmer are
+           dropped here (they read as "our brand chrome", not LC restraint). */
         html[data-qi-skin="cloud"]:not(.dark) header {
-            background-color: rgba(255, 255, 255, 0.72);
-            -webkit-backdrop-filter: saturate(1.4) blur(12px);
-            backdrop-filter: saturate(1.4) blur(12px);
+            background-color: rgba(255, 255, 255, 0.66);
+            -webkit-backdrop-filter: saturate(1.2) blur(14px);
+            backdrop-filter: saturate(1.2) blur(14px);
             border-bottom-color: rgba(2, 6, 23, 0.06);
         }
+        html[data-qi-skin="cloud"]:not(.dark) [data-qi-header-aurora] { display: none; }
         /* Float the content cards on the gradient + soften their corners to
            the Laravel-Cloud radius. Scoped to rounded WHITE panels inside
            <main> so chips / badges (rounded-full, rounded-md) stay flat. */
@@ -853,7 +856,7 @@
              liveness is read off the radar + tagline rather than a
              polling pill. --}}
         @php($qiPolling = \SanderMuller\QueueInsights\Support\Config::bool('dashboard.polling', true))
-        <header class="relative border-b border-gray-950/5 bg-white dark:border-white/10 dark:bg-gray-900">
+        <header class="relative z-30 border-b border-gray-950/5 bg-white dark:border-white/10 dark:bg-gray-900">
             {{-- Aurora bg layers — kept in their own clipped wrapper so the
                  emerald glow + diagonal accent don't bleed outside the bar,
                  while the header itself stays non-clipping so descendant
@@ -861,7 +864,7 @@
                  Tuned per mode: light mode uses softer emerald-200/40 stops
                  so the glow reads against white without competing with
                  content; dark mode keeps the bolder emerald-500/20. --}}
-            <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+            <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true" data-qi-header-aurora>
                 <div class="absolute -left-24 -top-16 size-72 rounded-full bg-emerald-200/40 blur-3xl dark:bg-emerald-500/20"></div>
                 <div class="qi-aurora-strip absolute inset-0 opacity-20 dark:opacity-30"></div>
             </div>

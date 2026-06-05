@@ -23,7 +23,9 @@
     $throughputViewW = 600;
     $throughputViewH = 64;
     $throughputBarW = $throughputViewW / $throughputBars;
-    $throughputGap = 2;
+    // Wide gap → thin discrete bars (Laravel Cloud reads each hour as its own
+    // bar, not a solid filled area). ~45% of the slot is bar, ~55% gap.
+    $throughputGap = $throughputBarW * 0.55;
 
     $buildBars = function (string $metric) use ($throughput, $throughputMax, $throughputBarW, $throughputGap, $throughputViewH): string {
         $out = '';
@@ -38,7 +40,7 @@
             $y = $throughputViewH - $h;
             // pointer-events="none" so hover passes through to the full-column
             // hover-target overlay rendered later in the SVG.
-            $out .= sprintf('<rect x="%.2f" y="%d" width="%.2f" height="%d" rx="1" pointer-events="none" />', $x, $y, $w, $h);
+            $out .= sprintf('<rect x="%.2f" y="%d" width="%.2f" height="%d" rx="2.5" pointer-events="none" />', $x, $y, $w, $h);
         }
 
         return $out;
@@ -119,8 +121,8 @@
                  stay clearly distinct without the harsh flat red-500. --}}
             <defs>
                 <linearGradient id="qi-bar-emerald" x1="0" x2="0" y1="0" y2="1">
-                    <stop offset="0%"   stop-color="rgb(110 231 183)"/>
-                    <stop offset="100%" stop-color="rgb(5 150 105)"/>
+                    <stop offset="0%"   stop-color="rgb(52 211 153)"/>
+                    <stop offset="100%" stop-color="rgb(16 185 129)"/>
                 </linearGradient>
                 <linearGradient id="qi-bar-rose" x1="0" x2="0" y1="0" y2="1">
                     <stop offset="0%"   stop-color="rgb(252 165 165)"/>
