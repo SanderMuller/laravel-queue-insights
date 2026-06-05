@@ -871,7 +871,7 @@
 
             <div class="relative mx-auto flex flex-wrap items-center gap-x-4 gap-y-2 px-6 py-4 sm:px-8 lg:max-w-7xl lg:px-10">
                 <a href="/" aria-label="Homepage" class="relative flex items-center gap-3 rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-400">
-                    <span class="relative inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-300 to-emerald-600 text-white shadow-lg shadow-emerald-500/30 ring-1 ring-emerald-200/30">
+                    <span class="relative inline-flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-300 to-emerald-600 text-white shadow-sm shadow-gray-950/10 ring-1 ring-emerald-200/30 dark:shadow-lg dark:shadow-emerald-500/30">
                         {{-- Mark — four ascending bars on an emerald gradient, reads as "queue depth". --}}
                         <svg class="size-4" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
                             <rect x="1" y="10" width="2.5" height="5" rx="0.75"/>
