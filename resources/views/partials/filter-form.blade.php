@@ -14,7 +14,7 @@
      *      checkbox doesn't render there.
      */
     $silenceModel = $silenceModel ?? null;
-    $fieldClass = 'h-9 rounded-md border-0 bg-white dark:bg-gray-900 px-2 text-sm text-gray-900 dark:text-gray-100 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 focus:ring-2 focus:ring-inset focus:ring-emerald-500';
+    $fieldClass = 'h-9 rounded-lg border-0 bg-white dark:bg-gray-900 px-2.5 text-sm text-gray-900 dark:text-gray-100 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 focus:ring-2 focus:ring-inset focus:ring-emerald-500';
 @endphp
 <div class="mb-4 flex flex-wrap items-end gap-2 text-sm">
     {{-- When the dashboard is scoped to a single connection,
@@ -78,7 +78,7 @@
         @if($active)
             <span class="rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20 dark:bg-emerald-900/40 dark:text-emerald-300 dark:ring-emerald-400/30">filtered</span>
             <button type="button" wire:click="{{ $clearMethod }}"
-                    class="h-9 rounded-md bg-white dark:bg-gray-900 px-2 text-sm font-medium text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-100 focus:ring-2 focus:ring-inset focus:ring-emerald-500">
+                    class="h-9 rounded-lg bg-white dark:bg-gray-900 px-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-950/10 dark:ring-white/10 transition hover:bg-gray-950/[0.03] dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-gray-100 focus:ring-2 focus:ring-inset focus:ring-emerald-500">
                 Clear filter
             </button>
         @endif
