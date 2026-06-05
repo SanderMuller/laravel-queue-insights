@@ -15,11 +15,11 @@
         x-on:click="setTab('{{ $name }}')"
         x-bind:aria-current="tab === '{{ $name }}' ? 'page' : null"
         x-bind:class="tab === '{{ $name }}'
-            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'
-            : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-white/5 dark:hover:text-gray-100'"
-        class="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-sm font-medium transition">
+            ? 'border-emerald-500 font-semibold text-gray-900 dark:border-emerald-400 dark:text-gray-100'
+            : 'border-transparent font-medium text-gray-500 hover:text-gray-900 dark:text-gray-300 dark:hover:text-gray-100'"
+        class="flex w-full items-center gap-2.5 border-l-2 rounded-r-md py-1.5 pl-2.5 pr-3 text-left text-sm transition">
     @if($icon !== null)
-        <svg class="size-4 shrink-0 opacity-70" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+        <svg class="size-4 shrink-0 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
             <path fill-rule="evenodd" clip-rule="evenodd" d="{{ $icon }}"/>
         </svg>
     @endif

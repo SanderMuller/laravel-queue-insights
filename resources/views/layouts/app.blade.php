@@ -313,14 +313,22 @@
             border-bottom-color: rgba(2, 6, 23, 0.06);
         }
         html[data-qi-skin="cloud"]:not(.dark) [data-qi-header-aurora] { display: none; }
-        /* Float the content cards on the gradient + soften their corners to
-           the Laravel-Cloud radius. Scoped to rounded WHITE panels inside
-           <main> so chips / badges (rounded-full, rounded-md) stay flat. */
+        /* Float the content cards on the gradient with a CLEAR hairline edge
+           (LC defines cards with a crisp border, not a heavy shadow) over a
+           calm, low outer shadow. Scoped to rounded WHITE panels inside <main>
+           so chips / badges (rounded-full, rounded-md) stay flat. */
         html[data-qi-skin="cloud"]:not(.dark) main :is(.rounded-xl, .rounded-2xl).bg-white {
             border-radius: 1rem;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
-                        0 14px 34px -14px rgba(30, 58, 110, 0.24);
+            box-shadow: 0 1px 1px rgba(15, 23, 42, 0.03),
+                        0 8px 22px -18px rgba(30, 58, 110, 0.14),
+                        inset 0 0 0 1px rgba(2, 6, 23, 0.08);
         }
+        /* A touch more breathing room inside content cards — targets cards that
+           carry p-5 (NOT the table cards, which pad their own rows). */
+        html[data-qi-skin="cloud"]:not(.dark) main .rounded-xl.bg-white.p-5 { padding: 1.5rem; }
+        /* Slightly smaller, calmer base type — LC runs a compact scale. Light
+           only; dark keeps the 16px default. */
+        html[data-qi-skin="cloud"]:not(.dark) { font-size: 15px; }
         @endif
 
         /* Aurora accent keyframes — defined globally so any dashboard
