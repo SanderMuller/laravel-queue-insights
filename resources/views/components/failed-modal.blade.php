@@ -210,7 +210,7 @@
      wire:click="closeFailed">
 
     <div x-trap.noscroll="true"
-         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/5 dark:ring-white/10"
+         class="max-h-[88vh] w-full max-w-5xl overflow-auto rounded-2xl bg-white dark:bg-gray-900 shadow-xl ring-1 ring-gray-950/10 dark:ring-white/10"
          @click.stop>
         @include('queue-insights::partials.failed-modal-header')
 
