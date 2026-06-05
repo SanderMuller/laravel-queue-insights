@@ -189,6 +189,16 @@
     <style>
         [x-cloak] { display: none !important; }
 
+        /* Checkbox checkmark — the Play CDN ships without @tailwindcss/forms, so
+           `appearance-none` checkboxes get their tick from this rule (white check
+           on the emerald checked fill). Inert until `:checked`. */
+        .qi-checkbox:checked {
+            background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M4 8.5l2.5 2.5L12 5' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3e%3c/svg%3e");
+            background-size: 0.7rem;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
         /* Copy-button feedback. Driven by `data-qi-copied` attribute toggled in
            layouts/app.blade.php's click handler. Inlined here (not via Tailwind
            arbitrary variants) because the CDN JIT can miss `group-data-[…]:*` in
@@ -312,7 +322,11 @@
             backdrop-filter: saturate(1.2) blur(14px);
             border-bottom-color: rgba(2, 6, 23, 0.06);
         }
-        html[data-qi-skin="cloud"]:not(.dark) [data-qi-header-aurora] { display: none; }
+        /* Drop the emerald aurora glow + diagonal shimmer + top hairline in
+           cloud mode — header AND the LIVE stat panels (overview + schedule).
+           They read as our brand chrome; LC keeps these surfaces calm + flat. */
+        html[data-qi-skin="cloud"]:not(.dark) [data-qi-header-aurora],
+        html[data-qi-skin="cloud"]:not(.dark) [data-qi-aurora] { display: none; }
         /* Float the content cards on the gradient with a CLEAR hairline edge
            (LC defines cards with a crisp border, not a heavy shadow) over a
            calm, low outer shadow. Scoped to rounded WHITE panels inside <main>

@@ -98,7 +98,7 @@
         <div class="relative isolate overflow-hidden grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-6 gap-y-4 rounded-xl bg-white dark:bg-gray-900 p-5 ring-1 ring-gray-950/5 dark:ring-white/10">
             @unless($snapshotStale)
                 @include('queue-insights::partials.aurora-bg')
-                <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" aria-hidden="true"></div>
+                <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" aria-hidden="true" data-qi-aurora></div>
                 <div class="col-span-2 sm:col-span-3 lg:col-span-6 -mb-1 flex items-center gap-2">
                     <span class="relative flex size-1.5">
                         <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>

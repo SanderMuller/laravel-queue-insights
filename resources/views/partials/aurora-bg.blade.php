@@ -13,7 +13,7 @@
      * layouts/app.blade.php) for the diagonal sweep animation.
      */
 @endphp
-<div class="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
+<div class="pointer-events-none absolute inset-0 -z-10" aria-hidden="true" data-qi-aurora>
     <div class="absolute -left-16 -top-20 size-64 rounded-full bg-emerald-200/10 blur-3xl dark:bg-emerald-500/[0.06]"></div>
     <div class="absolute -right-12 -bottom-24 size-56 rounded-full bg-emerald-100/15 blur-3xl dark:bg-emerald-400/[0.04]"></div>
     <div class="qi-aurora-strip absolute inset-0 opacity-5 dark:opacity-[0.06]"></div>

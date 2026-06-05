@@ -75,7 +75,7 @@
              utilities are inert here. --}}
         <label class="inline-flex h-9 cursor-pointer items-center gap-2 self-center text-sm font-medium text-gray-600 dark:text-gray-300">
             <input type="checkbox" wire:model.live="{{ $silenceModel }}"
-                   class="size-4 rounded accent-emerald-600 dark:accent-emerald-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500"/>
+                   class="qi-checkbox size-4 shrink-0 cursor-pointer appearance-none rounded border border-gray-300 bg-white transition checked:border-emerald-600 checked:bg-emerald-600 hover:border-gray-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500 dark:border-white/20 dark:bg-white/5 dark:checked:border-emerald-500 dark:checked:bg-emerald-500"/>
             Show silenced
         </label>
     @endif

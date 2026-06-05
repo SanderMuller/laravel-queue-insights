@@ -25,7 +25,7 @@
          metrics — the Laravel Cloud CPU|Memory|Replicas pattern, in our brand. --}}
     <dl aria-label="Headline stats" class="relative isolate overflow-hidden grid grid-cols-3 gap-y-4 rounded-xl bg-white p-5 ring-1 ring-gray-950/5 dark:bg-gray-900 dark:ring-white/10">
         @include('queue-insights::partials.aurora-bg')
-        <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" aria-hidden="true"></div>
+        <div class="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-400/40 to-transparent" aria-hidden="true" data-qi-aurora></div>
         <div class="col-span-3 -mb-1 flex items-center gap-2">
             <span class="relative flex size-1.5">
                 <span class="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
