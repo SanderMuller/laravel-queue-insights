@@ -61,6 +61,21 @@ it('the sidebar nav is icon-led with a per-section heroicon', function (): void 
         ->and($nav)->toContain("'icon' => \$navIcons['overview']");
 });
 
+it('the filter bar matches the LC search + filter components', function (): void {
+    $blade = qiView('partials/filter-form.blade.php');
+
+    expect($blade)
+        // Magnifier-prefixed class search (the LC "Search" component) + datalist.
+        ->toContain('type="search"')
+        ->toContain('placeholder="Search class…"')
+        ->toContain('<datalist')
+        // Clean dropdowns whose value names the filter (LC "All deployments" style).
+        ->toContain('All connections')
+        ->toContain('All queues')
+        // Old stacked label-above-select layout is gone.
+        ->not->toContain('flex flex-col gap-1 font-medium');
+});
+
 it('the Horizon banner uses the calm LC notice tone, not the loud amber-100 block', function (): void {
     $blade = qiView('partials/horizon-not-running-banner.blade.php');
 
