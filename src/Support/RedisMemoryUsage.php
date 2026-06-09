@@ -58,9 +58,8 @@ final class RedisMemoryUsage
         $slot = hash('sha256', $connection . '|' . KeyPrefix::make(''));
         $cacheKey = self::CACHE_KEY_PREFIX . $slot;
 
-        /** @var int|null $cached */
         $cached = Cache::get($cacheKey);
-        if ($cached !== null) {
+        if (is_int($cached)) {
             return $cached;
         }
 
