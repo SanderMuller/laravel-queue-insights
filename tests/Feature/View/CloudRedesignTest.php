@@ -9,10 +9,11 @@
 
 function qiView(string $relative): string
 {
-    $path = realpath(__DIR__ . '/../../../resources/views/' . $relative);
-    expect($path)->not->toBeFalse("view not found: {$relative}");
+    $path = __DIR__ . '/../../../resources/views/' . $relative;
+    expect(file_exists($path))
+        ->toBeTrue("view not found: {$relative}");
 
-    return (string) file_get_contents((string) $path);
+    return (string) file_get_contents($path);
 }
 
 it('overview summary cards carry LC icon-square headers', function (): void {
