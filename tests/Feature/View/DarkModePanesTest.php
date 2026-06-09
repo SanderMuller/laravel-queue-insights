@@ -59,10 +59,9 @@ it('emits dark variants on pane-queues at-risk + healthy tables and empty state'
         // Empty-state dashed border.
         ->toContain('dark:border-white/10')
         ->toContain('dark:bg-white/10')
-        // At-risk red ring + heading + divider.
+        // At-risk red ring + heading.
         ->toContain('dark:ring-red-400/30')
         ->toContain('dark:text-red-300')
-        ->toContain('dark:divide-red-400/20')
         // Healthy gray ring + heading.
         ->toContain('dark:ring-white/10')
         ->toContain('dark:divide-white/10');

@@ -46,12 +46,11 @@ it('emits dark variants on the sidebar nav-item', function (): void {
     ])->render();
 
     expect($html)
-        // Active branch.
-        ->toContain('dark:bg-emerald-500/10')
-        ->toContain('dark:text-emerald-300')
+        // Active branch — left-border accent + bold text.
+        ->toContain('dark:border-emerald-400')
+        ->toContain('dark:text-gray-100')
         // Inactive branch.
         ->toContain('dark:text-gray-300')
-        ->toContain('dark:hover:bg-white/5')
         ->toContain('dark:hover:text-gray-100');
 });
 
