@@ -344,7 +344,7 @@ final class ConfigValidator
      */
     public static function validateInitiator(array $initiator): void
     {
-        foreach (['enabled', 'capture_origin', 'capture_call_site', 'intern'] as $key) {
+        foreach (['enabled', 'capture_origin', 'capture_call_site'] as $key) {
             if (isset($initiator[$key]) && ! is_bool($initiator[$key])) {
                 throw new QueueInsightsConfigException(
                     "queue-insights.initiator.{$key} must be a boolean."

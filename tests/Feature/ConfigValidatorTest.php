@@ -610,7 +610,6 @@ it('accepts a well-formed initiator block (or empty defaults)', function (): voi
             'enabled' => true,
             'capture_origin' => true,
             'capture_call_site' => false,
-            'intern' => false,
             'call_site_max_depth' => 30,
             'ttl_seconds' => 604800,
             'context_key' => 'qi_origin',
@@ -631,11 +630,6 @@ it('rejects a non-boolean initiator.capture_origin', function (): void {
 it('rejects a non-boolean initiator.capture_call_site', function (): void {
     expect(fn () => ConfigValidator::validateInitiator(['capture_call_site' => 'off']))
         ->toThrow(QueueInsightsConfigException::class, 'initiator.capture_call_site must be a boolean');
-});
-
-it('rejects a non-boolean initiator.intern', function (): void {
-    expect(fn () => ConfigValidator::validateInitiator(['intern' => 'no']))
-        ->toThrow(QueueInsightsConfigException::class, 'initiator.intern must be a boolean');
 });
 
 it('rejects a non-int initiator.call_site_max_depth', function (): void {

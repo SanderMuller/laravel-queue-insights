@@ -570,7 +570,7 @@ return [
      | scheduled task the work flowed from) and the exact `call_site`
      | (file:line the dispatch ran from). Origin rides Laravel `Context`
      | and propagates for free into nested dispatches; call site needs a
-     | small Redis side-key. See internal/specs/job-initiator-tracking.md.
+     | small Redis side-key.
      */
     'initiator' => [
         // Master switch. Off → no listeners do initiator work, no keys written.
@@ -595,9 +595,6 @@ return [
 
         // Hidden Context key the entry-point hooks write and the listeners read.
         'context_key' => 'qi_origin',
-
-        // Phase 3 — intern origin/call_site strings to small ids. See §5.2.
-        'intern' => false,
     ],
 
     /*
