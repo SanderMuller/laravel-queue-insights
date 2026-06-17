@@ -24,7 +24,7 @@ namespace SanderMuller\QueueInsights\Support;
  */
 final class SentryTraceLink
 {
-    private const DEFAULT_TEMPLATE = 'https://{org}.sentry.io/issues/?query=trace:{trace}';
+    private const string DEFAULT_TEMPLATE = 'https://{org}.sentry.io/issues/?query=trace:{trace}';
 
     /**
      * @param  array<array-key, mixed>|null  $payload  Decoded failed_jobs payload.

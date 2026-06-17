@@ -704,11 +704,11 @@ it('accepts a callable failure_context.release_resolver', function (): void {
 });
 
 it('accepts an empty or well-formed sentry block', function (): void {
-    expect(fn () => ConfigValidator::validateSentry([]))->not->toThrow(Throwable::class);
-    expect(fn () => ConfigValidator::validateSentry([
-        'organization' => 'acme',
-        'issue_url_template' => 'https://{org}.sentry.io/issues/?query=trace:{trace}',
-    ]))->not->toThrow(Throwable::class);
+    expect(fn () => ConfigValidator::validateSentry([]))->not->toThrow(Throwable::class)
+        ->and(fn () => ConfigValidator::validateSentry([
+            'organization' => 'acme',
+            'issue_url_template' => 'https://{org}.sentry.io/issues/?query=trace:{trace}',
+        ]))->not->toThrow(Throwable::class);
 });
 
 it('accepts a null sentry.organization (button disabled)', function (): void {

@@ -54,6 +54,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Retry badge** — pending, in-flight, and completed rows render an orange `retry N` chip with hover tooltip when the worker has picked the job up more than once. Backed by `attempts` stamped on the `pending:{uuid}` hash at `JobProcessing`.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
+- **Sentry deep-link** — when a failed job's payload carries sentry-laravel trace data, the modal shows a **View in Sentry** button (and a Markdown-export line) linking to the matching Sentry issue. Opt-in via your org slug.
 - **Alerting** — nine detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing, connection-drift) with per-rule cooldown + `log` / `slack` / `mail` / `sentry` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
 - **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail / sentry; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
@@ -405,6 +406,26 @@ Context **values are redacted by key name** through the same `capture.redact_key
 
 > [!NOTE]
 > Capturing is gated on `failure_context.enabled` (on by default — it's cheap, since failures are rare, and sanitized). Set `QUEUE_INSIGHTS_FAILURE_CONTEXT=false` to disable entirely.
+
+### Sentry deep-link
+
+If your app uses [sentry-laravel](https://github.com/getsentry/sentry-laravel), every dispatched job's payload already carries Sentry's distributed-tracing data (`sentry_trace_parent_data` / `sentry_baggage_data`). Set your Sentry org slug and the failed-job modal renders a **View in Sentry** button — plus a `Sentry:` line in the Markdown export — linking to the Sentry **issue** filtered by that job's trace id:
+
+```php
+// config/queue-insights.php
+'sentry' => [
+    'organization' => env('QUEUE_INSIGHTS_SENTRY_ORG'),          // org slug; null/empty hides the button
+    'issue_url_template' => env(
+        'QUEUE_INSIGHTS_SENTRY_URL_TEMPLATE',
+        'https://{org}.sentry.io/issues/?query=trace:{trace}',
+    ),
+],
+```
+
+The button self-hides unless an org slug is configured and the payload carries a trace id. It links the **issue** stream rather than the performance/trace view, so it resolves even when the trace was sampled out (error capture is independent of `traces_sample_rate`).
+
+> [!NOTE]
+> `organization` is your Sentry org *slug* (the `{slug}` in `{slug}.sentry.io`), not the numeric org id. This is unrelated to the `alerts.channels.sentry` block — that one controls alert delivery; this controls dashboard linking.
 
 ### Embedding the dashboard inside an admin layout
 

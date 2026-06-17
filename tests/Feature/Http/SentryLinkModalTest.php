@@ -48,7 +48,7 @@ it('renders the View in Sentry button + markdown link when configured and trace 
 });
 
 it('omits the Sentry button when no org slug is configured', function (): void {
-    config()->set('queue-insights.sentry.organization', null);
+    config()->set('queue-insights.sentry.organization');
 
     $html = renderSentryFailedModal([
         'displayName' => 'App\\Jobs\\X',

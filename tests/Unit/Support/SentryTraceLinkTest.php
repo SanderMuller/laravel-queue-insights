@@ -43,7 +43,7 @@ it('lowercases an uppercase trace id', function (): void {
 });
 
 it('returns null when no org slug is configured', function (): void {
-    config()->set('queue-insights.sentry.organization', null);
+    config()->set('queue-insights.sentry.organization');
 
     $url = SentryTraceLink::for([
         'sentry_trace_parent_data' => '494026a4a8ee43ebaeff095dc2772f54-f1b7542623584b99',
@@ -53,8 +53,9 @@ it('returns null when no org slug is configured', function (): void {
 });
 
 it('returns null when the payload carries no trace data', function (): void {
-    expect(SentryTraceLink::for(['displayName' => 'App\\Jobs\\X']))->toBeNull();
-    expect(SentryTraceLink::for(null))->toBeNull();
+    expect(SentryTraceLink::for(['displayName' => 'App\\Jobs\\X']))->toBeNull()
+        ->and(SentryTraceLink::for(null))
+        ->toBeNull();
 });
 
 it('returns null when the trace id is malformed', function (): void {
