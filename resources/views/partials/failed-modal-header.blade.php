@@ -1,5 +1,6 @@
 {{-- Failed-job modal header — shared across modal layout variants.
-    Expects in scope: $failed, $canRetry, $expandedBatchId, $chainBackTop. --}}
+    Expects in scope: $failed, $canRetry, $expandedBatchId, $chainBackTop,
+    $failedSentryUrl (optional; computed in the failed-modal @php block). --}}
 <div class="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
     <div class="flex items-center gap-2">
         @if($expandedBatchId !== '')
@@ -59,6 +60,23 @@
                     <span x-show="confirming" x-cloak>Confirm retry?</span>
                 </button>
             </div>
+        @endif
+
+        {{-- Sentry — opens the issue stream filtered by this job's trace id.
+            Self-hides unless an org slug is configured and the payload carries
+            a trace id ($failedSentryUrl computed in the modal @php block). --}}
+        @if(! empty($failedSentryUrl ?? null))
+            <a href="{{ $failedSentryUrl }}"
+               target="_blank"
+               rel="noopener noreferrer"
+               x-show="view === 'job'"
+               aria-label="View this failure in Sentry"
+               class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset bg-white dark:bg-gray-900 text-violet-700 dark:text-violet-300 ring-violet-600/30 dark:ring-violet-400/30 transition hover:bg-violet-50 dark:hover:bg-violet-900/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500">
+                <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path d="M5.22 14.78a.75.75 0 0 0 1.06 0l7.22-7.22v5.69a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75h-7.5a.75.75 0 0 0 0 1.5h5.69l-7.22 7.22a.75.75 0 0 0 0 1.06Z"/>
+                </svg>
+                <span>View in Sentry</span>
+            </a>
         @endif
 
         {{-- Markdown export — convenient hand-off to an AI agent / tracker.

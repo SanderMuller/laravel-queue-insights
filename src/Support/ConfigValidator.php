@@ -388,6 +388,18 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the `sentry` block. Delegates to `SentryConfigValidator` to keep
+     * this class under the cognitive-complexity cap (same split as
+     * `validateAlerts` / `validateFailureContext`).
+     *
+     * @param  array<array-key, mixed>  $sentry
+     */
+    public static function validateSentry(array $sentry): void
+    {
+        SentryConfigValidator::validate($sentry);
+    }
+
+    /**
      * Validate `connection_aliases`. Operator-declared single-hop map. Rules:
      *
      *  - associative array, keys + values non-empty strings

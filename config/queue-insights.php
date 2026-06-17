@@ -181,6 +181,33 @@ return [
         'ttl_seconds' => 604800,
     ],
 
+    /*
+     | Sentry deep-link for failed jobs. When sentry-laravel is installed in the
+     | host it injects distributed-tracing data into the queue payload
+     | (`sentry_trace_parent_data` / `sentry_baggage_data`). Set an org slug here
+     | and the failed-job modal shows a "View in Sentry" button linking to the
+     | issue stream filtered by that job's trace id (and the same link is added
+     | to the Markdown export).
+     |
+     | The link targets the ISSUE stream, NOT the performance/trace view: the
+     | failure error event is captured under Sentry's error `sample_rate`, which
+     | is independent of `traces_sample_rate`, so it resolves even when the trace
+     | was sampled out. The button self-hides unless a slug is set and the
+     | payload carries a trace id.
+     |
+     | organization: your Sentry org SLUG (the subdomain in `{slug}.sentry.io`),
+     | NOT the numeric org id. Leave null to hide the button. This is unrelated to
+     | the `alerts.channels.sentry` block below — that controls alert delivery,
+     | this controls dashboard linking.
+     */
+    'sentry' => [
+        'organization' => env('QUEUE_INSIGHTS_SENTRY_ORG'),
+        'issue_url_template' => env(
+            'QUEUE_INSIGHTS_SENTRY_URL_TEMPLATE',
+            'https://{org}.sentry.io/issues/?query=trace:{trace}',
+        ),
+    ],
+
     'retention' => [
         'history_hours' => 24,
         'processed_counters_days' => 7,

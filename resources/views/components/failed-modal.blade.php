@@ -90,6 +90,13 @@
         $failedPayloadPretty = $failedPayloadRaw;
     }
 
+    // Sentry deep-link — built from the sentry-laravel tracing data in the
+    // payload (trace id) + the configured org slug. Null (button hidden) when
+    // the host has no org configured or the payload carries no trace id.
+    $failedSentryUrl = \SanderMuller\QueueInsights\Support\SentryTraceLink::for(
+        is_array($failedPayloadDecoded) ? $failedPayloadDecoded : null
+    );
+
     // Markdown export — handed to an AI agent or pasted into a tracker. Uses
     // a fenced block for the trace + payload so newlines survive copy/paste.
     //
@@ -147,6 +154,12 @@
     }
     if (! empty($failed['call_site'])) {
         $mdLines[] = '- **Dispatched from:** `'.$failed['call_site'].'`';
+    }
+    // Sentry issue link — only when an org slug is configured + the payload
+    // carries a trace id. Lets the AI handoff / tracker jump straight to the
+    // captured error event.
+    if (! empty($failedSentryUrl)) {
+        $mdLines[] = '- **Sentry:** '.$failedSentryUrl;
     }
     if (is_string($failedException) && $failedException !== '') {
         $fence = $fenceFor($failedException);

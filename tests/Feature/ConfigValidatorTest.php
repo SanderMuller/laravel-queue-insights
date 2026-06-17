@@ -702,3 +702,48 @@ it('accepts a callable failure_context.release_resolver', function (): void {
     expect(fn () => ConfigValidator::validateFailureContext(['release_resolver' => fn (): string => '1.0']))
         ->not->toThrow(Throwable::class);
 });
+
+it('accepts an empty or well-formed sentry block', function (): void {
+    expect(fn () => ConfigValidator::validateSentry([]))->not->toThrow(Throwable::class);
+    expect(fn () => ConfigValidator::validateSentry([
+        'organization' => 'acme',
+        'issue_url_template' => 'https://{org}.sentry.io/issues/?query=trace:{trace}',
+    ]))->not->toThrow(Throwable::class);
+});
+
+it('accepts a null sentry.organization (button disabled)', function (): void {
+    expect(fn () => ConfigValidator::validateSentry(['organization' => null]))
+        ->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-string sentry.organization', function (): void {
+    expect(fn () => ConfigValidator::validateSentry(['organization' => 123]))
+        ->toThrow(QueueInsightsConfigException::class, 'sentry.organization must be a string or null');
+});
+
+it('rejects an empty sentry.issue_url_template', function (): void {
+    expect(fn () => ConfigValidator::validateSentry(['issue_url_template' => '']))
+        ->toThrow(QueueInsightsConfigException::class, 'sentry.issue_url_template must be a non-empty string');
+});
+
+it('rejects an unsafe sentry.organization slug', function (): void {
+    expect(fn () => ConfigValidator::validateSentry(['organization' => 'acme/../evil']))
+        ->toThrow(QueueInsightsConfigException::class, 'sentry.organization must be a Sentry org slug');
+});
+
+it('accepts an empty sentry.organization (disables the button)', function (): void {
+    expect(fn () => ConfigValidator::validateSentry(['organization' => '']))
+        ->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-https sentry.issue_url_template', function (): void {
+    expect(fn () => ConfigValidator::validateSentry([
+        'issue_url_template' => 'javascript:alert(1){trace}',
+    ]))->toThrow(QueueInsightsConfigException::class, 'sentry.issue_url_template must be an absolute https:// URL');
+});
+
+it('rejects a sentry.issue_url_template missing the {trace} placeholder', function (): void {
+    expect(fn () => ConfigValidator::validateSentry([
+        'issue_url_template' => 'https://acme.sentry.io/issues/',
+    ]))->toThrow(QueueInsightsConfigException::class, 'sentry.issue_url_template must contain the {trace} placeholder');
+});
