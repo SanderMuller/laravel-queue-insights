@@ -45,10 +45,26 @@ final readonly class MissedRunReconciler
         $lastSwept = $this->lastSweptMs() ?? ($nowMs - 120_000); // first sweep → look back 2 minutes
         $driftMs = Config::int('scheduler.sweeper.drift_seconds', 90) * 1000;
 
+        // Grace gate: judge a fire missed only once its `+drift` grace has
+        // elapsed (`now >= expectedAt + drift`), so a late-but-within-drift
+        // `Starting` — Vapor cold start, EventBridge jitter — has had its
+        // full chance to land before we call the fire missed. Without this
+        // the sweep at expectedAt+3s declares missed before the (still
+        // valid) Starting arrives, writing a false row.
+        //
+        // The window is therefore shifted back one drift. Its lower bound
+        // reaches back a further drift to re-cover the band the previous
+        // tick deferred (last tick judged up to lastSwept - drift). The
+        // synthetic `missed`/`Starting` dedup in $actual makes the one-tick
+        // boundary overlap harmless. `last_swept_ms` still advances to
+        // nowMs untouched so the liveness gauge keeps reading "now".
+        $evalFrom = $lastSwept - $driftMs;
+        $evalTo = $nowMs - $driftMs;
+
         $missedCount = 0;
         foreach ($schedule->events() as $event) {
             try {
-                $missedCount += $this->reconcileEvent($event, $lastSwept, $nowMs, $driftMs);
+                $missedCount += $this->reconcileEvent($event, $evalFrom, $evalTo, $driftMs);
             } catch (Throwable $throwable) {
                 Log::warning('queue-insights: MissedRunReconciler::reconcileEvent failed', [
                     'exception' => $throwable::class,
@@ -89,22 +105,114 @@ final readonly class MissedRunReconciler
             $toMs + $driftMs,
         );
 
+        // Debounce: alert only after this many consecutive expected fires
+        // have gone unobserved. A single isolated miss is infra noise on a
+        // per-minute scheduler (late tick / dropped Starting write), so the
+        // row is recorded but the alert is gated. `$observed` excludes prior
+        // synthetic `missed` rows so a sustained gap actually accumulates; it
+        // loads lazily on the first miss so a healthy sweep stays cheap.
+        $minConsecutive = max(1, Config::int('scheduler.sweeper.min_consecutive_misses', 2));
+        $observed = null;
+
         $missed = 0;
         foreach ($expected as $expectedAt) {
-            if (! $this->anyWithinDrift($expectedAt, $actual, $driftMs)) {
-                $this->store->recordMissed(
-                    $taskKey,
-                    (string) Str::ulid(),
-                    $expectedAt,
-                );
+            if ($this->anyWithinDrift($expectedAt, $actual, $driftMs)) {
+                continue;
+            }
 
+            $this->store->recordMissed(
+                $taskKey,
+                (string) Str::ulid(),
+                $expectedAt,
+            );
+
+            ++$missed;
+
+            if ($minConsecutive <= 1) {
                 $this->dispatcher->dispatchScheduledTaskMissed($taskKey, $event, $expectedAt);
 
-                ++$missed;
+                continue;
+            }
+
+            $observed ??= $this->reader->observedRunTimestampsBetween(
+                $taskKey,
+                $this->lookbackFloorMs($cron, $tzString, $expected[0], $minConsecutive) - $driftMs,
+                $toMs + $driftMs,
+            );
+
+            if ($this->consecutiveMissCount($cron, $tzString, $expectedAt, $observed, $driftMs, $minConsecutive) >= $minConsecutive) {
+                $this->dispatcher->dispatchScheduledTaskMissed($taskKey, $event, $expectedAt);
             }
         }
 
         return $missed;
+    }
+
+    /**
+     * Earliest expected-fire timestamp the gate may need to inspect:
+     * `$minConsecutive - 1` cron fires before the first fire in this sweep.
+     * Bounds the `observed` query window so a sustained gap that began
+     * before the sweep window is still visible to the look-back.
+     */
+    private function lookbackFloorMs(CronExpression $cron, ?string $tz, int $firstExpectedMs, int $minConsecutive): int
+    {
+        $cursorMs = $firstExpectedMs;
+        for ($i = 1; $i < $minConsecutive; ++$i) {
+            $prevMs = $this->previousFireMs($cron, $tz, $cursorMs);
+            if ($prevMs === null) {
+                break;
+            }
+
+            $cursorMs = $prevMs;
+        }
+
+        return $cursorMs;
+    }
+
+    /**
+     * Length of the unbroken run of unobserved expected fires ending at
+     * (and including) `$expectedAtMs`. Walks backwards fire-by-fire and
+     * stops at the first fire with an observed run within drift, or once
+     * the threshold is reached (no need to count further).
+     *
+     * @param  list<int>  $observed
+     */
+    private function consecutiveMissCount(CronExpression $cron, ?string $tz, int $expectedAtMs, array $observed, int $driftMs, int $cap): int
+    {
+        $count = 1;
+        $cursorMs = $expectedAtMs;
+        for ($i = 1; $i < $cap; ++$i) {
+            $prevMs = $this->previousFireMs($cron, $tz, $cursorMs);
+            if ($prevMs === null) {
+                break;
+            }
+
+            if ($this->anyWithinDrift($prevMs, $observed, $driftMs)) {
+                break;
+            }
+
+            ++$count;
+            $cursorMs = $prevMs;
+        }
+
+        return $count;
+    }
+
+    /**
+     * The cron fire strictly before `$fromMs`, in unix milliseconds, or
+     * null when the expression yields none.
+     */
+    private function previousFireMs(CronExpression $cron, ?string $tz, int $fromMs): ?int
+    {
+        $fromSec = (int) floor($fromMs / 1000);
+
+        try {
+            $prev = $cron->getPreviousRunDate(Date::createFromTimestamp($fromSec)->toDateTimeString(), 0, false, $tz);
+        } catch (Throwable) {
+            return null;
+        }
+
+        return $prev->getTimestamp() * 1000;
     }
 
     /**

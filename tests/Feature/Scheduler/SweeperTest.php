@@ -10,6 +10,7 @@ use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event as EventDispatcher;
+use Illuminate\Support\Str;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Events\ScheduledTaskFailed as DomainScheduledTaskFailed;
 use SanderMuller\QueueInsights\Events\ScheduledTaskHung;
@@ -59,6 +60,21 @@ function resolveSchedule(): Schedule
     return $schedule;
 }
 
+/**
+ * Narrow the live Schedule down to a single event so the reconciler's only
+ * candidate is the one under test — the container auto-registers
+ * queue-insights:snapshot at boot, which beforeEach can't undo.
+ */
+function keepOnlyEvent(Schedule $schedule, ScheduleEvent $event): void
+{
+    $only = collect($schedule->events())->filter(
+        fn (ScheduleEvent $e): bool => TaskKey::for($e) === TaskKey::for($event),
+    )->values();
+
+    $reflection = new ReflectionProperty($schedule, 'events');
+    $reflection->setValue($schedule, $only->all());
+}
+
 it('flags an expected fire as missed when no Starting was recorded', function (): void {
     EventDispatcher::fake([ScheduledTaskMissed::class]);
 
@@ -72,33 +88,203 @@ it('flags an expected fire as missed when no Starting was recorded', function ()
     EventDispatcher::assertDispatched(ScheduledTaskMissed::class);
 });
 
-it('does not flag missed when a Starting was within the drift window', function (): void {
+it('does not flag missed when a Starting landed late but within the drift window', function (): void {
     EventDispatcher::fake([ScheduledTaskMissed::class]);
 
     config()->set('queue-insights.scheduler.sweeper.enabled', false);
 
     $schedule = resolveSchedule();
-    // Use the live Schedule's Event for both the reconciler iteration and
-    // the Starting record so the TaskKey matches across both surfaces.
-    $event = $schedule->command('demo:run')->everyMinute();
-    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($event));
+    $event = $schedule->command('demo:run')->everyThreeMinutes();
+    keepOnlyEvent($schedule, $event);
 
-    // Drop every other registered schedule event so the reconciler's only
-    // candidate is our demo:run. (Phase 1 finding: schedule auto-registers
-    // queue-insights:snapshot at boot and the test container's
-    // beforeEach can't undo that.)
-    $only = collect($schedule->events())->filter(
-        fn (ScheduleEvent $e): bool => TaskKey::for($e) === TaskKey::for($event),
-    )->values();
-    $reflection = new ReflectionProperty($schedule, 'events');
-    $reflection->setValue($schedule, $only->all());
+    // now=12:10:00; with grace gate the judged horizon is now-90s=12:08:30
+    // and the window lower bound is (lastSwept 12:06:40)-90s=12:05:10, so
+    // the only judged fire is 12:06:00 (12:09 is past the horizon).
+    $now = Date::createFromTimestamp(strtotime('2026-06-26 12:10:00 UTC'));
+    $nowMs = $now->getTimestampMs();
+    $fireMs = strtotime('2026-06-26 12:06:00 UTC') * 1000;
 
-    $now = Date::now()->getTimestampMs();
-    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($now - 30_000));
+    // Starting landed 40s late — within the 90s drift of the 12:06 fire.
+    (new RunStore())->recordStarting([
+        'task_key' => TaskKey::for($event),
+        'run_id' => (string) Str::ulid(),
+        'started_at_ms' => $fireMs + 40_000,
+        'host_id' => 'host-a',
+        'is_background' => false,
+        'expected_finish_at_ms' => $fireMs + 100_000,
+    ]);
+
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($nowMs - 200_000));
 
     $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
-    $reconciler->reconcile($schedule, $now);
+    $missed = $reconciler->reconcile($schedule, $nowMs);
 
+    expect($missed)->toBe(0);
+    EventDispatcher::assertNotDispatched(ScheduledTaskMissed::class);
+});
+
+it('defers an expected fire until its drift grace elapses, then a within-drift Starting suppresses it', function (): void {
+    EventDispatcher::fake([ScheduledTaskMissed::class]);
+
+    config()->set('queue-insights.scheduler.sweeper.enabled', false);
+    config()->set('queue-insights.scheduler.sweeper.min_consecutive_misses', 1); // isolate the grace behaviour
+
+    $schedule = resolveSchedule();
+    $event = $schedule->command('demo:run')->everyThreeMinutes();
+    keepOnlyEvent($schedule, $event);
+
+    $fireMs = strtotime('2026-06-26 12:06:00 UTC') * 1000;
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
+
+    // Phase 1: sweep at fire+5s, before the (cold-starting) Starting lands.
+    // The fire is inside the deferred band (> now-90s) so it is NOT judged.
+    $earlySweepMs = $fireMs + 5_000;
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($earlySweepMs - 30_000));
+    $earlyMissed = $reconciler->reconcile($schedule, $earlySweepMs);
+
+    expect($earlyMissed)->toBe(0); // pre-grace: no premature missed row
+    EventDispatcher::assertNotDispatched(ScheduledTaskMissed::class);
+
+    // The Starting arrives 40s after the fire — late, but within drift.
+    (new RunStore())->recordStarting([
+        'task_key' => TaskKey::for($event),
+        'run_id' => (string) Str::ulid(),
+        'started_at_ms' => $fireMs + 40_000,
+        'host_id' => 'host-a',
+        'is_background' => false,
+        'expected_finish_at_ms' => $fireMs + 100_000,
+    ]);
+
+    // Phase 2: a later sweep, now past the fire's grace. It judges 12:06 and
+    // finds the within-drift Starting → not missed.
+    $lateMissed = $reconciler->reconcile($schedule, $fireMs + 120_000);
+
+    expect($lateMissed)->toBe(0);
+    EventDispatcher::assertNotDispatched(ScheduledTaskMissed::class);
+});
+
+it('records the missed row but does NOT alert for an isolated single-tick gap', function (): void {
+    EventDispatcher::fake([ScheduledTaskMissed::class]);
+
+    config()->set('queue-insights.scheduler.sweeper.enabled', false);
+    config()->set('queue-insights.scheduler.sweeper.min_consecutive_misses', 2);
+
+    $schedule = resolveSchedule();
+    // every-3-min so the 180s interval exceeds the 90s drift window — a
+    // run on the previous fire cannot "cover" the current expected fire.
+    $event = $schedule->command('demo:run')->everyThreeMinutes();
+    keepOnlyEvent($schedule, $event);
+
+    // now=12:10:00 → grace horizon 12:08:30, window from 12:05:10: the only
+    // judged fire is 12:06:00, with predecessor 12:03:00.
+    $now = Date::createFromTimestamp(strtotime('2026-06-26 12:10:00 UTC'));
+    $nowMs = $now->getTimestampMs();
+    $prevFireMs = strtotime('2026-06-26 12:03:00 UTC') * 1000; // predecessor fire
+
+    // Predecessor fire ran (observed); the judged fire (12:06) did not.
+    (new RunStore())->recordStarting([
+        'task_key' => TaskKey::for($event),
+        'run_id' => (string) Str::ulid(),
+        'started_at_ms' => $prevFireMs,
+        'host_id' => 'host-a',
+        'is_background' => false,
+        'expected_finish_at_ms' => $prevFireMs + 60_000,
+    ]);
+
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($nowMs - 200_000));
+
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
+    $missed = $reconciler->reconcile($schedule, $nowMs);
+
+    // The synthetic row is still written for the dashboard...
+    expect($missed)->toBeGreaterThanOrEqual(1);
+    // ...but the predecessor ran, so the gap is 1 < threshold → no alert.
+    EventDispatcher::assertNotDispatched(ScheduledTaskMissed::class);
+});
+
+it('alerts once consecutive misses reach the threshold', function (): void {
+    EventDispatcher::fake([ScheduledTaskMissed::class]);
+
+    config()->set('queue-insights.scheduler.sweeper.enabled', false);
+    config()->set('queue-insights.scheduler.sweeper.min_consecutive_misses', 2);
+
+    $schedule = resolveSchedule();
+    $event = $schedule->command('demo:run')->everyThreeMinutes();
+    keepOnlyEvent($schedule, $event);
+
+    $now = Date::createFromTimestamp(strtotime('2026-06-26 12:10:00 UTC'));
+    $nowMs = $now->getTimestampMs();
+
+    // No observed run anywhere — the judged fire (12:06) misses and its
+    // predecessor (12:03) is also unobserved, so the gap reaches 2 → alert.
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($nowMs - 200_000));
+
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
+    $reconciler->reconcile($schedule, $nowMs);
+
+    EventDispatcher::assertDispatched(ScheduledTaskMissed::class);
+});
+
+it('does not write a second missed row when a fire is re-judged across overlapping sweeps', function (): void {
+    EventDispatcher::fake([ScheduledTaskMissed::class]);
+
+    config()->set('queue-insights.scheduler.sweeper.enabled', false);
+    config()->set('queue-insights.scheduler.sweeper.min_consecutive_misses', 1);
+
+    $schedule = resolveSchedule();
+    $event = $schedule->command('demo:run')->everyThreeMinutes();
+    keepOnlyEvent($schedule, $event);
+
+    $fireMs = strtotime('2026-06-26 12:06:00 UTC') * 1000;
+    $taskKey = TaskKey::for($event);
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
+
+    // Sweep 1 judges the 12:06 fire (no run) → one synthetic missed row.
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($fireMs - 30_000));
+    $reconciler->reconcile($schedule, $fireMs + 100_000);
+    expect(R::int('zcard', "qmtest:sched:runs:{$taskKey}"))->toBe(1);
+
+    // Force a second sweep whose window re-includes the same fire. The prior
+    // missed row (still in sched:runs, returned status-agnostically by
+    // startingTimestampsBetween) matches within drift → no duplicate row.
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($fireMs + 1_000));
+    $reconciler->reconcile($schedule, $fireMs + 100_000);
+
+    expect(R::int('zcard', "qmtest:sched:runs:{$taskKey}"))->toBe(1);
+});
+
+it('honours a higher threshold — two consecutive misses do not alert when min_consecutive_misses is 3', function (): void {
+    EventDispatcher::fake([ScheduledTaskMissed::class]);
+
+    config()->set('queue-insights.scheduler.sweeper.enabled', false);
+    config()->set('queue-insights.scheduler.sweeper.min_consecutive_misses', 3);
+
+    $schedule = resolveSchedule();
+    $event = $schedule->command('demo:run')->everyThreeMinutes();
+    keepOnlyEvent($schedule, $event);
+
+    // Judged fire = 12:06; predecessors 12:03 (missed) and 12:00 (ran). The
+    // streak is 2, below the threshold of 3, so the deeper walk-back must
+    // break at 12:00 and suppress the alert.
+    $now = Date::createFromTimestamp(strtotime('2026-06-26 12:10:00 UTC'));
+    $nowMs = $now->getTimestampMs();
+    $observedFireMs = strtotime('2026-06-26 12:00:00 UTC') * 1000;
+
+    (new RunStore())->recordStarting([
+        'task_key' => TaskKey::for($event),
+        'run_id' => (string) Str::ulid(),
+        'started_at_ms' => $observedFireMs,
+        'host_id' => 'host-a',
+        'is_background' => false,
+        'expected_finish_at_ms' => $observedFireMs + 60_000,
+    ]);
+
+    R::raw('setex', 'qmtest:sched:sweeper:last_swept_ms', 3600, (string) ($nowMs - 200_000));
+
+    $reconciler = new MissedRunReconciler(new RunStore(), new ScheduleReader(), resolve(IssueDispatcher::class));
+    $missed = $reconciler->reconcile($schedule, $nowMs);
+
+    expect($missed)->toBeGreaterThanOrEqual(1);
     EventDispatcher::assertNotDispatched(ScheduledTaskMissed::class);
 });
 

@@ -705,11 +705,21 @@ return [
          | Missed-run sweeper (Phase 3). A sweeper runs every sweep_seconds
          | and compares each task's expected fires-since-last-sweep (from
          | cron expression) to actual Starting events recorded.
+         |
+         | `min_consecutive_misses` debounces the alert: a single isolated
+         | expected fire with no recorded run is common infra noise on
+         | per-minute schedulers (e.g. a Vapor/EventBridge tick that lands
+         | late or a transient Redis blip that drops the Starting write).
+         | The synthetic `missed` row is always recorded for the dashboard,
+         | but `ScheduledTaskMissed` only dispatches once this many
+         | consecutive expected fires have gone unobserved. Set to 1 to
+         | alert on every isolated miss.
          */
         'sweeper' => [
             'enabled' => true,
             'sweep_seconds' => 60,
             'drift_seconds' => 90,
+            'min_consecutive_misses' => 2,
         ],
 
         /*

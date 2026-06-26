@@ -221,6 +221,13 @@ final class ScheduleReader
      * a time window — drives the missed-run reconciler's "did we see
      * this expected fire?" lookup.
      *
+     * Returns runs of *every* status, deliberately including the synthetic
+     * `missed` rows the sweeper writes: the reconciler relies on that to
+     * dedup a fire re-judged across two overlapping sweep windows (the
+     * prior `missed` row matches within drift and the fire is skipped). Do
+     * NOT filter `missed` out here — {@see observedRunTimestampsBetween}
+     * exists for the consecutive-miss gate that needs the opposite.
+     *
      * @return list<int> sorted ascending
      */
     public function startingTimestampsBetween(string $taskKey, int $fromMs, int $toMs): array
@@ -243,6 +250,58 @@ final class ScheduleReader
             }
 
             if ($member === '') {
+                continue;
+            }
+
+            $score = $redis->command('zscore', [$key, $member]);
+            if (is_numeric($score)) {
+                $out[] = (int) $score;
+            }
+        }
+
+        sort($out);
+
+        return $out;
+    }
+
+    /**
+     * Like {@see startingTimestampsBetween}, but excludes the synthetic
+     * `missed` rows the sweeper itself writes — returns only timestamps of
+     * runs that were actually *observed* (any real status: starting /
+     * skipped / success / failed / hung).
+     *
+     * Drives the missed-run reconciler's consecutive-miss gate: a prior
+     * `missed` row lives in the same `sched:runs` zset, so it must NOT
+     * count as "the task ran" or a sustained outage would look like it
+     * recovered on every other fire and never trip the threshold.
+     *
+     * @return list<int> sorted ascending
+     */
+    public function observedRunTimestampsBetween(string $taskKey, int $fromMs, int $toMs): array
+    {
+        if ($fromMs > $toMs) {
+            return [];
+        }
+
+        $redis = $this->redis();
+        $key = KeyPrefix::make("sched:runs:{$taskKey}");
+        $members = $redis->command('zrangebyscore', [$key, $fromMs, $toMs]);
+        if (! is_array($members)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($members as $member) {
+            if (! is_string($member)) {
+                continue;
+            }
+
+            if ($member === '') {
+                continue;
+            }
+
+            $status = $redis->command('hget', [KeyPrefix::make("sched:run:{$taskKey}:{$member}"), 'status']);
+            if (is_string($status) && $status === 'missed') {
                 continue;
             }
 
