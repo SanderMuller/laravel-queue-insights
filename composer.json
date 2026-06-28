@@ -54,7 +54,7 @@
         "predis/predis": "^2.2 || ^3.0",
         "rector/rector": "^2.4.1",
         "rector/type-perfect": "^2.1.2",
-        "sandermuller/boost-skills": "^2.0",
+        "sandermuller/boost-skills": "^2.16",
         "sandermuller/package-boost-laravel": "^1.0",
         "sentry/sentry": "^4.23",
         "spaze/phpstan-disallowed-calls": "^4.10",
