@@ -72,9 +72,7 @@ it('does not record when the beforeSend chain discards the event', function (): 
     // A user-supplied beforeSend that discards every event: the registry
     // hook must respect the discard and not store a stale event id.
     $client->getOptions()->setBeforeSendCallback(
-        static function (Event $event, ?EventHint $hint): ?Event {
-            return null;
-        },
+        static fn (Event $event, ?EventHint $hint): ?Event => null,
     );
 
     $previous = SentrySdk::getCurrentHub();
