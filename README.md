@@ -54,7 +54,7 @@ Self-hosted, driver-agnostic queue observability for Laravel.
 - **Retry badge** — pending, in-flight, and completed rows render an orange `retry N` chip with hover tooltip when the worker has picked the job up more than once. Backed by `attempts` stamped on the `pending:{uuid}` hash at `JobProcessing`.
 - **Retry failed jobs** from the dashboard, single or bulk — gated, rate-limited, audit-logged.
 - **Markdown export** of failed-job details for AI-assisted triage or trackers.
-- **Sentry deep-link** — when a failed job's payload carries sentry-laravel trace data, the modal shows a **View in Sentry** button (and a Markdown-export line) linking to the matching Sentry issue. Opt-in via your org slug.
+- **Sentry deep-link** — when a failed job's payload carries sentry-laravel trace data, or a scheduled-task failure was captured by Sentry, the respective modal shows a **View in Sentry** button (and a Markdown-export line) linking to the matching Sentry issue. Opt-in via your org slug.
 - **Alerting** — nine detectors (depth, stalled, oldest-pending, stuck-inflight, failure-rate, slow-p95, snapshot-errored, backlog-growing, connection-drift) with per-rule cooldown + `log` / `slack` / `mail` / `sentry` channels + typed events.
 - **Prometheus** — opt-in `/metrics` (text + OpenMetrics), fail-closed auth, per-class cardinality control, optional scheduler metrics families, plus a `prometheus-push` command for short-lived workers.
 - **Scheduler observability** — opt-in. Captures every `Illuminate\Console\Events\Scheduled*` into per-task definition snapshots + per-run records (start/finish/exit/runtime/host/output), exposes a lazy-loaded dashboard panel with per-task + per-run drilldown modals (host-distribution chart, correlated-jobs section, exception block, output viewer, markdown export), ships a missed/hung sweeper, and routes scheduler alerts through the same `QueueAlertNotification` pipeline as queue alerts (log / slack / mail / sentry; per-domain channel block) — typed `ScheduledTaskMissed` / `ScheduledTaskHung` / `ScheduledTaskFailed` events still fire alongside.
@@ -423,6 +423,8 @@ If your app uses [sentry-laravel](https://github.com/getsentry/sentry-laravel), 
 ```
 
 The button self-hides unless an org slug is configured and the payload carries a trace id. It links the **issue** stream rather than the performance/trace view, so it resolves even when the trace was sampled out (error capture is independent of `traces_sample_rate`).
+
+**Scheduled-task failures** also show a **View in Sentry** button in the per-run modal when Sentry captured the exception. Because scheduled tasks run outside a distributed trace, the link is keyed by Sentry's event ID rather than a trace ID — no extra config beyond `organization` is needed.
 
 > [!NOTE]
 > `organization` is your Sentry org *slug* (the `{slug}` in `{slug}.sentry.io`), not the numeric org id. This is unrelated to the `alerts.channels.sentry` block — that one controls alert delivery; this controls dashboard linking.
