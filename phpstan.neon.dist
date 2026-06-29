@@ -96,6 +96,8 @@ parameters:
                 - tests/Unit/QueueAggregatesTest.php
                 - tests/Unit/Prometheus/
                 - tests/Unit/Scheduler/
+                - tests/Unit/Support/SentryExceptionEventRegistryTest.php
+                - tests/Pest.php
             reportUnmatched: false
         -
             identifier: return.internalClass

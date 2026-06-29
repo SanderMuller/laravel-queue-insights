@@ -13,8 +13,6 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Alerts\ActiveIssuesProvider;
-use SanderMuller\QueueInsights\Alerts\Issue;
-use SanderMuller\QueueInsights\Alerts\IssueDetector;
 use SanderMuller\QueueInsights\Alerts\SnapshotWatchdog;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;

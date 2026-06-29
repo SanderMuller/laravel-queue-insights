@@ -3,6 +3,7 @@
 use DG\BypassFinals;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
 use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\SentryExceptionEventRegistry;
 use SanderMuller\QueueInsights\Tests\TestCase;
 use Sentry\ClientBuilder;
 use Sentry\Event as SentryEvent;
@@ -87,6 +88,7 @@ function withBoundSentryHub(Closure $send): array
 
     $previous = SentrySdk::getCurrentHub();
     SentrySdk::setCurrentHub(new Hub($client));
+    SentryExceptionEventRegistry::installBeforeSendHook();
 
     try {
         $send();

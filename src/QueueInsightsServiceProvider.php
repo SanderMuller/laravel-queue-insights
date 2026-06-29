@@ -92,6 +92,7 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
+use SanderMuller\QueueInsights\Support\SentryExceptionEventRegistry;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
 
 final class QueueInsightsServiceProvider extends ServiceProvider
@@ -324,6 +325,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $this->registerDashboard();
         $this->registerPrometheus();
         $this->registerSchedulerObservability($cfg);
+        SentryExceptionEventRegistry::installBeforeSendHook();
     }
 
     /**

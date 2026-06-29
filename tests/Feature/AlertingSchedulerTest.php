@@ -378,7 +378,8 @@ it('Slack payload carries a run_url query slot pointing at s_rid', function (): 
 
     expect($runUrlField)->not->toBeNull();
     assert($runUrlField !== null);
-    expect($runUrlField['value'])->toContain('s_rid=PruneCache%3A01HKRUN');
+    expect($runUrlField['value'])->toContain('s_rid=PruneCache%3A01HKRUN')
+        ->and($runUrlField['value'])->toContain('#qi-schedule');
 });
 
 it('Slack payload links to the task slot for missed runs (no run id)', function (): void {
@@ -392,7 +393,17 @@ it('Slack payload links to the task slot for missed runs (no run id)', function 
     expect($runUrlField)->not->toBeNull();
     assert($runUrlField !== null);
     expect($runUrlField['value'])->toContain('s_tk=PruneCache')
-        ->and($runUrlField['value'])->not->toContain('s_rid=');
+        ->and($runUrlField['value'])->not->toContain('s_rid=')
+        ->and($runUrlField['value'])->toContain('#qi-schedule');
+});
+
+it('mail action url carries the qi-schedule hash for a scheduler-scoped issue', function (): void {
+    Route::get('/queue-insights', fn () => 'ok')->name('queue-insights.dashboard');
+
+    $message = (new QueueAlertNotification(schedulerIssue()))->toMail(new QueueInsightsNotifiable());
+
+    expect($message->actionUrl)->toContain('s_rid=')
+        ->and($message->actionUrl)->toContain('#qi-schedule');
 });
 
 it('mail subject + Slack title prefer the human task label over the opaque task_key', function (): void {

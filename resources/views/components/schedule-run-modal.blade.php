@@ -65,6 +65,12 @@
         };
     };
 
+    // Sentry event ID link — null when no event ID is stored or the org slug is not configured.
+    $runSentryUrl = null;
+    if ($run !== null && is_array($run['exception'] ?? null) && is_string($run['exception']['sentry_event_id'] ?? null)) {
+        $runSentryUrl = \SanderMuller\QueueInsights\Support\SentryTraceLink::forEventId($run['exception']['sentry_event_id']);
+    }
+
     // Markdown export — handed to AI agent or pasted into a tracker.
     $mdLines = ['# Scheduled run'];
     if ($run !== null) {
@@ -91,20 +97,32 @@
             $mdLines[] = '';
             $mdLines[] = '## Exception';
             $mdLines[] = '';
+            if (! empty($runSentryUrl)) {
+                $mdLines[] = '- **Sentry:** ' . $runSentryUrl;
+                $mdLines[] = '';
+            }
             $mdLines[] = '```';
             $mdLines[] = $exClass . ': ' . $exMsg;
             // Inner (root-cause) exception — captured discretely because the
-            // 4000-char trace tail can truncate it out.
+            // 4000-char trace tail can truncate it out. File/line/trace use the
+            // inner exception's throw site, not the ScheduleRunCommand wrapper.
             if (is_string($run['exception']['inner_class'] ?? null)) {
                 $innerMsg = is_string($run['exception']['inner_message'] ?? null) ? $run['exception']['inner_message'] : '';
                 $mdLines[] = 'Caused by: ' . $run['exception']['inner_class'] . ': ' . $innerMsg;
             }
-            if (is_string($run['exception']['file'] ?? null)) {
-                $mdLines[] = 'at ' . $run['exception']['file'] . (isset($run['exception']['line']) ? ':' . $run['exception']['line'] : '');
+            $mdAtFile = $run['exception']['inner_file'] ?? $run['exception']['file'] ?? null;
+            $mdAtLine = isset($run['exception']['inner_file'])
+                ? ($run['exception']['inner_line'] ?? null)
+                : ($run['exception']['line'] ?? null);
+            if (is_string($mdAtFile)) {
+                $mdLines[] = 'at ' . $mdAtFile . ($mdAtLine !== null ? ':' . $mdAtLine : '');
             }
-            if (is_string($run['exception']['trace_tail'] ?? null) && $run['exception']['trace_tail'] !== '') {
+            $mdTraceTail = (isset($run['exception']['inner_trace_tail']) && $run['exception']['inner_trace_tail'] !== '')
+                ? $run['exception']['inner_trace_tail']
+                : ($run['exception']['trace_tail'] ?? null);
+            if (is_string($mdTraceTail) && $mdTraceTail !== '') {
                 $mdLines[] = '';
-                $mdLines[] = $run['exception']['trace_tail'];
+                $mdLines[] = $mdTraceTail;
             }
             $mdLines[] = '```';
         }
@@ -255,9 +273,32 @@
                     jobs. The thing operators opened a run modal to read. --}}
                 <div class="min-w-0 space-y-6 p-5">
                     @if(is_array($run['exception']) && isset($run['exception']['class']))
+                        @php
+                            // When the outer exception is a ScheduleRunCommand wrapper,
+                            // prefer the inner (root-cause) throw site for file/line/trace.
+                            $displayFile = $run['exception']['inner_file'] ?? $run['exception']['file'] ?? null;
+                            $displayLine = isset($run['exception']['inner_file'])
+                                ? ($run['exception']['inner_line'] ?? null)
+                                : ($run['exception']['line'] ?? null);
+                            $displayTrace = (isset($run['exception']['inner_trace_tail']) && $run['exception']['inner_trace_tail'] !== '')
+                                ? $run['exception']['inner_trace_tail']
+                                : ($run['exception']['trace_tail'] ?? null);
+                        @endphp
                         <section data-section="schedule-run-exception">
                             <div class="mb-2 flex items-center justify-between gap-3">
                                 <p class="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-300">Exception</p>
+                                @if(! empty($runSentryUrl))
+                                    <a href="{{ $runSentryUrl }}"
+                                       target="_blank"
+                                       rel="noopener noreferrer"
+                                       aria-label="View this failure in Sentry"
+                                       class="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset bg-white dark:bg-gray-900 text-violet-700 dark:text-violet-300 ring-violet-600/30 dark:ring-violet-400/30 transition hover:bg-violet-50 dark:hover:bg-violet-900/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500">
+                                        <svg class="size-3.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                                            <path d="M5.22 14.78a.75.75 0 0 0 1.06 0l7.22-7.22v5.69a.75.75 0 0 0 1.5 0v-7.5a.75.75 0 0 0-.75-.75h-7.5a.75.75 0 0 0 0 1.5h5.69l-7.22 7.22a.75.75 0 0 0 0 1.06Z"/>
+                                        </svg>
+                                        <span>View in Sentry</span>
+                                    </a>
+                                @endif
                             </div>
                             <div class="rounded-xl bg-red-50 dark:bg-red-900/40 p-4 ring-1 ring-inset ring-red-600/20 dark:ring-red-400/30">
                                 <p class="break-all font-mono text-sm font-medium text-red-900 dark:text-red-200">{{ $run['exception']['class'] }}</p>
@@ -269,13 +310,13 @@
                                         Caused by: <span class="font-medium">{{ $run['exception']['inner_class'] }}</span>@if(is_string($run['exception']['inner_message'] ?? null) && $run['exception']['inner_message'] !== ''): {{ $run['exception']['inner_message'] }}@endif
                                     </p>
                                 @endif
-                                @if(is_string($run['exception']['file'] ?? null))
+                                @if(is_string($displayFile))
                                     <p class="mt-2 break-all font-mono text-[11px] text-red-700 dark:text-red-300">
-                                        at {{ $run['exception']['file'] }}@if(isset($run['exception']['line'])):{{ $run['exception']['line'] }}@endif
+                                        at {{ $displayFile }}@if($displayLine !== null):{{ $displayLine }}@endif
                                     </p>
                                 @endif
-                                @if(is_string($run['exception']['trace_tail'] ?? null) && $run['exception']['trace_tail'] !== '')
-                                    <pre class="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white/40 dark:bg-black/30 p-3 font-mono text-[11px] leading-5 text-red-900 dark:text-red-200">{{ $run['exception']['trace_tail'] }}</pre>
+                                @if(is_string($displayTrace) && $displayTrace !== '')
+                                    <pre class="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-white/40 dark:bg-black/30 p-3 font-mono text-[11px] leading-5 text-red-900 dark:text-red-200">{{ $displayTrace }}</pre>
                                 @endif
                             </div>
                         </section>

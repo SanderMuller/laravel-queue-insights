@@ -58,6 +58,52 @@ final class SentryTraceLink
     }
 
     /**
+     * For scheduled-task failures, where no distributed-trace ID is available
+     * in the payload (unlike queue jobs). The event UUID is recognised by
+     * Sentry's issue-stream search without a prefix.
+     *
+     * Derives the base URL from `issue_url_template` (strips the query) so
+     * self-hosted Sentry deployments that already customised the template get
+     * the correct host without a separate config key.
+     */
+    public static function forEventId(string $eventId): ?string
+    {
+        $org = Config::string('sentry.organization');
+        if ($org === '' || preg_match('/^[A-Za-z0-9_-]+$/', $org) !== 1) {
+            return null;
+        }
+
+        // Accept 32-hex with or without hyphens.
+        $normalized = str_replace('-', '', $eventId);
+        if (preg_match('/^[0-9a-f]{32}$/i', $normalized) !== 1) {
+            return null;
+        }
+
+        // Reuse the issue_url_template base URL (before the `?`) so a custom
+        // template for self-hosted Sentry automatically applies here too.
+        $template = Config::string('sentry.issue_url_template', self::DEFAULT_TEMPLATE);
+        if (! str_starts_with($template, 'https://')) {
+            return null;
+        }
+
+        $withOrg = str_replace('{org}', $org, $template);
+        $baseUrl = str_contains($withOrg, '?')
+            ? (string) strstr($withOrg, '?', true)
+            : $withOrg;
+
+        // Strip any {trace} placeholder that survives in the path (e.g. a
+        // template like `https://sentry.example.com/issues/{trace}` has no
+        // query string, so strstr above leaves the literal in $baseUrl).
+        $baseUrl = str_replace('{trace}', '', $baseUrl);
+
+        if ($baseUrl === '') {
+            return null;
+        }
+
+        return $baseUrl . '?query=' . strtolower($normalized);
+    }
+
+    /**
      * @param  array<array-key, mixed>|null  $payload
      */
     private static function traceId(?array $payload): ?string

@@ -236,10 +236,10 @@ class QueueAlertNotification extends Notification
 
         if ($sRid === null) {
             // missed runs have no runId — link to the task slot instead.
-            return $base . '?s_tk=' . rawurlencode($taskKey);
+            return $base . '?s_tk=' . rawurlencode($taskKey) . '#qi-schedule';
         }
 
-        return $base . '?s_rid=' . rawurlencode($sRid);
+        return $base . '?s_rid=' . rawurlencode($sRid) . '#qi-schedule';
     }
 
     private function mailAvailable(): bool

@@ -1,6 +1,4 @@
 <?php declare(strict_types=1);
-
-use Illuminate\Container\Container;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;

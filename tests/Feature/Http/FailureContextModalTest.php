@@ -119,3 +119,104 @@ it('scheduled-run modal renders the inner exception and Context section', functi
         ->toContain('## Context')
         ->toContain('- **Host:** host-1');
 });
+
+it('scheduled-run modal prefers inner_file/line/trace over outer when present', function (): void {
+    $html = renderFailureCtxRunModal([
+        'task_key' => 'demo',
+        'run_id' => 'run-1',
+        'started_at_ms' => null,
+        'finished_at_ms' => null,
+        'runtime_ms' => null,
+        'exit_code' => 1,
+        'status' => 'failed',
+        'skip_reason' => null,
+        'host_id' => 'host-1',
+        'is_background' => false,
+        'recovered_from_hung' => false,
+        'exception' => [
+            'class' => 'RuntimeException',
+            'message' => 'wrapper message',
+            'inner_class' => 'LogicException',
+            'inner_message' => 'root cause',
+            'inner_file' => 'app/root-cause.php',
+            'inner_line' => 42,
+            'inner_trace_tail' => '#0 app/root-cause.php(42)',
+            'file' => 'vendor/schedule-run-command.php',
+            'line' => 99,
+            'trace_tail' => '#0 vendor/schedule-run-command.php(99)',
+        ],
+        'app_context' => [],
+        'environment' => [],
+        'has_output' => false,
+        'correlated_jobs' => [],
+    ]);
+
+    expect($html)
+        ->toContain('app/root-cause.php')
+        ->toContain('#0 app/root-cause.php(42)')
+        ->not->toContain('vendor/schedule-run-command.php')
+        ->not->toContain('#0 vendor/schedule-run-command.php(99)')
+        ->toContain('at app/root-cause.php:42')
+        ->toContain('#0 app/root-cause.php(42)');
+});
+
+it('scheduled-run modal renders the Sentry event id link when org and event id are present', function (): void {
+    config()->set('queue-insights.sentry.organization', 'acme');
+
+    $html = renderFailureCtxRunModal([
+        'task_key' => 'demo',
+        'run_id' => 'run-1',
+        'started_at_ms' => null,
+        'finished_at_ms' => null,
+        'runtime_ms' => null,
+        'exit_code' => 1,
+        'status' => 'failed',
+        'skip_reason' => null,
+        'host_id' => 'host-1',
+        'is_background' => false,
+        'recovered_from_hung' => false,
+        'exception' => [
+            'class' => 'RuntimeException',
+            'message' => 'boom',
+            'sentry_event_id' => '494026a4a8ee43ebaeff095dc2772f54',
+        ],
+        'app_context' => [],
+        'environment' => [],
+        'has_output' => false,
+        'correlated_jobs' => [],
+    ]);
+
+    expect($html)
+        ->toContain('View in Sentry')
+        ->toContain('href="https://acme.sentry.io/issues/?query=494026a4a8ee43ebaeff095dc2772f54"')
+        ->toContain('- **Sentry:** https://acme.sentry.io/issues/?query=494026a4a8ee43ebaeff095dc2772f54');
+});
+
+it('scheduled-run modal omits the Sentry link when no org is configured', function (): void {
+    config()->set('queue-insights.sentry.organization');
+
+    $html = renderFailureCtxRunModal([
+        'task_key' => 'demo',
+        'run_id' => 'run-1',
+        'started_at_ms' => null,
+        'finished_at_ms' => null,
+        'runtime_ms' => null,
+        'exit_code' => 1,
+        'status' => 'failed',
+        'skip_reason' => null,
+        'host_id' => 'host-1',
+        'is_background' => false,
+        'recovered_from_hung' => false,
+        'exception' => [
+            'class' => 'RuntimeException',
+            'message' => 'boom',
+            'sentry_event_id' => '494026a4a8ee43ebaeff095dc2772f54',
+        ],
+        'app_context' => [],
+        'environment' => [],
+        'has_output' => false,
+        'correlated_jobs' => [],
+    ]);
+
+    expect($html)->not->toContain('View in Sentry');
+});

@@ -14,6 +14,7 @@ use SanderMuller\QueueInsights\Scheduler\ScheduleContext;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\FailureContextCollector;
+use SanderMuller\QueueInsights\Support\SentryExceptionEventRegistry;
 use Throwable;
 
 final readonly class RecordScheduledTaskFailed
@@ -44,11 +45,25 @@ final readonly class RecordScheduledTaskFailed
             // queued job — whose `failed_jobs.exception` keeps the full nested
             // chain — a task run stores only the 4000-char trace tail, which
             // can truncate the root cause out. Capturing it explicitly keeps
-            // it visible.
+            // it visible. File/line/trace point at the root-cause throw site
+            // rather than the ScheduleRunCommand wrapper frame.
             $previous = $this->deepestPrevious($exception);
             if ($previous instanceof Throwable) {
                 $exceptionPayload['inner_class'] = $previous::class;
                 $exceptionPayload['inner_message'] = $this->truncate($previous->getMessage(), 2000);
+                $exceptionPayload['inner_file'] = $previous->getFile();
+                $exceptionPayload['inner_line'] = $previous->getLine();
+                $exceptionPayload['inner_trace_tail'] = $this->truncate($previous->getTraceAsString(), 4000);
+            }
+
+            // Sentry event ID — keyed by the exact exception object so unrelated
+            // captures on the same hub cannot produce a wrong link. Populated by
+            // the beforeSend hook installed at boot; present only when
+            // sentry-laravel's listener fired (and captured) before ours.
+            $sentryEventId = SentryExceptionEventRegistry::get($exception)
+                ?? ($previous instanceof Throwable ? SentryExceptionEventRegistry::get($previous) : null);
+            if ($sentryEventId !== null) {
+                $exceptionPayload['sentry_event_id'] = $sentryEventId;
             }
 
             $failureContext = Config::bool('failure_context.enabled', true)

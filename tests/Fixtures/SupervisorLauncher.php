@@ -56,7 +56,6 @@ $_ENV['APP_KEY'] = $_SERVER['APP_KEY'] = $qiAppKey;
 
 $app = TestbenchApplication::create(
     basePath: $basePath,
-    resolvingCallback: null,
     options: [
         'enables_package_discoveries' => false,
     ],
