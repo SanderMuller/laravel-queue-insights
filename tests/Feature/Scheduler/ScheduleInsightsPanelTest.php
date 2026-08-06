@@ -4,7 +4,6 @@ use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
-use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Gate;
 use Livewire\Livewire;
@@ -55,7 +54,6 @@ it('passes when viewScheduleInsights gate allows', function (): void {
 
 it('renders captured runs in the recent-runs table', function (): void {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $task = new ScheduleEvent($mutex, 'php artisan demo:run');
     $task->expression = '* * * * *';
 
@@ -86,7 +84,6 @@ it('clearFilters resets every #[Url] field', function (): void {
 function seedScheduleRuns(int $count): void
 {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $store = new RunStore();
     $capturer = new OutputCapturer();
     $starting = new RecordScheduledTaskStarting($store);

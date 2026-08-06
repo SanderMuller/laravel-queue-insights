@@ -110,6 +110,6 @@ final readonly class CompletedRowFilter
             return false;
         }
 
-        return ! ($fromTs instanceof CarbonInterface && $ts->lt($fromTs)) && ! ($toTs instanceof CarbonInterface && $ts->gt($toTs));
+        return (! $fromTs instanceof CarbonInterface || ! $ts->lt($fromTs)) && (! $toTs instanceof CarbonInterface || ! $ts->gt($toTs));
     }
 }

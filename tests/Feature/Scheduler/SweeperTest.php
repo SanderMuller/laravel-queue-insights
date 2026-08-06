@@ -6,7 +6,6 @@ use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
-use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Event as EventDispatcher;
@@ -45,7 +44,6 @@ beforeEach(function (): void {
 function makeMutexEvent(string $command = 'php artisan demo:run', string $expression = '* * * * *'): ScheduleEvent
 {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $event = new ScheduleEvent($mutex, $command);
     $event->expression = $expression;
 
@@ -54,10 +52,7 @@ function makeMutexEvent(string $command = 'php artisan demo:run', string $expres
 
 function resolveSchedule(): Schedule
 {
-    $schedule = resolve(Schedule::class);
-    assert($schedule instanceof Schedule);
-
-    return $schedule;
+    return resolve(Schedule::class);
 }
 
 /**

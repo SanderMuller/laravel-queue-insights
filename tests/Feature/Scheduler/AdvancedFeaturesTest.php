@@ -5,7 +5,6 @@ use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\CallbackEvent;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
-use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Queue\Events\JobQueued;
 use Illuminate\Support\Str;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
@@ -39,7 +38,6 @@ afterEach(function (): void {
 
 it('disambiguates two unnamed closures via reflection', function (): void {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $a = new CallbackEvent($mutex, fn (): null => null);
     $b = new CallbackEvent($mutex, fn (): null => null);
 
@@ -48,7 +46,6 @@ it('disambiguates two unnamed closures via reflection', function (): void {
 
 it('uses mutex name for commands (not reflection)', function (): void {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $a = new ScheduleEvent($mutex, 'php artisan demo:run');
     $a->expression = '* * * * *';
 
@@ -60,7 +57,6 @@ it('uses mutex name for commands (not reflection)', function (): void {
 
 it('Starting → Finished pushes and pops the schedule context frame', function (): void {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $task = new ScheduleEvent($mutex, 'php artisan demo:run');
     $task->expression = '* * * * *';
 
@@ -81,7 +77,6 @@ it('Starting → Finished pushes and pops the schedule context frame', function 
 
 it('attributes a job dispatched inside a schedule run', function (): void {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $task = new ScheduleEvent($mutex, 'php artisan demo:run');
     $task->expression = '* * * * *';
 
@@ -126,7 +121,6 @@ it('does not attribute jobs when the schedule context is empty', function (): vo
 
 it('hostDistribution counts per host across recent runs', function (): void {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $task = new ScheduleEvent($mutex, 'php artisan demo:run');
     $task->expression = '* * * * *';
 

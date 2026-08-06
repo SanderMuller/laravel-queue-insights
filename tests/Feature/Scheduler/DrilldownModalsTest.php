@@ -5,7 +5,6 @@ use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
-use Illuminate\Console\Scheduling\EventMutex;
 use Illuminate\Console\Scheduling\Schedule;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
@@ -35,7 +34,6 @@ beforeEach(function (): void {
 function buildSchedulerEventForModalTest(string $command = 'php artisan demo:modal'): ScheduleEvent
 {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $event = new ScheduleEvent($mutex, $command);
     $event->expression = '* * * * *';
 

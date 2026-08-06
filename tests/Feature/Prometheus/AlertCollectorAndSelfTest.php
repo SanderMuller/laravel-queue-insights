@@ -61,7 +61,6 @@ it('AlertActiveCollector emits one sample per active issue with diverging label 
     ]);
 
     $provider = $this->app->make(ActiveIssuesProvider::class);
-    assert($provider instanceof ActiveIssuesProvider);
     $samples = (new AlertActiveCollector($provider))->collect()[0]->samples;
 
     expect($samples)->toHaveCount(2);
@@ -89,7 +88,6 @@ it('AlertActiveCollector emits no samples when no issues are active', function (
     seedActiveIssuesCache([]);
 
     $provider = $this->app->make(ActiveIssuesProvider::class);
-    assert($provider instanceof ActiveIssuesProvider);
     $samples = (new AlertActiveCollector($provider))->collect()[0]->samples;
 
     expect($samples)

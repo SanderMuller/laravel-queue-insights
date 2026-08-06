@@ -59,7 +59,6 @@ use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskSkipped;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
 use SanderMuller\QueueInsights\Listeners\SetInitiatorOriginFromCommand;
 use SanderMuller\QueueInsights\Prometheus\ClassFilter as PrometheusClassFilter;
-use SanderMuller\QueueInsights\Prometheus\Collector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\AlertActiveCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\DelayedCollector;
 use SanderMuller\QueueInsights\Prometheus\Collectors\DurationAggregateCollector;
@@ -193,14 +192,11 @@ final class QueueInsightsServiceProvider extends ServiceProvider
             $collectors = [];
             foreach ($collectorClasses as $class) {
                 $resolved = $app->make($class);
-                assert($resolved instanceof Collector);
                 $collectors[] = $resolved;
             }
 
             $renderer = $app->make(PrometheusRenderer::class);
-            assert($renderer instanceof PrometheusRenderer);
             $self = $app->make(ExporterSelfCollector::class);
-            assert($self instanceof ExporterSelfCollector);
 
             return new PrometheusRegistry($collectors, $renderer, $self);
         });

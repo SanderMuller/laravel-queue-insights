@@ -7,7 +7,6 @@ use Illuminate\Console\Events\ScheduledTaskSkipped;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
-use Illuminate\Console\Scheduling\EventMutex;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledBackgroundTaskFinished;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
@@ -35,7 +34,6 @@ beforeEach(function (): void {
 function makeScheduleEvent(string $command = 'php artisan demo:run'): ScheduleEvent
 {
     $mutex = resolve(CacheEventMutex::class);
-    assert($mutex instanceof EventMutex);
     $event = new ScheduleEvent($mutex, $command);
     $event->expression = '* * * * *';
 
