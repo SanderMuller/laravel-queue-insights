@@ -148,9 +148,12 @@ it('renders the closure capture hint for a closure task', function (): void {
 
     Livewire::withoutLazyLoading();
 
-    Livewire::test(ScheduleInsightsPanel::class)
+    $html = Livewire::test(ScheduleInsightsPanel::class)
         ->call('openTaskModal', $taskKey)
-        ->assertSee('Output capture not supported by Laravel for closure tasks');
+        ->assertSee('Output capture not supported by Laravel for closure tasks')
+        ->html();
+
+    expect($html)->toContain('&gt; Closure task — Laravel cannot capture stdout for closures');
 });
 
 it('does not render the host-distribution panel for a single-host task', function (): void {
@@ -207,6 +210,138 @@ it('renders the host-distribution panel when multiple hosts have run the task', 
         ->assertSee('Host distribution')
         ->assertSee('web-01')
         ->assertSee('web-02');
+});
+
+it('the task modal exports its details as Markdown', function (): void {
+    // Registered on the real Schedule so the snapshot carries a row for
+    // this task key — the modal only renders for a snapshotted task.
+    $task = resolve(Schedule::class)->exec('php artisan demo:markdown')->everyMinute();
+    $task->onOneServer = true;
+    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
+    $task->exitCode = 0;
+    (new RecordScheduledTaskFinished(new RunStore(), new OutputCapturer()))
+        ->handle(new ScheduledTaskFinished($task, runtime: 0.25));
+
+    (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
+
+    Livewire::withoutLazyLoading();
+
+    $html = Livewire::test(ScheduleInsightsPanel::class)
+        ->call('openTaskModal', TaskKey::for($task))
+        ->assertSee('Copy task details as Markdown')
+        ->assertSeeHtml('id="qi-schedule-task-markdown"')
+        ->html();
+
+    expect($html)
+        ->toContain('# Scheduled task: php artisan demo:markdown')
+        ->toContain('**Cron:** `* * * * *`')
+        ->toContain('**Type:** command')
+        ->toContain('## Past 24h')
+        ->toContain('## Recent runs');
+});
+
+it('the task-modal Markdown export carries the needs-attention detail', function (): void {
+    $task = resolve(Schedule::class)->exec('php artisan demo:attention')->everyMinute();
+    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
+    (new RecordScheduledTaskFailed(new RunStore(), new OutputCapturer(), resolve(IssueDispatcher::class)))
+        ->handle(new ScheduledTaskFailed($task, new RuntimeException('markdown export boom')));
+
+    (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
+
+    Livewire::withoutLazyLoading();
+
+    $html = Livewire::test(ScheduleInsightsPanel::class)
+        ->call('openTaskModal', TaskKey::for($task))
+        ->html();
+
+    expect($html)
+        ->toContain('## Needs attention')
+        ->toContain('**1 run failed** in the past 24h')
+        ->toContain('- **Failing streak:** 1 in a row');
+});
+
+it('the task-modal Markdown export omits the needs-attention section for a healthy task', function (): void {
+    $task = resolve(Schedule::class)->exec('php artisan demo:healthy')->everyMinute();
+    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
+    $task->exitCode = 0;
+    (new RecordScheduledTaskFinished(new RunStore(), new OutputCapturer()))
+        ->handle(new ScheduledTaskFinished($task, runtime: 0.1));
+
+    (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
+
+    Livewire::withoutLazyLoading();
+
+    $html = Livewire::test(ScheduleInsightsPanel::class)
+        ->call('openTaskModal', TaskKey::for($task))
+        ->html();
+
+    expect($html)
+        ->toContain('# Scheduled task: php artisan demo:healthy')
+        ->not->toContain('## Needs attention');
+});
+
+it('the task-modal Markdown export neutralises pipes and newlines in free text', function (): void {
+    // A shell pipe in an `exec` command is ordinary, and an unescaped `|`
+    // splits a Markdown table cell.
+    $task = resolve(Schedule::class)->exec("php artisan demo:pipe | grep x\nsecond line")->everyMinute();
+    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
+    $task->exitCode = 0;
+    (new RecordScheduledTaskFinished(new RunStore(), new OutputCapturer()))
+        ->handle(new ScheduledTaskFinished($task, runtime: 0.1));
+
+    (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
+
+    Livewire::withoutLazyLoading();
+
+    $html = Livewire::test(ScheduleInsightsPanel::class)
+        ->call('openTaskModal', TaskKey::for($task))
+        ->html();
+
+    expect($html)->toContain('# Scheduled task: php artisan demo:pipe \\| grep x second line');
+});
+
+it('the task-modal Markdown export widens the code fence around a backticked command', function (): void {
+    // Named so the description differs from the command — the Command bullet
+    // (the code span under test) is suppressed when the two are identical.
+    $task = resolve(Schedule::class)->exec('php artisan demo:tick `hostname`')->everyMinute()->name('Tick host');
+    (new RecordScheduledTaskStarting(new RunStore()))->handle(new ScheduledTaskStarting($task));
+    $task->exitCode = 0;
+    (new RecordScheduledTaskFinished(new RunStore(), new OutputCapturer()))
+        ->handle(new ScheduledTaskFinished($task, runtime: 0.1));
+
+    (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
+
+    Livewire::withoutLazyLoading();
+
+    $html = Livewire::test(ScheduleInsightsPanel::class)
+        ->call('openTaskModal', TaskKey::for($task))
+        ->html();
+
+    // Two backticks around content whose longest inner run is one, so the span
+    // survives instead of closing at the first inner backtick. The symmetric
+    // padding is what lets CommonMark strip it back off when rendering.
+    expect($html)->toContain('`` php artisan demo:tick `hostname` ``');
+});
+
+it('the task-modal Markdown export handles a task with no recent runs', function (): void {
+    // Snapshotted but never run — the export must still render, with the
+    // recent-runs section falling back to its empty state.
+    resolve(Schedule::class)->exec('php artisan demo:never-run')->everyMinute();
+    (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
+
+    $taskKey = R::raw('lrange', 'qmtest:sched:tasks:order', 0, -1);
+    expect($taskKey)->toBeArray()->not->toBeEmpty();
+
+    Livewire::withoutLazyLoading();
+
+    $html = Livewire::test(ScheduleInsightsPanel::class)
+        ->call('openTaskModal', $taskKey[0])
+        ->html();
+
+    expect($html)
+        ->toContain('## Recent runs')
+        ->toContain('No runs in the recent window.')
+        ->toContain('- **Last run:** —');
 });
 
 it('openJobByUuid dispatches the cross-component event and closes the run modal', function (): void {

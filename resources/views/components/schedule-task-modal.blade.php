@@ -67,6 +67,153 @@
         }
         return number_format($ms / 1000, 2) . 's';
     };
+
+    // Absolute UTC for the Markdown export — the relative "3m ago" the
+    // `qi-time` component renders is useless once pasted somewhere else.
+    // Floors at 0 the same way `qi-time` does, so a missing timestamp
+    // exports as an em dash rather than the unix epoch.
+    $formatUtc = static function (?int $ms): string {
+        if ($ms === null || $ms <= 0) {
+            return '—';
+        }
+        return Date::createFromTimestampMs($ms, 'UTC')->toIso8601String();
+    };
+
+    // Snapshot descriptions, commands and host ids are free text. A newline
+    // would break the export's list/table structure and a pipe would split a
+    // table cell, so neutralise both before interpolating.
+    $mdText = static function (mixed $value): string {
+        if (! is_scalar($value)) {
+            return '—';
+        }
+        return str_replace(["\r\n", "\r", "\n", '|'], [' ', ' ', ' ', '\\|'], (string) $value);
+    };
+
+    // Inline code span. A scheduled `exec` command can legitimately contain a
+    // backtick (shell command substitution), which would close a fixed
+    // single-backtick span early and corrupt the export — the inline analogue
+    // of the fenced-block issue codex flagged on the failed-job modal. Per
+    // CommonMark: the delimiter must be longer than any backtick run inside,
+    // and content that starts or ends with a backtick needs space padding.
+    $mdCode = static function (string $value) use ($mdText): string {
+        $body = $mdText($value);
+        $longest = 0;
+        if (preg_match_all('/`+/', $body, $matches) > 0) {
+            $longest = max(array_map('strlen', $matches[0]));
+        }
+        $delimiter = str_repeat('`', $longest + 1);
+        $pad = str_starts_with($body, '`') || str_ends_with($body, '`') ? ' ' : '';
+
+        return $delimiter . $pad . $body . $pad . $delimiter;
+    };
+
+    $flags = array_filter([
+        'runInBackground' => (bool) ($task['runInBackground'] ?? false),
+        'onOneServer' => (bool) ($task['onOneServer'] ?? false),
+        'withoutOverlapping' => (bool) ($task['withoutOverlapping'] ?? false),
+        'evenInMaintenanceMode' => (bool) ($task['evenInMaintenanceMode'] ?? false),
+    ]);
+    $attentionReasons = AggregatesQuery::attentionReasons($stats);
+
+    // Markdown export — handed to an AI agent or pasted into a tracker. Mirrors
+    // every section the modal renders, "Needs attention" included.
+    $mdLines = ['# Scheduled task: ' . $mdText($description)];
+    $mdLines[] = '';
+    if ($command !== '' && $command !== $description) {
+        $mdLines[] = '- **Command:** ' . $mdCode($command);
+    }
+    if ($taskKey !== '') {
+        $mdLines[] = '- **Task key:** ' . $mdCode($taskKey);
+    }
+    $mdLines[] = '- **Cron:** ' . $mdCode($expression);
+    if ($timezone !== null) {
+        $mdLines[] = '- **Timezone:** ' . $mdText($timezone);
+    }
+    $mdLines[] = '- **Type:** ' . $type;
+    if ($flags !== []) {
+        $mdLines[] = '- **Flags:** ' . implode(', ', array_map(
+            static fn (string $flag): string => '`' . $flag . '`',
+            array_keys($flags),
+        ));
+    }
+    $mdLines[] = '- **Last run:** ' . $formatUtc($stats['last_run_at_ms']);
+    $mdLines[] = '- **Last success:** ' . ($stats['last_success_at_ms'] !== null
+        ? $formatUtc($stats['last_success_at_ms'])
+        : 'never');
+    if ($stats['last_failed_at_ms'] !== null) {
+        $mdLines[] = '- **Last failure:** ' . $formatUtc($stats['last_failed_at_ms']);
+    }
+    if ($stats['consecutive_failures'] > 0) {
+        $mdLines[] = '- **Failing streak:** ' . number_format($stats['consecutive_failures']) . ' in a row';
+    }
+    $mdLines[] = '- **Next due:** ' . ($nextDueAt !== null ? $formatUtc((int) $nextDueAt) : '—');
+
+    if ($attentionReasons !== []) {
+        $mdLines[] = '';
+        $mdLines[] = '## Needs attention';
+        $mdLines[] = '';
+        foreach ($attentionReasons as $reason) {
+            $mdLines[] = '- **' . number_format($reason['count']) . ' '
+                . Str::plural('run', $reason['count']) . ' ' . $reason['kind']
+                . '** in the past 24h';
+        }
+    }
+
+    $mdLines[] = '';
+    $mdLines[] = '## Past 24h';
+    $mdLines[] = '';
+    $mdLines[] = '| Runs | Failed | Hung | Skipped | Missed | p95 runtime |';
+    $mdLines[] = '| --- | --- | --- | --- | --- | --- |';
+    $mdLines[] = '| ' . implode(' | ', [
+        number_format($stats['runs']),
+        number_format($stats['failed']),
+        number_format($stats['hung']),
+        number_format($stats['skipped']),
+        number_format($stats['missed']),
+        $formatDuration($stats['p95_ms']),
+    ]) . ' |';
+
+    $mdTotalHostRuns = (int) array_sum($hostDistribution);
+    if (count($hostDistribution) >= 2 && $mdTotalHostRuns > 0) {
+        $mdLines[] = '';
+        $mdLines[] = '## Host distribution';
+        $mdLines[] = '';
+        foreach ($hostDistribution as $mdHost => $mdCount) {
+            $mdLines[] = '- ' . $mdCode((string) $mdHost) . ': ' . number_format($mdCount)
+                . ' (' . (int) round(($mdCount / $mdTotalHostRuns) * 100) . '%)';
+        }
+    }
+
+    $mdLines[] = '';
+    $mdLines[] = '## Recent runs';
+    $mdLines[] = '';
+    if ($recentRuns === []) {
+        $mdLines[] = 'No runs in the recent window.';
+    } else {
+        $mdLines[] = '| Run ID | Host | Started (UTC) | Runtime | Exit | Status |';
+        $mdLines[] = '| --- | --- | --- | --- | --- | --- |';
+        foreach ($recentRuns as $mdRun) {
+            $mdStartedMs = is_int($mdRun['started_at_ms'] ?? null) ? $mdRun['started_at_ms'] : null;
+            $mdRuntimeMs = is_int($mdRun['runtime_ms'] ?? null) ? $mdRun['runtime_ms'] : null;
+            $mdLines[] = '| ' . implode(' | ', [
+                $mdCode(is_scalar($mdRun['run_id'] ?? null) ? (string) $mdRun['run_id'] : '—'),
+                $mdText($mdRun['host_id'] ?? null),
+                $formatUtc($mdStartedMs),
+                $formatDuration($mdRuntimeMs),
+                $mdText($mdRun['exit_code'] ?? null),
+                $mdText($mdRun['status'] ?? null),
+            ]) . ' |';
+        }
+        $mdLines[] = '';
+        $mdLines[] = 'Open a run in the dashboard for its exception, skip reason, captured output and correlated jobs.';
+    }
+
+    if ($isClosure) {
+        $mdLines[] = '';
+        $mdLines[] = '> Closure task — Laravel cannot capture stdout for closures, so per-run output is always empty. Log inside the closure with `Log::info(...)` if stdout is needed.';
+    }
+
+    $taskMarkdown = implode("\n", $mdLines) . "\n";
 @endphp
 
 <div role="dialog"
@@ -81,26 +228,23 @@
          @click.stop>
         {{-- Header --}}
         <div class="sticky top-0 flex items-center justify-between gap-3 border-b border-gray-950/5 dark:border-white/10 bg-white dark:bg-gray-900 px-4 py-4">
-            <h3 id="qi-schedule-task-modal-title" class="truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
+            <h3 id="qi-schedule-task-modal-title" class="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">
                 Scheduled task
             </h3>
-            <button type="button"
-                    wire:click="closeTaskModal"
-                    aria-label="Close scheduled task modal"
-                    class="rounded-md p-1 text-gray-400 dark:text-gray-400 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                <x-queue-insights::icon-close/>
-            </button>
+            <div class="flex items-center gap-1.5">
+                <x-queue-insights::copy-button
+                    target="qi-schedule-task-markdown"
+                    label="Copy task details as Markdown"
+                    text="Copy markdown"/>
+                <button type="button"
+                        wire:click="closeTaskModal"
+                        aria-label="Close scheduled task modal"
+                        class="rounded-md p-1 text-gray-400 dark:text-gray-400 hover:bg-gray-950/5 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
+                    <x-queue-insights::icon-close/>
+                </button>
+            </div>
         </div>
 
-        @php
-            $flags = array_filter([
-                'runInBackground' => (bool) ($task['runInBackground'] ?? false),
-                'onOneServer' => (bool) ($task['onOneServer'] ?? false),
-                'withoutOverlapping' => (bool) ($task['withoutOverlapping'] ?? false),
-                'evenInMaintenanceMode' => (bool) ($task['evenInMaintenanceMode'] ?? false),
-            ]);
-            $attentionReasons = AggregatesQuery::attentionReasons($stats);
-        @endphp
         <div class="grid md:grid-cols-[22rem_1fr]">
             {{-- Left rail — identity, cadence, flags, closure hint, timing.
                 Mirrors the failed/details modal rail (border-r divider, dl
@@ -267,5 +411,7 @@
                 </section>
             </div>
         </div>
+
+        <pre id="qi-schedule-task-markdown" class="hidden" aria-hidden="true">{{ $taskMarkdown }}</pre>
     </div>
 </div>
