@@ -100,7 +100,7 @@ final class QueueRowSnapshotReader
             return null;
         }
 
-        $score = array_values($tail)[0] ?? null;
+        $score = array_values($tail)[0];
 
         return is_numeric($score) ? Date::createFromTimestamp((int) $score) : null;
     }

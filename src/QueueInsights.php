@@ -65,7 +65,7 @@ final class QueueInsights
             return null;
         }
 
-        $score = array_values($result)[0] ?? null;
+        $score = array_values($result)[0];
 
         return is_numeric($score) ? Date::createFromTimestamp((int) $score) : null;
     }

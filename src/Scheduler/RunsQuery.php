@@ -205,7 +205,7 @@ final class RunsQuery
         }
 
         $values = array_values($reply);
-        if (($values[0] ?? null) === null || ($values[0] ?? null) === false) {
+        if ($values[0] === null || $values[0] === false) {
             return null;
         }
 
@@ -271,6 +271,6 @@ final class RunsQuery
 
         $toMs = $filters['to_ms'] ?? null;
 
-        return ! (is_int($toMs) && $row['started_at_ms'] > $toMs);
+        return ! is_int($toMs) || $row['started_at_ms'] <= $toMs;
     }
 }
