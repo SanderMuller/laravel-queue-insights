@@ -4,6 +4,27 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.30.0 - 2026-08-06
+
+<!-- verified-sha: e7ca6c96b782f935a928d344ba414b2c3dffea3f -->
+### Added
+
+- Copy-as-Markdown export on the scheduled-task drilldown modal. The per-run modal already had one; the per-task modal now carries the same button, exporting task identity and cadence, flags, timing, the "Needs attention" reasons, past-24h stats, host distribution, and the recent-runs table with run ids — enough context for an AI agent or tracker to work the failure without opening the dashboard.
+
+### Changed
+
+- Timestamps in the scheduled-task export render as absolute UTC rather than the dashboard's relative "3m ago", and a missing timestamp exports as an em dash instead of the unix epoch.
+
+### Fixed
+
+- Free text in the scheduled-task export no longer corrupts the Markdown. Newlines and pipes are neutralised so they can't break the list and table structure, and a backtick in an `exec` command (shell command substitution) widens the inline code fence instead of closing the span early.
+
+### Internal
+
+- Dropped `rector/type-perfect`, which upstream abandoned in favour of `tomasvotruba/type-coverage`. Since 2.3.0 type-coverage vendors it, so both registered `Rector\TypePerfect\Reflection\MethodNodeAnalyser` and PHPStan aborted while building its container. The `type_perfect` keys in `phpstan.neon.dist` are unaffected — type-coverage ships the same parameter schema.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.29.0...0.30.0
+
 ## 0.29.0 - 2026-06-29
 
 <!-- verified-sha: 2d92a697b7e453c2d12f8b3e9a64c31983c6c8c7 -->
@@ -169,6 +190,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
   
   
   
+  
   ```
 - **Horizon autodiscovery is now runtime-gated, with a "Horizon not running" banner.** `horizon.autodiscover` becomes tri-state (`true` / `false` / `'force'`). Default `true` only autodiscovers when Horizon's service provider is **actually loaded** in the running app — important for Vapor and similar setups where `config/horizon.php` defines supervisors that are never run from this app context (jobs route to SQS, Horizon's provider is excluded). When `'force'` is set without the provider loaded, the dashboard surfaces a top-level red banner so operators don't read empty supervisor rows as a healthy state. See [README.md](README.md#horizon-supervisor-auto-discovery) for the full tri-state matrix.
 - **Sharpened alert output across mail / Slack / scheduler channels.** Every detector now produces operator-readable single-line descriptions (multi-line stack traces collapsed); the typed `SnapshotErrored` event payload still keeps the **raw** `error_message` so host listeners forwarding to Sentry / external systems get the full text. Scheduler alerts gained human-readable task labels in their notification subject + body so on-call doesn't have to map task keys back to commands.
@@ -227,6 +249,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -249,6 +272,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -424,6 +448,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -666,6 +691,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -793,6 +819,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -828,6 +855,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -969,6 +997,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
