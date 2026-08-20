@@ -1830,12 +1830,14 @@ LUA,
             return (int) $configured;
         }
 
-        // Off under test by default: the suite asserts against freshly
-        // seeded fixtures, and a window surviving between two runs would let
-        // the second assert on the first's data. Off locally too, where
-        // `testbench serve` is how the fixtures get edited and a stale
-        // window just hides the edit you are trying to see.
-        return app()->environment('production') ? 120 : 0;
+        // Off under test — the suite asserts against freshly seeded fixtures,
+        // and a window surviving between two runs would let the second assert
+        // on the first's data. On everywhere else, because the deployed demo
+        // is the case that matters and its APP_ENV is not something this
+        // class should be guessing at. Set DEMO_SEED_WINDOW_SECONDS=0 when
+        // editing the fixtures locally, where a stale window would just hide
+        // the edit you are trying to see.
+        return app()->environment('testing') ? 0 : 120;
     }
 
     private function redis(): RedisConnection
