@@ -54,7 +54,7 @@ it('reseeds once the window has expired', function (): void {
 
     (new PreviewSeeder())->seed();
 
-    expect(Redis::connection()->command('get', ['qmpreview:sentinel']))->toBeNull();
+    expect(Redis::connection()->command('exists', ['qmpreview:sentinel']))->toEqual(0);
 });
 
 it('reseeds after a seed that failed before publishing its window', function (): void {
@@ -114,5 +114,5 @@ it('does not gate when no window is configured', function (): void {
 
     (new PreviewSeeder())->seed();
 
-    expect(Redis::connection()->command('get', ['qmpreview:sentinel']))->toBeNull();
+    expect(Redis::connection()->command('exists', ['qmpreview:sentinel']))->toEqual(0);
 });
