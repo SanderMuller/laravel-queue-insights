@@ -1,7 +1,7 @@
 # Prometheus — internals + extension points
 
 AI-facing reference for the Prometheus exposition subsystem. End-user
-docs live in `README.md` (the `### Prometheus` section); the design
+docs live in `docs/13-prometheus.md`; the design
 rationale + open questions live in `internal/specs/prometheus-export.md`.
 Read this **before** touching any of the files listed below.
 

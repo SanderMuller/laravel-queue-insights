@@ -1,6 +1,6 @@
 # Alerting — internals + extension points
 
-This is the AI-facing reference for the alerting subsystem. End-user docs live in `README.md` and `internal/specs/alerting.md`. This file is what you read **before** changing the alerting code.
+This is the AI-facing reference for the alerting subsystem. End-user docs live in `docs/10-alerting.md` and `internal/specs/alerting.md`. This file is what you read **before** changing the alerting code.
 
 ## Detector catalogue (source of truth)
 

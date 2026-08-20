@@ -1,7 +1,7 @@
 # Dashboard dark mode — internals + edit points
 
 AI-facing reference for the dark-mode subsystem. End-user docs live in
-`README.md` (the `### Dark mode` section); the design rationale +
+`docs/07-theming-and-embedding.md` (the `## Dark mode` section); the design rationale +
 phase-by-phase deviations live in `internal/specs/dashboard-dark-mode.md`.
 Read this **before** touching any of the files listed below.
 

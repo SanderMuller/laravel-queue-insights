@@ -2,7 +2,7 @@
 
 AI-facing reference for the failure-context subsystem: the sanitized `Context`
 facade snapshot + environment snapshot captured when a job or scheduled task
-fails. End-user docs live in `README.md`. Read this before changing the listed
+fails. End-user docs live in `docs/06-failure-context.md`. Read this before changing the listed
 files.
 
 ## What it captures

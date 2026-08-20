@@ -4,6 +4,55 @@ Migration steps between minor/major versions of `laravel-queue-insights`. Patch 
 
 Newest at the top. Across-version jumps must complete intermediate sections in order.
 
+## Upgrading from 0.30 to 0.31
+
+### The scheduler roster now rebuilds on console commands, not on every boot
+
+**BREAKING for hosts driving the scheduler through a custom command.**
+
+Queue Insights keeps a snapshot of your scheduled-task roster (`qi:sched:tasks`
+and `qi:sched:tasks:order`). It used to rewrite that snapshot from
+`Schedule::events()` on `app->booted` — every artisan invocation and every web
+request, each paying a Redis round-trip and logging a warning when Redis was
+unreachable.
+
+It now rebuilds only when a scheduler-relevant console command starts, matched
+against the new `scheduler.snapshot_rebuild_commands` list:
+
+```php
+// config/queue-insights.php
+'scheduler' => [
+    'snapshot_rebuild_commands' => ['schedule:*', 'queue-insights:*'],
+],
+```
+
+Console-only is deliberate: `withSchedule()` and `routes/console.php` tasks do
+not exist during a web request, so a web-side rebuild would persist a partial
+roster.
+
+**Who is affected.** Hosts that run the scheduler through their own wrapper
+command instead of `schedule:run` — say `cron:tick` or `ops:scheduler`. On a
+published config predating this release the key is absent, the defaults apply,
+and the wrapper matches neither pattern, so the roster silently stops
+refreshing. The dashboard panel keeps showing the last snapshot it captured.
+
+**What to do.** Add the wrapper to the list. Exact names match literally, a
+trailing `*` matches by prefix:
+
+```php
+'snapshot_rebuild_commands' => ['schedule:*', 'queue-insights:*', 'cron:tick'],
+```
+
+Keep the list narrow — every listed command pays a Redis round-trip at startup.
+
+**No action needed** if you run `schedule:run` or `schedule:work` (the Laravel
+default), or if you had already set `scheduler.snapshot_rebuild = false` because
+you seed the roster yourself.
+
+A host that has never run the scheduler now sees an empty panel until
+`schedule:run` (or `queue-insights:schedule:list`) fires once, where before a
+single web request was enough to populate it.
+
 ## Upgrading from 0.19 to 0.20
 
 ### `horizon.autodiscover` is now runtime-gated

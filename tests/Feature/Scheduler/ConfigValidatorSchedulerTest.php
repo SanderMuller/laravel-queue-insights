@@ -115,3 +115,15 @@ it('rejects a non-string log level inside scheduler.alerts.channels.log', functi
         ]);
     })->toThrow(QueueInsightsConfigException::class, 'scheduler.alerts.channels.log.level');
 });
+
+it('accepts a list of snapshot rebuild command patterns', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler(['snapshot_rebuild_commands' => ['schedule:*', 'cron:tick']]);
+    })->not->toThrow(Throwable::class);
+});
+
+it('rejects a non-string snapshot rebuild command pattern', function (): void {
+    expect(function (): void {
+        ConfigValidator::validateScheduler(['snapshot_rebuild_commands' => ['schedule:*', 42]]);
+    })->toThrow(QueueInsightsConfigException::class, 'snapshot_rebuild_commands');
+});

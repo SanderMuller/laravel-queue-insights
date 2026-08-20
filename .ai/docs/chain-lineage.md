@@ -1,7 +1,7 @@
 # Backward chain lineage — internals + edit points
 
 AI-facing reference for the `chain_lineage` subsystem. End-user docs live in
-`README.md` (the `### Chained jobs` section); the design rationale lives in
+`docs/05-jobs-batches-chains.md` (the `## Chained jobs` section); the design rationale lives in
 `internal/specs/backward-chain-lineage.md`. Read this **before** touching any
 of the listeners or support classes listed below.
 

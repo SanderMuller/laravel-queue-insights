@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://sandermuller.github.io/laravel-queue-insights/sitemap.xml

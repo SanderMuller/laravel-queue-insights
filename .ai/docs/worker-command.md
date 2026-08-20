@@ -1,6 +1,6 @@
 # Worker command (`queue-insights:work`) — internals + edit points
 
-AI-facing reference for `php artisan queue-insights:work`. End-user docs live in `README.md` (the `## Running workers` section); the design rationale lives in `internal/specs/queue-insights-work-command.md`. Read this **before** touching any of the files listed below.
+AI-facing reference for `php artisan queue-insights:work`. End-user docs live in `docs/08-running-workers.md`; the design rationale lives in `internal/specs/queue-insights-work-command.md`. Read this **before** touching any of the files listed below.
 
 ## What it does
 

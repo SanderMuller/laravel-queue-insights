@@ -18,6 +18,7 @@ final class SchedulerConfigValidator
     {
         self::validateBoolean($scheduler, 'enabled', 'queue-insights.scheduler.enabled');
         self::validateBoolean($scheduler, 'snapshot_rebuild', 'queue-insights.scheduler.snapshot_rebuild');
+        self::validateRebuildCommands($scheduler['snapshot_rebuild_commands'] ?? null);
 
         self::validateCaptureBlock($scheduler['capture'] ?? null);
 
@@ -37,6 +38,24 @@ final class SchedulerConfigValidator
         self::validateHeartbeat($scheduler['heartbeat'] ?? null);
         self::validateAlerts($scheduler['alerts'] ?? null);
         self::validateDashboard($scheduler['dashboard'] ?? null);
+    }
+
+    private static function validateRebuildCommands(mixed $commands): void
+    {
+        if ($commands === null) {
+            return;
+        }
+
+        self::ensureArray($commands, 'queue-insights.scheduler.snapshot_rebuild_commands');
+        assert(is_array($commands));
+
+        foreach ($commands as $command) {
+            if (! is_string($command) || $command === '') {
+                throw new QueueInsightsConfigException(
+                    'queue-insights.scheduler.snapshot_rebuild_commands must be a list of non-empty strings.'
+                );
+            }
+        }
     }
 
     private static function validateCaptureBlock(mixed $capture): void

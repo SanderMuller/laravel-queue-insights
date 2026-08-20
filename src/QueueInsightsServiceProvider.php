@@ -48,6 +48,7 @@ use SanderMuller\QueueInsights\Http\Livewire\AlertRulesPanel;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
 use SanderMuller\QueueInsights\Http\Middleware\SetInitiatorOrigin;
+use SanderMuller\QueueInsights\Listeners\RebuildScheduleSnapshot;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
@@ -86,7 +87,6 @@ use SanderMuller\QueueInsights\Prometheus\Registry as PrometheusRegistry;
 use SanderMuller\QueueInsights\Prometheus\Renderer as PrometheusRenderer;
 use SanderMuller\QueueInsights\Prometheus\Scheduler\CountersReader as SchedulerCountersReader;
 use SanderMuller\QueueInsights\Prometheus\Scheduler\TaskFilter as SchedulerTaskFilter;
-use SanderMuller\QueueInsights\Scheduler\ScheduleSnapshotter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
@@ -356,27 +356,18 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 ScheduledBackgroundTaskFinished::class,
                 RecordScheduledBackgroundTaskFinished::class,
             );
+
+            // Roster rebuild, scoped to scheduler-relevant commands — see
+            // `RebuildScheduleSnapshot`. The `scheduler.snapshot_rebuild`
+            // flag is read inside the listener (not here) so a downstream
+            // provider that flips it off — e.g. the workbench preview which
+            // pre-seeds the keys with synthetic fixtures — wins over the
+            // default.
+            $events->listen(
+                CommandStarting::class,
+                RebuildScheduleSnapshot::class,
+            );
         }
-
-        // Rebuild the snapshot once every provider has registered its
-        // tasks. `app->booted` fires after register/boot finish on
-        // every provider in the stack, so `Schedule::events()` is fully
-        // populated by then. The `scheduler.snapshot_rebuild` flag is
-        // read inside the callback (not here) so a downstream provider
-        // that flips it off — e.g. the workbench preview which
-        // pre-seeds the keys with synthetic fixtures — wins over the
-        // default.
-        $this->app->booted(function (): void {
-            if (! Config::bool('scheduler.snapshot_rebuild', true)) {
-                return;
-            }
-
-            if (! $this->app->bound(Schedule::class)) {
-                return;
-            }
-
-            $this->app->make(ScheduleSnapshotter::class)->rebuild();
-        });
     }
 
     private function registerDashboard(): void

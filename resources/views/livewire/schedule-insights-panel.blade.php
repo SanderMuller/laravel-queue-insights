@@ -87,7 +87,7 @@
         @if($snapshotStale)
             <div class="rounded-xl bg-amber-50 dark:bg-amber-900/40 p-3 ring-1 ring-amber-600/20 dark:ring-amber-400/30 text-sm text-amber-800 dark:text-amber-200">
                 <strong class="font-semibold">Snapshot is older than an hour.</strong>
-                The package rebuilds it on app boot — restart workers / php-fpm to refresh.
+                The package rebuilds it when the scheduler runs — check <code class="rounded bg-amber-100/60 dark:bg-amber-900/60 px-1 py-0.5 text-xs">schedule:run</code> is still firing on its cron.
             </div>
         @endif
 
@@ -178,7 +178,7 @@
                         No scheduled tasks captured.
                     </p>
                     <p class="text-xs text-gray-400 dark:text-gray-400">
-                        The snapshot is rebuilt on app boot — restart workers and refresh.
+                        The snapshot is rebuilt when <code class="rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5 text-xs">schedule:run</code> next fires.
                     </p>
                 </div>
             @else

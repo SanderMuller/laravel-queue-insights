@@ -34,6 +34,11 @@ parameters:
         no_mixed: false
         narrow_param: false
         narrow_return: true
+        # Enabled-by-default in the standalone rector/type-perfect package;
+        # opt-in since tomasvotruba/type-coverage absorbed it in 2.3.0.
+        no_param_type_removal: true
+        no_isset_on_object: true
+        no_empty_on_object: true
 
     cognitive_complexity:
         class: 80

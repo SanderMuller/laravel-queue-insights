@@ -3,6 +3,9 @@ composer.lock
 /vendor
 /node_modules
 auth.json
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 
 # Logs
 npm-debug.log
@@ -30,7 +33,6 @@ _ide_helper_models.php
 # Misc
 phpunit.xml
 phpstan.neon
-/docs
 /coverage
 
 # Pre-release drafts (notes flow to GitHub release body, never to git history)

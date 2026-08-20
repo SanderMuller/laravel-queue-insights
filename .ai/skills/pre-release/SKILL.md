@@ -1,11 +1,11 @@
 ---
 name: pre-release
-description: 'Pre-push / pre-release checklist for laravel-queue-insights. Runs Rector, Pint, Pest, PHPStan, audits README + `.ai/` docs for staleness, then commits + pushes, watches CI for green, and drafts release notes against the verified SHA. Activate before: pushing to remote, tagging a release, writing release notes, or when user mentions: pre-release, pre-push, release checklist, ship, cut release, release notes.'
+description: 'Pre-push / pre-release checklist for laravel-queue-insights. Runs Rector, Pint, Pest, PHPStan, audits README + the `docs/` site + `.ai/` docs for staleness (including a local VitePress build), then commits + pushes, watches CI for green, and drafts release notes against the verified SHA. Activate before: pushing to remote, tagging a release, writing release notes, or when user mentions: pre-release, pre-push, release checklist, ship, cut release, release notes.'
 ---
 
 # Pre-Release Checklist
 
-Run this gauntlet before pushing commits that may be tagged as a release. It catches regressions the two-tier `backend-quality` skill skips — Rector drift, stale docs shipped to downstream projects via `package-boost:sync` — then gates the release on CI-matrix green and pins a verified SHA into the release notes.
+Run this gauntlet before pushing commits that may be tagged as a release. It catches regressions the two-tier `backend-quality` skill skips — Rector drift, stale docs shipped to downstream projects via `boost sync` — then gates the release on CI-matrix green and pins a verified SHA into the release notes.
 
 ## When to Use This Skill
 
@@ -63,11 +63,13 @@ Must show 0 errors. Fix real issues — do not pad the baseline. See `backend-qu
 
 ### 5. Documentation freshness audit
 
-Release-worthy features change user-visible behavior, so `README.md` and the `.ai/` files we ship to downstream projects (via `package-boost:sync`) can drift silently. Every release must audit both.
+Release-worthy features change user-visible behavior, so `README.md`, the `docs/` site, and the `.ai/` files we ship to downstream projects (via `boost sync`) can drift silently. Every release must audit all three.
 
 **Rule:** add or edit docs only where they reflect a real change. Do not bloat the README or skills. Delete stale content aggressively.
 
-#### 5a. README
+#### 5a. README + `docs/` pages
+
+This package is **docs-site shaped** — `README.md` is a thin landing page and the substance lives in `docs/` (see `.ai/docs/docs-site.md`). The audit covers both.
 
 Delegate to the `readme` skill — it owns the staleness-audit pattern and the Laravel-package conventions for what belongs in a README.
 
@@ -77,22 +79,44 @@ Invoke it with the release's commit range:
 git log "$(gh release list --limit 1 --json tagName -q '.[0].tagName')"..HEAD --oneline
 ```
 
-Pass that range as context. The `readme` skill scans `README.md` against the commits and updates any sections — Features list, feature subsections, public API signatures on `QueueInsights` / listeners / `Support/*` — that gained behavior. It also enforces "delete stale content before adding new" so the README doesn't bloat release-over-release.
+Pass that range as context. The `readme` skill scans `README.md` **and every `docs/NN-*.md` page** against the commits and updates any section — the feature list on `docs/01-why-queue-insights.md`, the subsystem pages, public API signatures on `QueueInsights` / listeners / `Support/*` — that gained behavior. It also enforces "delete stale content before adding new" so neither the README nor a page bloats release-over-release.
+
+Three checks the `readme` skill owns, all mandatory here:
+
+- **Index sync** — `docs/.vitepress/pages.ts`, `docs/README.md`, and the README's `## Documentation` section must list the same pages. A page added to one and not the others is the standard drift.
+- **Link audit** — README links to the site are absolute published URLs and must match a route the build produces; in-page links between docs use the `NN-` prefixed filename.
+- **Anchor slugs** — VitePress collapses consecutive hyphens and GitHub does not, so a heading containing ` / ` anchors differently in the two views. Rule 4 in `.ai/docs/docs-site.md`.
 
 Do NOT edit `CHANGELOG.md` here — `.github/workflows/update-changelog.yml` prepends the release body automatically on publish.
 
 #### 5b. Laravel Boost skills + guidelines
 
-`.ai/skills/` and `.ai/guidelines/` are synced by Laravel Boost (`vendor/bin/testbench package-boost:sync`) to `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, and `.github/skills/`. Those generated files ship with the package and are read by downstream projects' AI tooling.
+`.ai/skills/` and `.ai/guidelines/` are synced by boost-core (`composer sync-ai`, i.e. `vendor/bin/boost sync`) to `CLAUDE.md`, `AGENTS.md`, `.claude/skills/`, and `.github/skills/`. Those generated files ship with the package and are read by downstream projects' AI tooling.
 
 If anything in `.ai/` changed (or you suspect generated files have drifted from sources), sync and verify:
 
 ```bash
-vendor/bin/testbench package-boost:sync || true
+composer sync-ai || true
 git status --short .claude/ .github/ CLAUDE.md AGENTS.md
 ```
 
 All generated files must be committed together with their `.ai/` sources (per the `ai-guidelines` skill). If sync reports `total: N unchanged` for every category, nothing to commit.
+
+#### 5c. Docs build gate
+
+VitePress fails the build on a dead internal link, so this is what catches a broken cross-link before it reaches the published site rather than at deploy time. Mandatory whenever anything under `docs/` changed:
+
+```bash
+cd docs && npm ci && npm run build
+```
+
+The build must succeed. It does **not** validate anchors — for a changed heading or a new `#anchor` link, confirm the `id=` exists in the rendered output:
+
+```bash
+grep -o 'id="your-anchor"' docs/.vitepress/dist/<slug>.html
+```
+
+Deploy is `.github/workflows/docs.yml` on `main` (Pages source: GitHub Actions). It only triggers on `docs/**`, so a release that touches no docs produces no docs run — that is correct, and it is also why the local build above is the authoritative check rather than the CI run.
 
 ### Commit + push
 
@@ -326,8 +350,9 @@ If red:
 | 2. Pint           | `vendor/bin/pint --dirty --format agent \|\| true`                                       | clean                                         |
 | 3. Tests          | `vendor/bin/pest \|\| true`                                                              | 0 failures                                    |
 | 4. PHPStan        | `vendor/bin/phpstan analyse --memory-limit=2G \|\| true`                                 | 0 errors                                      |
-| 5a. README        | invoke `readme` skill with `git log <last-tag>..HEAD` range                              | no stale claims; new behavior listed          |
-| 5b. Boost docs    | `vendor/bin/testbench package-boost:sync \|\| true`                                      | `.ai/` ↔ generated files in sync              |
+| 5a. README + docs | invoke `readme` skill with `git log <last-tag>..HEAD` range                              | no stale claims; 3 indexes agree; links + anchors resolve |
+| 5b. Boost docs    | `composer sync-ai \|\| true`                                                             | `.ai/` ↔ generated files in sync              |
+| 5c. Docs build    | `cd docs && npm ci && npm run build` (when `docs/` changed)                              | build succeeds — the dead-link gate           |
 | **commit + push** | `git add <paths>` → `git commit` → `git push origin main`                                | HEAD pushed to `origin/main`                  |
 | 6. CI green-light | `gh run list --commit "$(git rev-parse HEAD)"` all complete + no failure                 | every run for the SHA in `{success, skipped}` |
 | 7. Release notes  | preflight (clean tree + pushed + CI green) → invoke `release-notes` skill → SHA pin + scrub | first line is `<!-- verified-sha: $SHA -->`, no peer IDs |
@@ -338,7 +363,7 @@ If red:
 
 - Run every step, in order, even if nothing "release-worthy" looks changed. Seemingly unrelated refactors have historically introduced subtle behavior shifts that only the matrix catches.
 - Do not push if any step 1-5 fails. Fix, then restart from step 1 — earlier steps may re-break after a later fix.
-- Steps 5a and 5b are the most common source of silent drift — the README and shipped skills are read by downstream users, and bloat accumulates fast. Delete stale content before adding new.
+- Steps 5a-5c are the most common source of silent drift — the README and shipped skills are read by downstream users, and bloat accumulates fast. Delete stale content before adding new.
 - Step 6 (CI gate) is non-skippable: CI runs against a clean env (no ambient `APP_KEY`, no cached auth user, fresh composer install) and frequently catches env-shape bugs that local dev never sees. Waiting 2 minutes for CI green is cheaper than tagging a broken release.
 - Step 7 (release notes) is gated by step 6 — **the release-notes file must not exist on disk until CI is green on the pushed commit.** If the step-7 preflight fails any of its three conditions, the draft is premature; go back to whichever earlier step is incomplete.
 - Step 8a re-verifies the live remote tip (`git ls-remote`, not the cached `origin/main`) so a concurrent push can't slip a stale commit through. 8b uses `--commit "$TAG_SHA"` + `headBranch == $TAG` (not `--branch "$TAG"`) so the tag-ref `on: push` re-fires and `on: release` decorators are both caught. Run both every time, even for one-commit patch releases.

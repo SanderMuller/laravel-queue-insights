@@ -202,6 +202,7 @@ final class ScheduleInsightsPanel extends Component
         ];
 
         $tasks = $reader->tasks();
+        $snapshotAtMs = $reader->snapshotAtMs();
         $statsByKey = [];
         foreach ($aggregates->computeStatsForTasks($tasks) as $row) {
             $statsByKey[$row['task_key']] = $row['stats'];
@@ -225,7 +226,6 @@ final class ScheduleInsightsPanel extends Component
         }
 
         $perPage = $this->perPage;
-        $snapshotAtMs = $reader->snapshotAtMs();
 
         $totalRuns = $reader->countRuns($filters);
         $totalPages = max(1, (int) ceil($totalRuns / $perPage));

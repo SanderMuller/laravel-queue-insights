@@ -658,13 +658,27 @@ return [
         'enabled' => env('QUEUE_INSIGHTS_SCHEDULER_ENABLED', false),
 
         /*
-         | Booted-time snapshot rebuild. The package re-reads `Schedule::events()`
-         | on every `app->booted` and rewrites `qi:sched:tasks` + `qi:sched:tasks:order`.
-         | Disable when the host pre-seeds the snapshot keys itself (custom import
-         | script, workbench preview seeder) — otherwise that pre-seed gets
-         | overwritten on the next request boot.
+         | Snapshot rebuild. The package re-reads `Schedule::events()` and
+         | rewrites `qi:sched:tasks` + `qi:sched:tasks:order` when a
+         | scheduler-relevant console command starts (see
+         | `snapshot_rebuild_commands`). Console-only by design: the schedule
+         | is fully defined only once Artisan boots — `withSchedule()` and
+         | `routes/console.php` tasks are absent from a web request — so a
+         | web-side rebuild would persist a partial roster. Disable when the
+         | host pre-seeds the snapshot keys itself (custom import script,
+         | workbench preview seeder) — otherwise that pre-seed gets
+         | overwritten.
          */
         'snapshot_rebuild' => env('QUEUE_INSIGHTS_SCHEDULER_SNAPSHOT_REBUILD', true),
+
+        /*
+         | Which console commands trigger the rebuild. An exact command name
+         | matches literally; a trailing `*` matches by prefix. Unrelated
+         | artisan commands must not pay a Redis round-trip, so keep this list
+         | narrow — add a host-specific scheduler wrapper here if you run one
+         | instead of `schedule:run`.
+         */
+        'snapshot_rebuild_commands' => ['schedule:*', 'queue-insights:*'],
 
         /*
          | Per-run output capture. Same three-mode semantics as job payload
