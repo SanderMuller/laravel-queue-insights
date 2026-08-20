@@ -17,6 +17,7 @@ use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\RedisPipeline;
 use Workbench\App\Http\Middleware\SeedPreviewState;
 
 /**
@@ -26,11 +27,41 @@ use Workbench\App\Http\Middleware\SeedPreviewState;
  * stream, etc — so the workbench preview is a faithful end-to-end
  * exercise of the package, not a hand-built view-data fixture.
  *
- * Idempotent: every call flushes the prefixed keyspace first and re-seeds
- * from scratch so refreshes show stable state.
+ * Idempotent: a seeding call flushes the prefixed keyspace first and
+ * re-seeds from scratch, so refreshes show stable state. Seeding is rate
+ * limited to one request per `DEMO_SEED_WINDOW_SECONDS` — see
+ * `claimSeedWindow()` for why.
  */
 final class PreviewSeeder
 {
+    /**
+     * Set once a seed completes; its TTL is the window during which every
+     * other request reuses those fixtures. Named with a hyphen, not a
+     * colon, so `resetState()`'s SCAN+DEL of `qmpreview:*` cannot delete
+     * the bookkeeping for the window it is running under.
+     */
+    private const string FRESH_KEY = '{qmpreview-seed}-fresh';
+
+    /** Held for the duration of one seed so concurrent requests can't stampede. */
+    private const string LOCK_KEY = '{qmpreview-seed}-lock';
+
+    /** Ceiling on one seed. Expiry is the recovery path when a seeder dies. */
+    private const int LOCK_TTL_SECONDS = 60;
+
+    /** How long a request that lost the race waits for fixtures to appear. */
+    private const float SEED_WAIT_SECONDS = 5.0;
+
+    /**
+     * Identifies this instance's hold on the lock, so a seeder that ran past
+     * its TTL cannot publish over — or delete the lock of — whichever
+     * request replaced it.
+     */
+    private ?string $lockToken = null;
+
+    private const int SEED_CLAIMED = 1;
+
+    private const int SEED_IN_PROGRESS = 2;
+
     /**
      * Per-request guard so a single render doesn't seed twice (livewire
      * polls re-hit the route).
@@ -50,6 +81,13 @@ final class PreviewSeeder
         // boot() so it survives Livewire's polling request (which lands
         // on `/livewire/update`, NOT the seeded `/` middleware).
         self::applyConfig();
+
+        if (! $this->claimSeedWindow()) {
+            $this->seeded = true;
+
+            return;
+        }
+
         $this->resetState();
 
         $now = Date::now();
@@ -67,6 +105,8 @@ final class PreviewSeeder
         $this->seedDurationSamples($redis);
         $this->seedChainLineage();
         $this->seedScheduler($redis, $now);
+
+        $this->publishSeedWindow();
 
         $this->seeded = true;
     }
@@ -357,64 +397,70 @@ LUA,
             'App\\Jobs\\PingThirdPartyVendor' => 'redis',
         ];
 
-        foreach ($classConnections as $class => $connection) {
-            $redis->command('zadd', [KeyPrefix::make('classes'), $now->getTimestamp(), $class]);
-            $redis->command('zadd', [KeyPrefix::make("classes:{$connection}"), $now->getTimestamp(), $class]);
-            $redis->command('setex', [KeyPrefix::make("last_run:{$class}"), 2592000, $now->toIso8601String()]);
+        // ~940 writes, one per class per hourly bucket. Sequentially that
+        // is ~940 round-trips; against a managed Redis a couple of
+        // milliseconds away it was two seconds of the page-load budget on
+        // its own. Pipelined it costs one.
+        RedisPipeline::run($redis, static function (mixed $pipe) use ($classConnections, $now): void {
+            foreach ($classConnections as $class => $connection) {
+                $pipe->zadd(KeyPrefix::make('classes'), $now->getTimestamp(), $class);
+                $pipe->zadd(KeyPrefix::make("classes:{$connection}"), $now->getTimestamp(), $class);
+                $pipe->setex(KeyPrefix::make("last_run:{$class}"), 2592000, $now->toIso8601String());
 
-            // Per-hour throughput across the full 24h window the
-            // dashboard's bar chart renders. Varies by hour-of-day with a
-            // sine-shaped business-hours peak so the chart shows a real
-            // diurnal pattern instead of a single tall bar at "now".
-            $base = 30 + (abs(crc32($class)) % 80);
-            // PingThirdPartyVendor stays loud — it's silenced, so the
-            // failure_rate detector short-circuits and the noise drives the
-            // silenced-vs-not-silenced delta on the throughput sparkline.
-            // The other classes stay below the 10% threshold so the demo
-            // shows realistic-but-not-paging failure traffic.
-            $failureWeight = match ($class) {
-                'App\\Jobs\\PingThirdPartyVendor' => 0.45,
-                'App\\Jobs\\NotifyImportFinished' => 0.06,
-                'App\\Jobs\\GenerateInvoicePdf' => 0.05,
-                default => 0.02,
-            };
-            for ($i = 23; $i >= 0; --$i) {
-                $hour = $now->copy()->utc()->subHours($i)->startOfHour();
-                $bucket = $hour->format('YmdH');
+                // Per-hour throughput across the full 24h window the
+                // dashboard's bar chart renders. Varies by hour-of-day with a
+                // sine-shaped business-hours peak so the chart shows a real
+                // diurnal pattern instead of a single tall bar at "now".
+                $base = 30 + (abs(crc32($class)) % 80);
+                // PingThirdPartyVendor stays loud — it's silenced, so the
+                // failure_rate detector short-circuits and the noise drives the
+                // silenced-vs-not-silenced delta on the throughput sparkline.
+                // The other classes stay below the 10% threshold so the demo
+                // shows realistic-but-not-paging failure traffic.
+                $failureWeight = match ($class) {
+                    'App\\Jobs\\PingThirdPartyVendor' => 0.45,
+                    'App\\Jobs\\NotifyImportFinished' => 0.06,
+                    'App\\Jobs\\GenerateInvoicePdf' => 0.05,
+                    default => 0.02,
+                };
+                for ($i = 23; $i >= 0; --$i) {
+                    $hour = $now->copy()->utc()->subHours($i)->startOfHour();
+                    $bucket = $hour->format('YmdH');
 
-                // Diurnal scaler: 0.3 at night → 1.0 at midday, plus
-                // class-specific phase offset so different classes peak
-                // at slightly different hours.
-                $phase = (abs(crc32($class)) % 6) / 6.0; // 0..1
-                $hourOfDay = ((int) $hour->format('G') + ($phase * 24)) % 24;
-                $diurnal = 0.3 + 0.7 * (sin(($hourOfDay - 6) / 24 * 2 * M_PI) + 1) / 2;
-                $processed = max(0, (int) round($base * $diurnal) + ($i % 5));
-                $failed = (int) round($processed * $failureWeight) + ($i % 7 === 0 ? 1 : 0);
+                    // Diurnal scaler: 0.3 at night → 1.0 at midday, plus
+                    // class-specific phase offset so different classes peak
+                    // at slightly different hours.
+                    $phase = (abs(crc32($class)) % 6) / 6.0; // 0..1
+                    $hourOfDay = ((int) $hour->format('G') + ($phase * 24)) % 24;
+                    $diurnal = 0.3 + 0.7 * (sin(($hourOfDay - 6) / 24 * 2 * M_PI) + 1) / 2;
+                    $processed = max(0, (int) round($base * $diurnal) + ($i % 5));
+                    $failed = (int) round($processed * $failureWeight) + ($i % 7 === 0 ? 1 : 0);
 
-                $redis->command('setex', [
-                    KeyPrefix::make("processed:{$class}:{$bucket}"),
-                    7 * 86400,
-                    (string) $processed,
-                ]);
-                $redis->command('setex', [
-                    KeyPrefix::make("processed:{$class}:{$connection}:{$bucket}"),
-                    7 * 86400,
-                    (string) $processed,
-                ]);
-                if ($failed > 0) {
-                    $redis->command('setex', [
-                        KeyPrefix::make("failed:{$class}:{$bucket}"),
-                        30 * 86400,
-                        (string) $failed,
-                    ]);
-                    $redis->command('setex', [
-                        KeyPrefix::make("failed:{$class}:{$connection}:{$bucket}"),
-                        30 * 86400,
-                        (string) $failed,
-                    ]);
+                    $pipe->setex(
+                        KeyPrefix::make("processed:{$class}:{$bucket}"),
+                        7 * 86400,
+                        (string) $processed,
+                    );
+                    $pipe->setex(
+                        KeyPrefix::make("processed:{$class}:{$connection}:{$bucket}"),
+                        7 * 86400,
+                        (string) $processed,
+                    );
+                    if ($failed > 0) {
+                        $pipe->setex(
+                            KeyPrefix::make("failed:{$class}:{$bucket}"),
+                            30 * 86400,
+                            (string) $failed,
+                        );
+                        $pipe->setex(
+                            KeyPrefix::make("failed:{$class}:{$connection}:{$bucket}"),
+                            30 * 86400,
+                            (string) $failed,
+                        );
+                    }
                 }
             }
-        }
+        });
     }
 
     /**
@@ -433,24 +479,23 @@ LUA,
             'App\\Jobs\\WeeklyDigest' => [9000, 11000, 12500, 15000],
         ];
 
-        foreach ($samples as $class => $durations) {
-            $hashKey = KeyPrefix::make("duration:{$class}");
-            $sampleKey = KeyPrefix::make("duration:samples:{$class}");
-            $count = count($durations);
-            $sum = (float) array_sum($durations);
-            $max = (string) max($durations);
+        RedisPipeline::run($redis, static function (mixed $pipe) use ($samples): void {
+            foreach ($samples as $class => $durations) {
+                $hashKey = KeyPrefix::make("duration:{$class}");
+                $sampleKey = KeyPrefix::make("duration:samples:{$class}");
 
-            $redis->command('hset', [$hashKey, 'count', (string) $count]);
-            $redis->command('hset', [$hashKey, 'sum_ms', (string) $sum]);
-            $redis->command('hset', [$hashKey, 'max_ms', $max]);
-            $redis->command('expire', [$hashKey, 2592000]);
+                $pipe->hset($hashKey, 'count', (string) count($durations));
+                $pipe->hset($hashKey, 'sum_ms', (string) (float) array_sum($durations));
+                $pipe->hset($hashKey, 'max_ms', (string) max($durations));
+                $pipe->expire($hashKey, 2592000);
 
-            foreach ($durations as $ms) {
-                $redis->command('rpush', [$sampleKey, (string) $ms]);
+                foreach ($durations as $ms) {
+                    $pipe->rpush($sampleKey, (string) $ms);
+                }
+
+                $pipe->expire($sampleKey, 2592000);
             }
-
-            $redis->command('expire', [$sampleKey, 2592000]);
-        }
+        });
     }
 
     /**
@@ -1042,19 +1087,21 @@ LUA,
             ['redis', 'webhooks', range(40, 400, 12)],
         ];
 
-        foreach ($queues as [$connection, $queue, $samples]) {
-            $queueKey = CanonicalQueueKey::from($queue);
-            $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
-            $i = 0;
-            foreach ($samples as $waitMs) {
-                $uuid = "preview-wait-{$connection}-{$queueKey}-{$i}";
-                $redis->command('setex', [KeyPrefix::make("wait:{$uuid}"), 604800, (string) $waitMs]);
-                $redis->command('zadd', [$waitKey, $now->copy()->subSeconds($i)->getTimestamp(), $uuid]);
-                ++$i;
-            }
+        RedisPipeline::run($redis, static function (mixed $pipe) use ($queues, $now): void {
+            foreach ($queues as [$connection, $queue, $samples]) {
+                $queueKey = CanonicalQueueKey::from($queue);
+                $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
+                $i = 0;
+                foreach ($samples as $waitMs) {
+                    $uuid = "preview-wait-{$connection}-{$queueKey}-{$i}";
+                    $pipe->setex(KeyPrefix::make("wait:{$uuid}"), 604800, (string) $waitMs);
+                    $pipe->zadd($waitKey, $now->copy()->subSeconds($i)->getTimestamp(), $uuid);
+                    ++$i;
+                }
 
-            $redis->command('expire', [$waitKey, 604800]);
-        }
+                $pipe->expire($waitKey, 604800);
+            }
+        });
     }
 
     /**
@@ -1626,6 +1673,169 @@ LUA,
         }
 
         $redis->command('expire', [$jobsKey, 604800]);
+    }
+
+    /**
+     * Elects the one request per window that rewrites the fixtures; every
+     * other request reads what it wrote.
+     *
+     * A full re-seed is ~3,800 sequential Redis round-trips. On a local
+     * Redis that is ~100ms and invisible, which is why it went unnoticed;
+     * against a managed Redis a couple of milliseconds away it is 6-8
+     * seconds, and the demo used to pay it on every single page load.
+     *
+     * `SET NX EX` does both jobs at once — it marks the window and elects
+     * the seeder, so concurrent first-hits can't stampede into parallel
+     * flushes of each other's writes.
+     *
+     * The claim key deliberately sits outside the `qmpreview:` namespace
+     * (hyphen, not colon): `resetState()` SCAN+DELs `qmpreview:*`, and a
+     * claim stored in there would delete the very window it is running
+     * under.
+     */
+    private function claimSeedWindow(): bool
+    {
+        $window = self::seedWindowSeconds();
+        if ($window <= 0) {
+            return true;
+        }
+
+        $verdict = $this->attemptClaim();
+
+        if ($verdict === self::SEED_IN_PROGRESS) {
+            $this->waitForSeedInProgress();
+
+            // The holder either finished (freshness is up) or died and let
+            // its lock expire while we waited. One more attempt resolves
+            // both without a second special case.
+            $verdict = $this->attemptClaim();
+        }
+
+        return $verdict === self::SEED_CLAIMED;
+    }
+
+    /**
+     * One script so the freshness read and the lock write can't interleave,
+     * and so every key goes through KEYS[] — the drivers disagree about
+     * prefixing discrete arguments versus Lua keys, and mixing the two
+     * access styles would have the check and the write land on different
+     * keys. It is also why the lock is taken here rather than with
+     * `command('set', …)`: phpredis takes SET's options as an array third
+     * argument, Predis takes them variadically.
+     */
+    private function attemptClaim(): int
+    {
+        $token = bin2hex(random_bytes(16));
+
+        $verdict = (int) RedisEval::exec(
+            $this->redis(),
+            <<<'LUA'
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+if redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[2], 'NX') then return 1 end
+return 2
+LUA,
+            2,
+            self::FRESH_KEY,
+            self::LOCK_KEY,
+            $token,
+            (string) self::LOCK_TTL_SECONDS,
+        );
+
+        if ($verdict === self::SEED_CLAIMED) {
+            $this->lockToken = $token;
+        }
+
+        return $verdict;
+    }
+
+    /**
+     * Marks the fixtures current. Deliberately the last thing a successful
+     * seed does: if the seed throws halfway, the freshness key is never
+     * written and the next request re-seeds, instead of the whole window
+     * serving whatever the half-finished run left behind.
+     */
+    private function publishSeedWindow(): void
+    {
+        $window = self::seedWindowSeconds();
+        if ($window <= 0 || $this->lockToken === null) {
+            return;
+        }
+
+        // Publish only while we still own the lock. A seed that overran its
+        // TTL has already been replaced by another request that flushed the
+        // keyspace and is rebuilding it — announcing fixtures as fresh at
+        // that point would advertise the replacement's half-finished work,
+        // and deleting the lock would let a third request in on top.
+        RedisEval::exec(
+            $this->redis(),
+            <<<'LUA'
+if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+redis.call('DEL', KEYS[2])
+return 1
+LUA,
+            2,
+            self::FRESH_KEY,
+            self::LOCK_KEY,
+            $this->lockToken,
+            (string) Date::now()->getTimestamp(),
+            (string) $window,
+        );
+
+        $this->lockToken = null;
+    }
+
+    /**
+     * A request that arrives while another one is mid-seed would otherwise
+     * render against a keyspace `resetState()` has just flushed — an empty
+     * dashboard, which is a worse look on a demo than a slower one. Wait
+     * for the freshness key the seeder publishes on completion, bounded so
+     * a seeder that died still can't hold a request open.
+     */
+    private function waitForSeedInProgress(): void
+    {
+        $redis = $this->redis();
+        $deadline = microtime(true) + self::SEED_WAIT_SECONDS;
+
+        while (microtime(true) < $deadline) {
+            usleep(150_000);
+
+            if ((int) RedisEval::exec($redis, "return redis.call('EXISTS', KEYS[1])", 1, self::FRESH_KEY) === 1) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * How long a seeded fixture set stays authoritative. The fixtures are
+     * built relative to "now" ("20 seconds ago", "2 minutes ago"), so the
+     * window is also the worst-case drift an operator sees on those
+     * relative timestamps — two minutes keeps them honest while still
+     * collapsing a browsing session down to one seed.
+     *
+     * `DEMO_SEED_WINDOW_SECONDS=0` restores the old seed-every-request
+     * behaviour.
+     */
+    private static function seedWindowSeconds(): int
+    {
+        // Config first so a caller can set the window without touching the
+        // process environment (the window test does exactly that), then the
+        // env var the demo is actually configured with.
+        $configured = config('queue-insights-preview.seed_window_seconds');
+        if (! is_numeric($configured)) {
+            $configured = env('DEMO_SEED_WINDOW_SECONDS');
+        }
+
+        if (is_numeric($configured)) {
+            return (int) $configured;
+        }
+
+        // Off under test by default: the suite asserts against freshly
+        // seeded fixtures, and a window surviving between two runs would let
+        // the second assert on the first's data. Off locally too, where
+        // `testbench serve` is how the fixtures get edited and a stale
+        // window just hides the edit you are trying to see.
+        return app()->environment('production') ? 120 : 0;
     }
 
     private function redis(): RedisConnection
