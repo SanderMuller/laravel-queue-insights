@@ -12,7 +12,8 @@
 Self-hosted queue observability for Laravel that doesn't care which driver you run. Queue depth,
 in-flight and delayed counts, enqueue-to-pickup wait time, per-class metrics, batches, chains,
 failures with their captured context, alerting, Prometheus metrics, and scheduler runs, all of it
-the same on SQS, Redis, and database queues. No Horizon required, and no job data sent anywhere.
+the same on SQS, Redis, database, and Laravel Cloud managed queues. No Horizon required, and no
+job data sent anywhere.
 
 Everything goes into a bounded Redis keyspace that evicts itself. The dashboard is Livewire and
 Blade with no Filament or Nova coupling, so you can mount it in the admin layout you already have.

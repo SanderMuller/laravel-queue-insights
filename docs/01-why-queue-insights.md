@@ -6,7 +6,7 @@ a job sat before a worker picked it up, and what its payload looked like when it
 blew up. None of that is in the box.
 
 Horizon covers part of it, on Redis. Queue Insights covers it on whichever driver
-you already run: SQS, Redis, or database. Your job data never leaves your own
+you already run: SQS, Redis, database, or Laravel Cloud's managed queues. Your job data never leaves your own
 infrastructure. The Redis keyspace it writes is bounded by your retention settings
 and evicts itself, so it doesn't grow without limit as job volume rises.
 
@@ -18,7 +18,7 @@ and evicts itself, so it doesn't grow without limit as job volume rises.
 
 ## What you get
 
-- **Driver-agnostic depth, in-flight, delayed counts** per queue — SQS, Redis, database.
+- **Driver-agnostic depth, in-flight, delayed counts** per queue — SQS, Redis, database, Laravel Cloud.
 - **Pending & delayed-job inspector** per queue, event-captured into Redis (same view across drivers). Optional payload capture under a separate budget so the per-row hash math doesn't pin the completed-stream sanitiser settings.
 - **Batched jobs** — per-batch progress, counts, cancelled state, per-item rollup linking back to job modals.
 - **Chained-job visibility** — `↳ Next` chip + Chain modal section, plus opportunistic backward `↰ From {parent}` lineage.

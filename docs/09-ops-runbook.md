@@ -23,7 +23,8 @@
 
 ## Driver-specific quirks
 
-- SQS values are AWS approximations. `GetQueueUrl` is cached for 1h in Redis; the first run per new queue name costs one extra API call.
+- SQS values are AWS approximations. `GetQueueUrl` is cached for 1h in Redis; the first run per new queue name costs one extra API call — skipped entirely when the connection configures a `prefix` (Laravel Cloud always does), since the queue URL can then be assembled locally.
+- Laravel Cloud's `cloud` connection is SQS underneath and needs no override; its per-environment queue-name suffix is stripped, so rows key on the logical name you dispatch to. See [Configuration](15-configuration.md#laravel-cloud-managed-queues).
 - Redis reads `LLEN queues:{name}` plus `ZCARD` on `:reserved` and `:delayed`. Matches Laravel's own queue key convention.
 - Database depth includes rows whose reservation has expired (crashed workers leave their jobs poppable again). Matches `DatabaseQueue::getNextAvailableJob()` exactly.
 
