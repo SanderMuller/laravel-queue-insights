@@ -91,3 +91,23 @@ it('negotiates openmetrics flavour from Accept header and appends # EOF', functi
         ->and($response->getContent())
         ->toEndWith("# EOF\n");
 });
+
+it('labels a physically-named snapshot entry with its logical queue name', function (): void {
+    // The snapshot driver writes metrics under the logical key on a suffixed
+    // connection, so the collectors have to read (and label) the same one.
+    config()->set('queue.connections.cloud', [
+        'driver' => 'cloud',
+        'connection' => ['driver' => 'sqs', 'suffix' => '-abc123'],
+    ]);
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'cloud', 'queue' => 'work-abc123'],
+    ]);
+
+    R::conn()->command('setex', [KeyPrefix::make('live:depth:cloud:work'), 90, '4']);
+
+    $body = $this->withHeader('Authorization', 'Bearer secret-token')
+        ->get('/metrics')
+        ->getContent();
+
+    expect($body)->toContain('queue_insights_queue_depth{connection="cloud",queue="work"} 4');
+});

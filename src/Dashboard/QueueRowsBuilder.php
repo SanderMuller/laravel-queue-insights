@@ -28,7 +28,7 @@ final readonly class QueueRowsBuilder
         $canonical = [];
         foreach ($this->svc->configuredQueues($scopeConnection) as $entry) {
             try {
-                $canonicalQueue = CanonicalQueueKey::from($entry['queue']);
+                $canonicalQueue = CanonicalQueueKey::forConnection($entry['queue'], $entry['connection']);
             } catch (InvalidArgumentException) {
                 // Invalid entry — skip rather than crash the whole render.
                 // Boot-time ConfigValidator catches these at boot; this guards

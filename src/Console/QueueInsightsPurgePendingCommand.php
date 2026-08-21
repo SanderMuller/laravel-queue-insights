@@ -60,6 +60,10 @@ final class QueueInsightsPurgePendingCommand extends Command
         }
 
         try {
+            // `from()`, NOT `forConnection()`: the argument names a key as it
+            // is actually stored, and orphans are exactly the keys that don't
+            // match what the current code would derive — a suffix-stripping
+            // pass here would retarget the command away from them.
             $canonical = CanonicalQueueKey::from($queueRaw);
         } catch (InvalidArgumentException $invalidArgumentException) {
             $this->error("Invalid queue value [{$queueRaw}]: {$invalidArgumentException->getMessage()}");

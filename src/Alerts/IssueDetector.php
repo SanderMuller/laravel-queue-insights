@@ -192,7 +192,7 @@ final readonly class IssueDetector
                 continue;
             }
 
-            $pairs[] = [$connection, CanonicalQueueKey::from($queue)];
+            $pairs[] = [$connection, CanonicalQueueKey::forConnection($queue, $connection)];
         }
 
         return $pairs;

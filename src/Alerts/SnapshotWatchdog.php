@@ -91,7 +91,7 @@ final class SnapshotWatchdog
             }
 
             try {
-                $pairs[] = [$connection, CanonicalQueueKey::from($queue)];
+                $pairs[] = [$connection, CanonicalQueueKey::forConnection($queue, $connection)];
             } catch (Throwable) {
                 continue;
             }

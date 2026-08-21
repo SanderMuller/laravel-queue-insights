@@ -158,7 +158,7 @@ final class RowEnricher
             $connectionRaw = is_string($row['connection'] ?? null) ? $row['connection'] : '';
             $queueRaw = is_string($row['queue'] ?? null) ? $row['queue'] : '';
             $connection = ConnectionAlias::canonical($connectionRaw);
-            $queueKey = $queueRaw !== '' ? CanonicalQueueKey::from($queueRaw) : null;
+            $queueKey = $queueRaw !== '' ? CanonicalQueueKey::forConnection($queueRaw, $connection) : null;
 
             $rows[] = [
                 'id' => is_numeric($row['id'] ?? null) ? (int) $row['id'] : null,

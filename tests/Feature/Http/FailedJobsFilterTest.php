@@ -9,6 +9,7 @@ use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
 use SanderMuller\QueueInsights\QueueInsights;
 use SanderMuller\QueueInsights\Support\CompletedRowFilter;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
+use SanderMuller\QueueInsights\Tests\Support\CloudQueueConfig;
 use SanderMuller\QueueInsights\Tests\Support\FailedUuidCollectorProbe;
 
 beforeEach(function (): void {
@@ -96,6 +97,40 @@ it('filters by queue matching an SQS queue URL by its canonical name', function 
 
     expect($rows)->toHaveCount(1)
         ->and($rows[0]['queue'])->toEndWith('/staging_default');
+});
+
+it('filters a suffixed queue by its logical name', function (): void {
+    // Laravel Cloud: failed_jobs.queue holds the URL of the PHYSICAL queue
+    // (`stats-abc123`), while every canonical key — and so the filter value —
+    // is the logical `stats`.
+    config()->set('queue.connections.cloud', CloudQueueConfig::make());
+
+    seedFailedFilterRow(['connection' => 'cloud', 'queue' => CloudQueueConfig::url('stats')]);
+    seedFailedFilterRow(['connection' => 'cloud', 'queue' => CloudQueueConfig::url('mail')]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(connection: 'cloud', queue: 'stats'));
+
+    // `recentFailed` returns raw rows; RowEnricher is what maps the stored
+    // URL down to the logical key for display.
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['queue'])->toBe(CloudQueueConfig::url('stats'));
+});
+
+it('filters a suffixed queue by its logical name without a connection scope', function (): void {
+    config()->set('queue.connections.cloud', CloudQueueConfig::make());
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'cloud', 'queue' => 'stats'],
+    ]);
+
+    seedFailedFilterRow(['connection' => 'cloud', 'queue' => CloudQueueConfig::url('stats')]);
+    seedFailedFilterRow(['connection' => 'cloud', 'queue' => CloudQueueConfig::url('mail')]);
+
+    $rows = resolve(QueueInsights::class)->recentFailed(50, new FailedJobFilters(queue: 'stats'));
+
+    // `recentFailed` returns raw rows; RowEnricher is what maps the stored
+    // URL down to the logical key for display.
+    expect($rows)->toHaveCount(1)
+        ->and($rows[0]['queue'])->toBe(CloudQueueConfig::url('stats'));
 });
 
 it('queue filter escapes the underscore so it is not a LIKE wildcard', function (): void {

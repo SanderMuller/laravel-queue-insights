@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\BatchReader;
 use SanderMuller\QueueInsights\Support\Config;
+use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\ConfiguredQueueList;
 use SanderMuller\QueueInsights\Support\DisplayNamePayloadMatch;
 use SanderMuller\QueueInsights\Support\FailedJobFilters;
@@ -19,6 +20,7 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
 use SanderMuller\QueueInsights\Support\QueueRowSnapshotReader;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
+use SanderMuller\QueueInsights\Support\SqsQueueName;
 use SanderMuller\QueueInsights\Support\WaitTimeMetrics;
 use Throwable;
 
@@ -586,17 +588,26 @@ final class QueueInsights
 
         if ($filters->queue !== '') {
             // failed_jobs.queue is the RAW queue — a plain name on most
-            // drivers, but the full SQS queue URL on Vapor
+            // drivers, but the full SQS queue URL on Vapor / Laravel Cloud
             // (https://sqs.{region}.amazonaws.com/{account}/{name}). The
             // filter value is the canonical key, so match a plain value
             // exactly OR an SQS URL by its trailing `/{name}` segment.
-            // `ESCAPE '|'` keeps a literal `_` in the key from acting as a
-            // wildcard across the MySQL / Postgres / SQLite matrix — same
-            // idiom as DisplayNamePayloadMatch.
-            $queueNeedle = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $filters->queue);
-            $query->where(function (Builder $q) use ($filters, $queueNeedle): void {
-                $q->where('queue', $filters->queue)
-                    ->orWhereRaw('queue LIKE ? ESCAPE ?', ['%/' . $queueNeedle, '|']);
+            //
+            // The canonical key is the LOGICAL name, while the stored URL ends
+            // in the PHYSICAL one, so a connection with a queue-name suffix
+            // needs both spellings — see SqsQueueName.
+            $candidates = self::failedQueueCandidates($filters);
+
+            $query->where(function (Builder $q) use ($candidates): void {
+                $q->whereIn('queue', $candidates);
+
+                foreach ($candidates as $candidate) {
+                    // `ESCAPE '|'` keeps a literal `_` in the key from acting
+                    // as a wildcard across the MySQL / Postgres / SQLite
+                    // matrix — same idiom as DisplayNamePayloadMatch.
+                    $needle = str_replace(['|', '%', '_'], ['||', '|%', '|_'], $candidate);
+                    $q->orWhereRaw('queue LIKE ? ESCAPE ?', ['%/' . $needle, '|']);
+                }
             });
         }
 
@@ -699,5 +710,37 @@ final class QueueInsights
     private function redis(): RedisConnection
     {
         return Redis::connection(Config::string('redis_connection', 'default'));
+    }
+
+    /**
+     * Every spelling of the filtered queue that could sit in
+     * `failed_jobs.queue`: the canonical (logical) name, plus its physical
+     * form for any connection whose config carries a queue-name suffix.
+     *
+     * The filter's connection narrows it to one when set; unscoped, every
+     * configured connection's suffix is considered, since the row itself is
+     * the only thing that knows which connection wrote it.
+     *
+     * @return list<string>
+     */
+    private static function failedQueueCandidates(FailedJobFilters $filters): array
+    {
+        $connections = $filters->connection !== ''
+            ? [$filters->connection]
+            : ConfiguredConnections::all();
+
+        $candidates = [$filters->queue];
+
+        foreach ($connections as $connection) {
+            $suffix = SqsQueueName::suffixFor($connection);
+
+            if ($suffix === '') {
+                continue;
+            }
+
+            $candidates[] = SqsQueueName::physical($filters->queue, $suffix);
+        }
+
+        return array_values(array_unique($candidates));
     }
 }

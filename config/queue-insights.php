@@ -107,6 +107,17 @@ return [
      */
     'connection_aliases' => [],
 
+    /*
+     | Force the snapshot driver for a queue connection whose real driver the
+     | package can't map on its own. Keyed by connection name; the value is a
+     | built-in driver name (`sqs`, `cloud`, `redis`, `database`, `null`), a
+     | class-string implementing `Contracts\QueueSnapshotDriver`, an instance,
+     | or a closure receiving the connection name and returning one.
+     |
+     | Laravel Cloud's managed queues (`driver => cloud`) are recognised out of
+     | the box — the nested SQS config under `queue.connections.cloud.
+     | connection` is read automatically, so no override is needed there.
+     */
     'driver_overrides' => [],
 
     'capture' => [

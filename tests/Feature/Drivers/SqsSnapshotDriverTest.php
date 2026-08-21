@@ -116,3 +116,30 @@ it('only calls GetQueueAttributes once per queue per driver instance (per-reques
     expect($driver->inFlight($url))->toBe(2)
         ->and($driver->delayed($url))->toBe(1);
 });
+
+it('resolves a suffixed name via GetQueueUrl when no prefix is configured', function (): void {
+    /** @var SqsClient&MockInterface $client */
+    $client = Mockery::mock(SqsClient::class);
+    $client->shouldReceive('getQueueUrl')
+        ->once()
+        ->with(['QueueName' => 'my-q-abc123'])
+        ->andReturn(new Result(['QueueUrl' => 'https://sqs.eu-west-1.amazonaws.com/123/my-q-abc123']));
+    $client->shouldReceive('getQueueAttributes')
+        ->once()
+        ->andReturn(new Result(['Attributes' => ['ApproximateNumberOfMessages' => '2']]));
+
+    $driver = new SqsSnapshotDriver($client, 'sqs', '', '-abc123');
+
+    expect($driver->depth('my-q'))->toBe(2)
+        // Cached under the physical name, so an unsuffixed connection sharing
+        // the logical name can't collide with it.
+        ->and(Redis::connection('default')->command('get', ['qmtest:url:sqs:my-q-abc123']))
+        ->toBe('https://sqs.eu-west-1.amazonaws.com/123/my-q-abc123');
+});
+
+it('leaves canonical keys untouched for a plain sqs connection', function (): void {
+    /** @var SqsClient&MockInterface $client */
+    $client = Mockery::mock(SqsClient::class);
+
+    expect((new SqsSnapshotDriver($client, 'sqs'))->canonicalKey('default'))->toBe('default');
+});

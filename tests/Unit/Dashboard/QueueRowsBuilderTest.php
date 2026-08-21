@@ -212,3 +212,28 @@ it('build falls back to em-dash for a non-string driver config', function (): vo
 
     expect(queueRowsBuilder($svc)->build('')[0]['driver'])->toBe('—');
 });
+
+it('keys a suffixed queue row on its logical name while showing the configured spelling', function (): void {
+    config()->set('queue.connections.cloud', [
+        'driver' => 'cloud',
+        'connection' => ['driver' => 'sqs', 'suffix' => '-abc123'],
+    ]);
+
+    $svc = Mockery::mock(QueueInsights::class);
+    $svc->shouldReceive('configuredQueues')->once()->andReturn([
+        ['connection' => 'cloud', 'queue' => 'stats-abc123'],
+    ]);
+    // The metric lookup must ask for the logical key — that is what the
+    // snapshot driver and the worker listeners both write.
+    $svc->shouldReceive('queueRowSnapshots')
+        ->once()
+        ->with([['connection' => 'cloud', 'queue' => 'stats']])
+        ->andReturn([snapshot(['depth' => 7])]);
+    $svc->shouldReceive('queueWaitPercentiles')->with('cloud', 'stats')->andReturn(['p50' => null, 'p95' => null]);
+
+    $rows = queueRowsBuilder($svc)->build('');
+
+    expect($rows[0]['queue'])->toBe('stats-abc123')
+        ->and($rows[0]['canonical'])->toBe('stats')
+        ->and($rows[0]['depth'])->toBe(7);
+});

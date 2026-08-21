@@ -44,17 +44,23 @@ final class SnapshotPairs
                 continue;
             }
 
-            try {
-                $canonical = CanonicalQueueKey::from($queue);
-            } catch (InvalidArgumentException) {
-                continue;
-            }
-
             // Canonicalise connection so Prometheus collectors emit a
             // consistent `connection` label that matches the listener-side
             // writes once `connection_aliases` is published. Producers /
             // workers / dashboard / Prometheus all converge on the same name.
-            $out[] = ['connection' => ConnectionAlias::canonical($connection), 'queue' => $canonical];
+            $canonicalConnection = ConnectionAlias::canonical($connection);
+
+            try {
+                // Connection-aware, matching the snapshot driver: a suffixed
+                // connection's metrics live under the logical key, so a
+                // physically-named entry must resolve there too or the
+                // collector reads an empty key.
+                $canonical = CanonicalQueueKey::forConnection($queue, $canonicalConnection);
+            } catch (InvalidArgumentException) {
+                continue;
+            }
+
+            $out[] = ['connection' => $canonicalConnection, 'queue' => $canonical];
         }
 
         return $out;

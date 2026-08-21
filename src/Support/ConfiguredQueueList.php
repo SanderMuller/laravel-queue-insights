@@ -94,7 +94,10 @@ final class ConfiguredQueueList
         }
 
         try {
-            $canonicalQueue = CanonicalQueueKey::from($queue);
+            // `forConnection` so a roster row lands on the same key the
+            // snapshot driver writes metrics under, even when the entry names
+            // the physical (suffixed) queue.
+            $canonicalQueue = CanonicalQueueKey::forConnection($queue, $canonicalConn);
         } catch (InvalidArgumentException) {
             return;
         }

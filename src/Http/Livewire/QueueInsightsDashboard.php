@@ -290,7 +290,7 @@ final class QueueInsightsDashboard extends Component
      * Clicking the already-selected queue clears the scope (toggle). Resets
      * paginators on every transition.
      *
-     * The queue is canonicalised via `CanonicalQueueKey::from()` so an SQS
+     * The queue is canonicalised via `CanonicalQueueKey::forConnection()` so an SQS
      * URL ("https://sqs.../work") collapses to its slug ("work") — matching
      * the canonical key shape every downstream reader (pending zsets,
      * inspector_key, completed-stream rows) compares against. Without this,
@@ -303,7 +303,7 @@ final class QueueInsightsDashboard extends Component
         }
 
         try {
-            $canonicalQueue = CanonicalQueueKey::from($queue);
+            $canonicalQueue = CanonicalQueueKey::forConnection($queue, $connection);
         } catch (InvalidArgumentException) {
             return;
         }

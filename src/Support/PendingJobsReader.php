@@ -131,7 +131,7 @@ final class PendingJobsReader
         $resolved = [];
         foreach ($configuredQueues as $entry) {
             try {
-                $canonical = CanonicalQueueKey::from($entry['queue']);
+                $canonical = CanonicalQueueKey::forConnection($entry['queue'], $entry['connection']);
             } catch (InvalidArgumentException) {
                 continue;
             }

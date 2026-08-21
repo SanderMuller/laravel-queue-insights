@@ -38,15 +38,18 @@ final class QueueScopeKey
         // canonical scope. Connection: alias map collapses producer/worker
         // names. Queue: CanonicalQueueKey strips driver-specific shapes
         // (e.g. SQS URLs `https://sqs.../work` → `work`) so a hand-written
-        // `?qk=sqs:https://…/work` matches dashboard rows keyed by `work`.
+        // `?qk=sqs:https://…/work` matches dashboard rows keyed by `work`, and
+        // the connection's queue-name suffix is stripped with it.
+        $canonicalConnection = ConnectionAlias::canonical($connection);
+
         try {
-            $canonicalQueue = CanonicalQueueKey::from($queue);
+            $canonicalQueue = CanonicalQueueKey::forConnection($queue, $canonicalConnection);
         } catch (InvalidArgumentException) {
             return null;
         }
 
         return [
-            'connection' => ConnectionAlias::canonical($connection),
+            'connection' => $canonicalConnection,
             'queue' => $canonicalQueue,
         ];
     }

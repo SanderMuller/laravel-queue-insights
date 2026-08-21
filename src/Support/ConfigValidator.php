@@ -40,12 +40,6 @@ final class ConfigValidator
                 );
             }
 
-            try {
-                $canonical = CanonicalQueueKey::from($queue);
-            } catch (InvalidArgumentException $e) {
-                throw new QueueInsightsConfigException("queue-insights.snapshots[{$index}] invalid queue: " . $e->getMessage(), $e->getCode(), previous: $e);
-            }
-
             // Canonicalise the connection so post-alias collisions (e.g.
             // entries `{redis, foo}` and `{redis-staging, foo}` under
             // `aliases.redis = 'redis-staging'`) are caught at boot rather
@@ -53,6 +47,16 @@ final class ConfigValidator
             // time. validateConnectionAliases ran first so the alias map is
             // well-formed by this point.
             $canonicalConnection = ConnectionAlias::canonical($connection);
+
+            try {
+                // `forConnection`, matching the snapshot driver: a suffixed
+                // connection's logical and physical spellings are one queue,
+                // so listing both is a collision, not two entries.
+                $canonical = CanonicalQueueKey::forConnection($queue, $canonicalConnection);
+            } catch (InvalidArgumentException $e) {
+                throw new QueueInsightsConfigException("queue-insights.snapshots[{$index}] invalid queue: " . $e->getMessage(), $e->getCode(), previous: $e);
+            }
+
             $slot = $canonicalConnection . '|' . $canonical;
 
             if (isset($seen[$slot])) {

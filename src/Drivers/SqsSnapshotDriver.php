@@ -10,6 +10,7 @@ use SanderMuller\QueueInsights\Contracts\QueueSnapshotDriver;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\SqsQueueName;
 
 final class SqsSnapshotDriver implements QueueSnapshotDriver
 {
@@ -22,9 +23,19 @@ final class SqsSnapshotDriver implements QueueSnapshotDriver
     /** @var array<string, array<string, string>> Attribute cache keyed by resolved URL. */
     private array $attrCache = [];
 
+    /**
+     * `$prefix` / `$suffix` mirror the queue connection's own config keys
+     * (`Illuminate\Queue\Connectors\SqsConnector`). Both default to empty so
+     * a plain `sqs` connection keeps the historical behaviour: names are
+     * resolved through `GetQueueUrl` and cached, never assembled locally.
+     * Laravel Cloud's managed queues supply both, which lets the URL be built
+     * without an API round-trip.
+     */
     public function __construct(
         private readonly SqsClient $client,
         private readonly string $connectionName,
+        private readonly string $prefix = '',
+        private readonly string $suffix = '',
     ) {}
 
     public function depth(string $queue): int
@@ -46,9 +57,14 @@ final class SqsSnapshotDriver implements QueueSnapshotDriver
         return $value === null ? null : (int) $value;
     }
 
+    /**
+     * Keyed on the connection's *logical* queue name, so a snapshot entry
+     * written as a URL or with the suffix already applied still lands on the
+     * same key the listeners write from the worker side.
+     */
     public function canonicalKey(string $queue): string
     {
-        return CanonicalQueueKey::from($queue);
+        return CanonicalQueueKey::forConnection($queue, $this->connectionName);
     }
 
     /**
@@ -93,7 +109,20 @@ final class SqsSnapshotDriver implements QueueSnapshotDriver
             return $input;
         }
 
-        $cacheKey = KeyPrefix::make("url:{$this->connectionName}:{$input}");
+        // The physical name (configured name + connection suffix) is what AWS
+        // knows. With no suffix configured this is the input verbatim, so the
+        // cache key below is unchanged for existing plain-SQS deployments.
+        $physical = SqsQueueName::physical($input, $this->suffix);
+
+        // A configured prefix IS the queue-URL base
+        // (`https://sqs.{region}.amazonaws.com/{account}`), so the URL can be
+        // assembled locally — same shape `SqsQueue::suffixQueue()` builds.
+        // Saves the GetQueueUrl round-trip and its Redis cache entry.
+        if ($this->prefix !== '') {
+            return rtrim($this->prefix, '/') . '/' . $physical;
+        }
+
+        $cacheKey = KeyPrefix::make("url:{$this->connectionName}:{$physical}");
         $redis = $this->insightsRedis();
 
         $cached = $redis->command('get', [$cacheKey]);
@@ -101,12 +130,12 @@ final class SqsSnapshotDriver implements QueueSnapshotDriver
             return $cached;
         }
 
-        $result = $this->client->getQueueUrl(['QueueName' => $input]);
+        $result = $this->client->getQueueUrl(['QueueName' => $physical]);
         $urlRaw = $result['QueueUrl'] ?? '';
         $url = is_string($urlRaw) ? $urlRaw : '';
 
         if ($url === '') {
-            throw new RuntimeException("SQS GetQueueUrl returned an empty URL for queue [{$input}].");
+            throw new RuntimeException("SQS GetQueueUrl returned an empty URL for queue [{$physical}].");
         }
 
         $redis->command('setex', [$cacheKey, 3600, $url]);

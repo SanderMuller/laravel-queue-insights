@@ -15,6 +15,7 @@ use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
 use SanderMuller\QueueInsights\Support\PendingJobsReader;
+use SanderMuller\QueueInsights\Tests\Support\CloudQueueConfig;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -514,4 +515,51 @@ it('preserves data.command in payload_body when include_command_body is on', fun
 
     $decoded = json_decode((string) $body, true);
     expect($decoded['data']['command'] ?? null)->toBe($cmd);
+});
+
+it('aligns producer and worker zset keys when the connection carries a queue-name suffix', function (): void {
+    // Laravel Cloud's shape: the real SQS connection is nested under `connection`,
+    // and every physical queue name carries the environment suffix.
+    config()->set('queue.connections.cloud', CloudQueueConfig::make());
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69CLUD';
+
+    // Producer only ever sees the logical name.
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'cloud', 'stats'));
+
+    expect(R::int('exists', 'qmtest:pending-zset:cloud:stats'))->toBe(1);
+
+    // Worker reads the queue off the job, where SqsJob::getQueue() is the URL —
+    // the physical, suffixed name. It must still clear the producer's entry.
+    $job = makePendingJobMock($uuid, CloudQueueConfig::url('stats'));
+
+    (new RecordJobProcessing())->handle(new JobProcessing(connectionName: 'cloud', job: $job));
+
+    expect(R::int('exists', 'qmtest:inflight-zset:cloud:stats'))->toBe(1)
+        // The physical key is what a pre-fix build would have written here.
+        ->and(R::int('exists', 'qmtest:inflight-zset:cloud:stats-abc123'))->toBe(0)
+        ->and(R::int('zcard', 'qmtest:pending-zset:cloud:stats'))->toBe(0);
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'cloud', job: $job));
+
+    expect(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0)
+        ->and(R::int('zcard', 'qmtest:inflight-zset:cloud:stats'))->toBe(0);
+});
+
+it('aligns producer and worker zset keys for a plain sqs connection with SQS_SUFFIX set', function (): void {
+    config()->set('queue.connections.sqs.queue', 'default');
+    config()->set('queue.connections.sqs.suffix', '-production');
+
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69SFFX';
+
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'sqs', ''));
+
+    expect(R::int('exists', 'qmtest:pending-zset:sqs:default'))->toBe(1);
+
+    $job = makePendingJobMock($uuid, 'https://sqs.eu-west-1.amazonaws.com/123/default-production');
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'sqs', job: $job));
+
+    expect(R::int('zcard', 'qmtest:pending-zset:sqs:default'))->toBe(0)
+        ->and(R::int('exists', 'qmtest:pending:' . $uuid))->toBe(0);
 });
