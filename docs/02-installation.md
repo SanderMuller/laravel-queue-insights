@@ -29,7 +29,7 @@ To opt out and wire it yourself, set `queue-insights.schedule.enabled = false` a
 ### Optional environment knobs
 
 Most hosts only set these two at install time; everything else lives in the
-[configuration reference](15-configuration.md).
+[configuration reference](16-configuration.md).
 
 | Var                            | Default | Purpose                                                                                      |
 |--------------------------------|---------|----------------------------------------------------------------------------------------------|

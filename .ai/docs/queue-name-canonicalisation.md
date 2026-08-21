@@ -6,8 +6,7 @@ go through the connection-aware entry point.
 
 Sibling of [`connection-aliases.md`](connection-aliases.md): that doc owns the
 **connection** half of a key, this one owns the **queue** half. End-user
-counterpart: the "Laravel Cloud managed queues" and "Suffixed queue names"
-sections of `docs/15-configuration.md`.
+counterpart: `docs/15-vapor-and-cloud.md`.
 
 ## Touchpoints
 

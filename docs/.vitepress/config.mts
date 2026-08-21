@@ -110,7 +110,7 @@ export default defineConfig({
         nav: [
             { text: 'Guide', link: link('01-why-queue-insights') },
             { text: 'Alerting', link: link('10-alerting') },
-            { text: 'Config', link: link('15-configuration') },
+            { text: 'Config', link: link('16-configuration') },
             { text: 'Demo', link: 'https://queue-insights-demo.laravel.cloud' },
             { text: 'Releases', link: 'https://github.com/SanderMuller/laravel-queue-insights/releases' },
             { text: 'Packagist', link: 'https://packagist.org/packages/sandermuller/laravel-queue-insights' },

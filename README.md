@@ -77,6 +77,7 @@ Read the full documentation at **[sandermuller.github.io/laravel-queue-insights]
 - [Connection aliasing](https://sandermuller.github.io/laravel-queue-insights/connection-aliasing) — collapsing dispatcher/worker connection drift onto a canonical key
 - [Prometheus](https://sandermuller.github.io/laravel-queue-insights/prometheus) — the `/metrics` endpoint, the metric catalogue, scheduler families, the push gateway
 - [Scheduler observability](https://sandermuller.github.io/laravel-queue-insights/scheduler) — task snapshots, run records, missed and hung detection, retention
+- [Vapor and Laravel Cloud](https://sandermuller.github.io/laravel-queue-insights/vapor-and-cloud) — what the managed platforms handle for you, and the few queues you list yourself
 
 **Reference**
 - [Configuration reference](https://sandermuller.github.io/laravel-queue-insights/configuration) — every key in `config/queue-insights.php`, with defaults and what each one changes

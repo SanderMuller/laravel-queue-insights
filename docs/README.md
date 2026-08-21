@@ -30,4 +30,5 @@ Self-hosted, driver-agnostic queue observability for Laravel. For a quick overvi
 
 ## Reference
 
-- [Configuration reference](15-configuration.md) — every key in `config/queue-insights.php`, with defaults and what each one changes
+- [Vapor and Laravel Cloud](15-vapor-and-cloud.md) — what the managed platforms handle for you, and the few queues you list yourself
+- [Configuration reference](16-configuration.md) — every key in `config/queue-insights.php`, with defaults and what each one changes

@@ -64,37 +64,13 @@ Everything you can set without publishing the config file.
 | `redis_connection` | `default` | Connection name, not a database number — the DB lives on that connection's `database` key. To isolate the package's keys on shared Redis, define a new connection in `config/database.php` pointing at a dedicated DB and name it here. |
 | `key_prefix` | `qm:{APP_ENV}:` | Prefix on every key the package writes. |
 | `redis_cluster` | `false` | Wraps `key_prefix` in a `{…}` hash tag so the package's multi-key Lua scripts and pipelines stay CROSSSLOT-legal. An existing hash tag in your prefix is left alone, not double-wrapped. The matching connection in `config/database.php` must **also** be a cluster connection (a `clusters` block, or `options.cluster`) so the client follows `MOVED` redirects. |
-| `snapshots` | two `sqs` entries, filtered on `SQS_QUEUE` and `SQS_HIGH_QUEUE` | The queues to capture. Each entry is `['connection' => …, 'queue' => …]`. The connection must exist in `config/queue.php`; the driver is auto-detected from `queue.connections.{name}.driver`. Recognised: `sqs`, `cloud`, `redis`, `database`, and `null` / `sync` (recorded with zero depth). Anything else logs a warning once per tick and snapshots nothing — see [Laravel Cloud managed queues](#laravel-cloud-managed-queues). |
+| `snapshots` | two `sqs` entries, filtered on `SQS_QUEUE` and `SQS_HIGH_QUEUE` | The queues to capture. Each entry is `['connection' => …, 'queue' => …]`. The connection must exist in `config/queue.php`; the driver is auto-detected from `queue.connections.{name}.driver`. Recognised: `sqs`, `cloud`, `redis`, `database`, and `null` / `sync` (recorded with zero depth). Anything else logs a warning once per tick and snapshots nothing. |
 | `driver_overrides` | `[]` | Force a driver for a connection whose real driver can't be auto-detected. Accepts a built-in name (`sqs`, `cloud`, `redis`, `database`, `null`), a `QueueSnapshotDriver` class-string, an instance, or a closure returning one. |
 | `connection_aliases` | `[]` | Collapse several Laravel connection names onto one canonical key. Identity mappings (`A => A`) are allowed; transitive chains (`A => B`, `B => C`) and mutual cycles are rejected by the boot validator. See [Connection aliasing](12-connection-aliasing.md). |
 
-### Laravel Cloud managed queues
+### Managed platforms
 
-On Laravel Cloud, `Illuminate\Foundation\Cloud` injects a `cloud` queue connection whose real backend (SQS) sits nested under a `connection` key. Snapshots understand that shape natively — no override needed. Cloud does not appear in `snapshots[]` by itself, so list it:
-
-```php
-'snapshots' => [
-    ['connection' => 'cloud', 'queue' => env('CLOUD_QUEUE', 'default')],
-],
-```
-
-`queue.connections.cloud.queues` lists every managed queue attached to the environment — read it to see what is worth listing:
-
-```sh
-php artisan tinker --execute="print_r(config('queue.connections.cloud.queues'));"
-```
-
-Use the **logical** queue name — the one you dispatch to. Naming the suffixed (physical) queue works too; both resolve to the same key. See [Suffixed queue names](#suffixed-queue-names) below.
-
-Everything driven by queue *events* — throughput, runtimes, failures, chain lineage, the scheduler panel — needs no configuration on Cloud: those listen on Laravel's queue events, which are driver-independent.
-
-### Suffixed queue names
-
-Cloud (and any SQS connection with `SQS_SUFFIX` set) gives one queue two names: the **logical** `stats` you dispatch to, and the **physical** `stats-{suffix}` AWS knows and the queue URL ends with. The package keys everything on the logical name — dashboard rows, snapshot metrics, `pending-zset` keys, alert scopes — and translates at the edges. Nothing to configure; list logical names in `snapshots[]` and read logical names off the dashboard.
-
-::: warning Upgrading with a suffix already configured
-Before this, the producer keyed the logical name while the worker keyed the physical one, so a suffixed queue rendered as two dashboard rows and its pending entries never cleared (`oldest_pending` firing on jobs that had long since finished). After upgrading, the two collapse into one logical row. Pre-existing keys under the physical name are not migrated — they age out on their own TTLs, or clear immediately with `php artisan queue-insights:purge-pending {connection} {physical-queue-name}`.
-:::
+Laravel Cloud's `cloud` connection and Vapor's SQS setup both work without a `driver_overrides` entry, and a connection carrying a queue-name suffix keys on its logical name throughout. Which queues to list, and what else is worth checking on those platforms, is on [Vapor and Laravel Cloud](15-vapor-and-cloud.md).
 
 ### `horizon`
 

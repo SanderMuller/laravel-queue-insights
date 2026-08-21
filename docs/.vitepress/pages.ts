@@ -106,13 +106,18 @@ export const sections: DocSection[] = [
                 text: 'Scheduler observability',
                 blurb: 'Per-task snapshots, per-run records, missed and hung detection, and retention.',
             },
+            {
+                file: '15-vapor-and-cloud',
+                text: 'Vapor and Laravel Cloud',
+                blurb: 'What the managed platforms handle for you, and the few queues you list yourself.',
+            },
         ],
     },
     {
         text: 'Reference',
         pages: [
             {
-                file: '15-configuration',
+                file: '16-configuration',
                 text: 'Configuration reference',
                 blurb: 'Every key in config/queue-insights.php, with defaults and what each one changes.',
             },
