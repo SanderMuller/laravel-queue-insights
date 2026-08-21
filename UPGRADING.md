@@ -4,6 +4,62 @@ Migration steps between minor/major versions of `laravel-queue-insights`. Patch 
 
 Newest at the top. Across-version jumps must complete intermediate sections in order.
 
+## Upgrading from 0.31 to 0.32
+
+### Suffixed queues key on their logical name
+
+**BREAKING for Laravel Cloud hosts and any SQS connection with `SQS_SUFFIX` set.**
+No action needed on Redis, database, or unsuffixed SQS connections.
+
+A connection carrying a queue-name suffix gives one queue two names: the
+**logical** `stats` you dispatch to, and the **physical** `stats-{suffix}` AWS
+knows, which is what the queue URL ends with. Queue Insights used to key
+whichever one reached a given code path — the producer saw the logical name on
+`JobQueued`, the worker read the physical one off the job. Two keys for one
+queue, which is why pending entries never cleared and a queue rendered twice on
+the dashboard.
+
+Everything now keys the logical name. Two things change on the host side:
+
+1. **Dashboard rows collapse.** A queue that showed as `stats` (queued counts
+   only) plus `stats-abc123` (everything else) becomes a single `stats` row.
+2. **Prometheus `queue` label values change** from `stats-abc123` to `stats`.
+   Grafana panels, recording rules, and alert rules pinned to the old label
+   value need updating, or they go silent.
+
+Keys written under the physical name are not migrated. They age out on their
+own TTLs (`pending.ttl_seconds`, default 24h, plus the metric TTLs), or clear
+immediately:
+
+```bash
+php artisan queue-insights:purge-pending cloud stats-abc123 --force
+```
+
+Pass the **physical** name there — the command targets keys as they are
+stored, which is the point of an orphan scrubber.
+
+### Laravel Cloud needs no `driver_overrides` entry
+
+If you silenced the `unknown queue driver` warning with an override, remove it —
+it now wins over the built-in `cloud` support and would keep snapshots dead
+silently:
+
+```php
+// config/queue-insights.php — delete this
+'driver_overrides' => ['cloud' => 'null'],
+```
+
+Then list the queues to snapshot; Cloud does not add itself to `snapshots[]`.
+`config('queue.connections.cloud.queues')` holds every managed queue on the
+environment:
+
+```php
+'snapshots' => [
+    ['connection' => 'cloud', 'queue' => 'default'],
+    ['connection' => 'cloud', 'queue' => 'stats'],
+],
+```
+
 ## Upgrading from 0.30 to 0.31
 
 ### The scheduler roster now rebuilds on console commands, not on every boot
