@@ -4,6 +4,38 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.32.0 - 2026-08-21
+
+<!-- verified-sha: 97d6f7b85a6f990ad7f3bd3eec706a6b8d154e88 -->
+### Breaking
+
+- Queues on a connection with a queue-name **suffix** now key on their **logical** name — the one you dispatch to — instead of the physical one AWS knows. That is Laravel Cloud's `cloud` connection (it always sets a suffix) and any SQS connection with `SQS_SUFFIX`. Two consequences on those hosts:
+  
+  - A queue that rendered as two dashboard rows (`stats` with queued counts, `stats-abc123` with everything else) collapses into one.
+  - Prometheus `queue` label values change from `stats-abc123` to `stats`. Dashboards and alert rules pinned to the old label need updating.
+  
+  Keys already written under the physical name are not migrated. They age out on their own TTLs, or clear immediately with `php artisan queue-insights:purge-pending {connection} {physical-name}`. No action needed on Redis, database, or unsuffixed SQS connections.
+  
+
+### Added
+
+- **Laravel Cloud managed queues.** `cloud` is a wrapper rather than a transport — the framework injects `queue.connections.cloud` with the real SQS connection nested under a `connection` key. Snapshots unwrap that level, so depth, in-flight, and delayed counts work on Cloud with no configuration and no `driver_overrides` entry. Previously the connection fell through to the null driver and logged `unknown queue driver` on every snapshot tick. Cloud does not add itself to `snapshots[]`; list the queues from `config('queue.connections.cloud.queues')`. See [Configuration](https://sandermuller.github.io/laravel-queue-insights/configuration#laravel-cloud-managed-queues).
+- `credentials` on an SQS connection is honoured the way Laravel's own connector honours it — a provider name (`ecs`, `instance`) or a callable, taking precedence over a `key`/`secret` pair. Snapshots on an IAM-role host no longer depend on the default credential chain happening to match the worker's principal.
+
+### Fixed
+
+- **Pending rows never cleared on a suffixed queue.** The producer records `JobQueued` under the logical queue name; the worker reads the queue off the job, where it is the full SQS URL and therefore the physical name. The two keyed different sorted sets, so the worker's cleanup never removed the producer's entry: every job left a phantom pending row for the full `pending.ttl_seconds` window, and `oldest_pending` fired on jobs that had long since finished. Pre-existed for `SQS_SUFFIX` hosts; universal on Laravel Cloud.
+- Filtering failed jobs by queue returned nothing on a suffixed connection — the stored value ends in the physical name while the filter carries the logical one.
+- A snapshot entry naming the physical queue is now rostered, keyed, and labelled the same as one naming the logical queue, rather than producing a dashboard row with no metrics behind it. Listing both spellings for one queue is rejected at boot as the collision it is.
+- Snapshotting an SQS queue no longer calls `GetQueueUrl` when the connection configures a `prefix` — the queue URL is assembled locally, as Laravel does. Saves an API call per new queue name and its Redis cache entry.
+
+### Internals
+
+- `Support/SqsQueueName` owns the logical/physical translation, resolving a connection's suffix through `connection_aliases` when the canonical name is not itself a config key.
+- `CanonicalQueueKey::forConnection()` is the single place a runtime-sourced queue value becomes a key; `fromOrDefault()` routes through it, which covers all four `Record*` listeners at once. `queue-insights:purge-pending` deliberately stays on `from()` — its argument names a key as stored, which is the point of an orphan scrubber.
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.31.0...0.32.0
+
 ## 0.31.0 - 2026-08-20
 
 <!-- verified-sha: e6c38e9e46501b159cd7f836316bf7de6b5ed994 -->
@@ -15,6 +47,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   'scheduler' => [
       'snapshot_rebuild_commands' => ['schedule:*', 'queue-insights:*', 'cron:tick'],
   ],
+  
   
   ```
   Exact names match literally, a trailing `*` matches by prefix. No action needed if you run `schedule:run` or `schedule:work`. See [UPGRADING.md](https://github.com/SanderMuller/laravel-queue-insights/blob/main/UPGRADING.md).
@@ -225,6 +258,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
   
   
   
+  
   ```
 - **Horizon autodiscovery is now runtime-gated, with a "Horizon not running" banner.** `horizon.autodiscover` becomes tri-state (`true` / `false` / `'force'`). Default `true` only autodiscovers when Horizon's service provider is **actually loaded** in the running app — important for Vapor and similar setups where `config/horizon.php` defines supervisors that are never run from this app context (jobs route to SQS, Horizon's provider is excluded). When `'force'` is set without the provider loaded, the dashboard surfaces a top-level red banner so operators don't read empty supervisor rows as a healthy state. See [README.md](README.md#horizon-supervisor-auto-discovery) for the full tri-state matrix.
 - **Sharpened alert output across mail / Slack / scheduler channels.** Every detector now produces operator-readable single-line descriptions (multi-line stack traces collapsed); the typed `SnapshotErrored` event payload still keeps the **raw** `error_message` so host listeners forwarding to Sentry / external systems get the full text. Scheduler alerts gained human-readable task labels in their notification subject + body so on-call doesn't have to map task keys back to commands.
@@ -285,6 +319,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -307,6 +342,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -484,6 +520,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -730,6 +767,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -859,6 +897,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -894,6 +933,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -1037,6 +1077,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
