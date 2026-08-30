@@ -18,7 +18,7 @@ job data sent anywhere.
 Everything goes into a bounded Redis keyspace that evicts itself. The dashboard is Livewire and
 Blade with no Filament or Nova coupling, so you can mount it in the admin layout you already have.
 
-**[Live demo: queue-insights-demo.laravel.cloud](https://queue-insights-demo.laravel.cloud)** —
+**[Live demo: queue-insights-demo.laravel.cloud](https://queue-insights-demo.laravel.cloud)**:
 public preview on Laravel Cloud, seeded with realistic fixtures.
 
 ## Installation
@@ -57,31 +57,31 @@ Payload capture is off by default, and there are good reasons to leave it that w
 Read the full documentation at **[sandermuller.github.io/laravel-queue-insights](https://sandermuller.github.io/laravel-queue-insights/)**. The source lives in [docs/](docs/README.md).
 
 **Getting started**
-- [Why Queue Insights?](https://sandermuller.github.io/laravel-queue-insights/why-queue-insights) — what it answers that `queue:work` and a `failed_jobs` table do not, and the full feature list
-- [Installation](https://sandermuller.github.io/laravel-queue-insights/installation) — requirements, the snapshot scheduler, environment knobs
-- [Getting started](https://sandermuller.github.io/laravel-queue-insights/getting-started) — authorize the route, run a worker, read the dashboard
-- [Payload capture](https://sandermuller.github.io/laravel-queue-insights/payload-capture) — the three modes, the separate pending budget, custom sanitizers
+- [Why Queue Insights?](https://sandermuller.github.io/laravel-queue-insights/why-queue-insights): what it answers that `queue:work` and a `failed_jobs` table do not, and the full feature list
+- [Installation](https://sandermuller.github.io/laravel-queue-insights/installation): requirements, the snapshot scheduler, environment knobs
+- [Getting started](https://sandermuller.github.io/laravel-queue-insights/getting-started): authorize the route, run a worker, read the dashboard
+- [Payload capture](https://sandermuller.github.io/laravel-queue-insights/payload-capture): the three modes, the separate pending budget, custom sanitizers
 
 **Dashboard**
-- [Dashboard](https://sandermuller.github.io/laravel-queue-insights/dashboard) — authorisation, multi-connection scoping, retry permissions and workflow, filtering
-- [Jobs, batches, and chains](https://sandermuller.github.io/laravel-queue-insights/jobs-batches-chains) — wait time, the pending inspector, batch progress, chain lineage, job initiator
-- [Failure context](https://sandermuller.github.io/laravel-queue-insights/failure-context) — what is captured on failure, and the Sentry deep-link
-- [Theming and embedding](https://sandermuller.github.io/laravel-queue-insights/theming-and-embedding) — custom row markup, admin-layout embedding, dark mode, the cloud look
+- [Dashboard](https://sandermuller.github.io/laravel-queue-insights/dashboard): authorisation, multi-connection scoping, retry permissions and workflow, filtering
+- [Jobs, batches, and chains](https://sandermuller.github.io/laravel-queue-insights/jobs-batches-chains): wait time, the pending inspector, batch progress, chain lineage, job initiator
+- [Failure context](https://sandermuller.github.io/laravel-queue-insights/failure-context): what is captured on failure, and the Sentry deep-link
+- [Theming and embedding](https://sandermuller.github.io/laravel-queue-insights/theming-and-embedding): custom row markup, admin-layout embedding, dark mode, the cloud look
 
 **Operations**
-- [Running workers](https://sandermuller.github.io/laravel-queue-insights/running-workers) — the `queue-insights:work` supervisor, its non-goals, shutdown grace tuning
-- [Ops runbook](https://sandermuller.github.io/laravel-queue-insights/ops-runbook) — console commands, dashboard signals, driver quirks, key prefixes, Redis Cluster
-- [Alerting](https://sandermuller.github.io/laravel-queue-insights/alerting) — nine detectors, cooldown, log / Slack / mail / Sentry channels, typed events, silencing
+- [Running workers](https://sandermuller.github.io/laravel-queue-insights/running-workers): the `queue-insights:work` supervisor, its non-goals, shutdown grace tuning
+- [Ops runbook](https://sandermuller.github.io/laravel-queue-insights/ops-runbook): console commands, dashboard signals, driver quirks, key prefixes, Redis Cluster
+- [Alerting](https://sandermuller.github.io/laravel-queue-insights/alerting): nine detectors, cooldown, log / Slack / mail / Sentry channels, typed events, silencing
 
 **Integrations**
-- [Horizon auto-discovery](https://sandermuller.github.io/laravel-queue-insights/horizon) — supervisor queues and silenced jobs read from your Horizon config
-- [Connection aliasing](https://sandermuller.github.io/laravel-queue-insights/connection-aliasing) — collapsing dispatcher/worker connection drift onto a canonical key
-- [Prometheus](https://sandermuller.github.io/laravel-queue-insights/prometheus) — the `/metrics` endpoint, the metric catalogue, scheduler families, the push gateway
-- [Scheduler observability](https://sandermuller.github.io/laravel-queue-insights/scheduler) — task snapshots, run records, missed and hung detection, retention
-- [Vapor and Laravel Cloud](https://sandermuller.github.io/laravel-queue-insights/vapor-and-cloud) — what the managed platforms handle for you, and the few queues you list yourself
+- [Horizon auto-discovery](https://sandermuller.github.io/laravel-queue-insights/horizon): supervisor queues and silenced jobs read from your Horizon config
+- [Connection aliasing](https://sandermuller.github.io/laravel-queue-insights/connection-aliasing): collapsing dispatcher/worker connection drift onto a canonical key
+- [Prometheus](https://sandermuller.github.io/laravel-queue-insights/prometheus): the `/metrics` endpoint, the metric catalogue, scheduler families, the push gateway
+- [Scheduler observability](https://sandermuller.github.io/laravel-queue-insights/scheduler): task snapshots, run records, missed and hung detection, retention
+- [Vapor and Laravel Cloud](https://sandermuller.github.io/laravel-queue-insights/vapor-and-cloud): what the managed platforms handle for you, and the few queues you list yourself
 
 **Reference**
-- [Configuration reference](https://sandermuller.github.io/laravel-queue-insights/configuration) — every key in `config/queue-insights.php`, with defaults and what each one changes
+- [Configuration reference](https://sandermuller.github.io/laravel-queue-insights/configuration): every key in `config/queue-insights.php`, with defaults and what each one changes
 
 ## Upgrading
 
@@ -89,7 +89,7 @@ See [UPGRADING.md](UPGRADING.md) for migration steps between minor versions. Pat
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) and the [GitHub releases page](https://github.com/SanderMuller/laravel-queue-insights/releases). The changelog is updated automatically on release publish — do not edit by hand.
+See [CHANGELOG.md](CHANGELOG.md) and the [GitHub releases page](https://github.com/SanderMuller/laravel-queue-insights/releases). The changelog is updated automatically on release publish, do not edit by hand.
 
 ## Contributing
 

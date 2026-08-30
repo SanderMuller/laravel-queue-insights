@@ -2,7 +2,7 @@
 
 The common case: you want to see what your queue is actually doing, per job class, right now.
 
-Everything the dashboard shows is collected the moment the package is installed — nothing to instrument, no jobs to change. Two steps stand between a fresh install and a working view.
+Everything the dashboard shows is collected the moment the package is installed, nothing to instrument, no jobs to change. Two steps stand between a fresh install and a working view.
 
 **Authorize yourself.** The dashboard route is gated, so define the Gate in a service provider:
 

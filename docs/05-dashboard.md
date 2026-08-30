@@ -11,12 +11,12 @@ Gate::define('viewQueueInsights', fn ($user) => $user->isAdmin());
 
 When you monitor more than one queue connection (e.g. a multi-tenant app with one connection per tenant, or a mixed `sqs` + `redis` setup), the dashboard exposes connection as a **first-class navigation axis**, not a filter dropdown:
 
-- `/queue-insights` — un-scoped, every monitored connection aggregated into one view.
-- `/queue-insights/{connection}` — scoped to a single connection. Every panel narrows: queue rows, alerts strip, snapshot watchdog, pending/delayed/in-flight inspectors, batches, recent completed/failed lists, headline stats (jobs / min, throughput sparkline, p95 wait, max runtime), per-class metrics, and the alert-rules panel's depth thresholds.
+- `/queue-insights`: un-scoped, every monitored connection aggregated into one view.
+- `/queue-insights/{connection}`: scoped to a single connection. Every panel narrows: queue rows, alerts strip, snapshot watchdog, pending/delayed/in-flight inspectors, batches, recent completed/failed lists, headline stats (jobs / min, throughput sparkline, p95 wait, max runtime), per-class metrics, and the alert-rules panel's depth thresholds.
 
 A tab strip above the headline cards renders one tab per allowed connection plus an "All" tab. The strip auto-suppresses when only one connection is monitored.
 
-The `{connection}` segment is constrained to the union of `snapshots.*.connection` and any Horizon-autodiscovered supervisor connections — typos 404 instead of mounting an empty dashboard. Pre-alias legacy URLs (`/queue-insights/redis` when `aliases.redis = redis-staging` is published) resolve to the canonical scope.
+The `{connection}` segment is constrained to the union of `snapshots.*.connection` and any Horizon-autodiscovered supervisor connections, typos 404 instead of mounting an empty dashboard. Pre-alias legacy URLs (`/queue-insights/redis` when `aliases.redis = redis-staging` is published) resolve to the canonical scope.
 
 ### Per-connection authorisation (optional)
 
@@ -35,15 +35,15 @@ When defined, the dashboard:
 - Hides denied connections from the tab strip.
 - Renames the "All" tab to "All allowed" with a tooltip listing only the connections the user can already open (denied tenants are never named).
 
-If the gate isn't defined, every monitored connection is reachable to anyone who passes `viewQueueInsights` — same behaviour as pre-spec versions.
+If the gate isn't defined, every monitored connection is reachable to anyone who passes `viewQueueInsights`, same behaviour as pre-spec versions.
 
 ### Audit log carries scope
 
 Every retry log line (`queue-insights.retry`) includes `scope_connection` alongside the existing filter snapshot, so retries that span tenants are distinguishable from scoped retries.
 
-### Upgrade note — per-connection class metrics need traffic to warm
+### Upgrade note, per-connection class metrics need traffic to warm
 
-Per-connection class counters (`processed:{class}:{connection}:{bucket}`, `failed:{class}:{connection}:{bucket}`, `duration:{class}:{connection}`, `last_run:{class}:{connection}`, `classes:{connection}` zset) are dual-written alongside the existing aggregate keys. Aggregate dashboards (`/queue-insights`) render correctly from second 0 after upgrade. Scoped views (`/queue-insights/{connection}`) for per-class p95 / throughput / 24h totals fill in as new events flow — the first hour after deploy will show `0` for class counts on a scoped view. Aggregate keys are unchanged so rolling back the package version is safe.
+Per-connection class counters (`processed:{class}:{connection}:{bucket}`, `failed:{class}:{connection}:{bucket}`, `duration:{class}:{connection}`, `last_run:{class}:{connection}`, `classes:{connection}` zset) are dual-written alongside the existing aggregate keys. Aggregate dashboards (`/queue-insights`) render correctly from second 0 after upgrade. Scoped views (`/queue-insights/{connection}`) for per-class p95 / throughput / 24h totals fill in as new events flow. The first hour after deploy will show `0` for class counts on a scoped view. Aggregate keys are unchanged so rolling back the package version is safe.
 
 ### Known limitations under scope
 
@@ -77,7 +77,7 @@ Guards on the retry path:
 To triage a failed job:
 
 1. Open the dashboard and find the row in the **Recent failed** list.
-2. Optional: narrow with the inline filter toolbar above the list — connection, queue, class, or date range. The URL updates as you change a field, so the filtered view is shareable.
+2. Optional: narrow with the inline filter toolbar above the list, connection, queue, class, or date range. The URL updates as you change a field, so the filtered view is shareable.
 3. Click any row to open the failed-job modal. You'll see the exception, stack trace, payload, and metadata.
 4. To retry one job, click *Retry* in the modal header. The button flips to a red "Confirm retry?" for two seconds; click again to fire. The modal closes and a green banner confirms dispatch. If `queue:retry` exits non-zero, you get a red banner instead of a misleading success.
 5. To retry several at once, set at least one filter. A *Retry N jobs* button appears next to the section heading, with the same two-click confirm pattern. Anything matching more than 100 rows shows a *N matches · narrow to retry* hint instead of an action button.
@@ -86,7 +86,7 @@ A failed retry never leaves the dashboard in a half-broken state. The row is eit
 
 ## Filtering & scoping
 
-There are two layers. **Global scope** (queue + class) is set by clicking a row in the queues tables (Overview section) or on the Classes section and applies to every list pane — Failed, Completed, Pending, Silenced. **Per-pane filters** narrow within a section on top of the active scope.
+There are two layers. **Global scope** (queue + class) is set by clicking a row in the queues tables (Overview section) or on the Classes section and applies to every list pane, Failed, Completed, Pending, Silenced. **Per-pane filters** narrow within a section on top of the active scope.
 
 ### Global scope
 
@@ -103,7 +103,7 @@ When the active class scope IS a class in `queue-insights.silenced`, both Failed
 
 Both *Recent completed* and *Recent failed* have an always-visible filter toolbar above the list. Each field binds to a short query-string key, so a narrowed view is shareable and bookmarkable.
 
-Connection, Queue, and Class are populated as `<select>` dropdowns from the configured queues (snapshots + Horizon autodiscovery) and the 24h class roster — no free-text typos. The Class dropdown on both panes binds to the global `?ck=` (same prop the Classes tab toggles), so picking a class on either pane scopes the other automatically.
+Connection, Queue, and Class are populated as `<select>` dropdowns from the configured queues (snapshots + Horizon autodiscovery) and the 24h class roster. No free-text typos. The Class dropdown on both panes binds to the global `?ck=` (same prop the Classes tab toggles), so picking a class on either pane scopes the other automatically.
 
 ### Recent failed filter
 
@@ -127,6 +127,6 @@ Same five fields, separate state. Class is pre-filtered at the storage layer (pe
 |------------|------------------|----------------------------------------------------------|
 | Connection | `cc`             | Case-insensitive substring                               |
 | Queue      | `cqu`            | Case-insensitive substring                               |
-| Class      | `ck`             | Exact FQCN — picks a single per-class stream             |
+| Class      | `ck`             | Exact FQCN, picks a single per-class stream             |
 | From       | `cfrom`          | `processed_at >= <Y-m-d> 00:00:00`                       |
 | To         | `cto`            | `processed_at <= <Y-m-d> 23:59:59`                       |

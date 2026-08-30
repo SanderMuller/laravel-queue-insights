@@ -2,7 +2,7 @@
 
 Both platforms run your queues on SQS and manage the worker processes for you. Three consequences follow: queues are addressed by URL rather than by name, queue names carry an environment suffix, and Horizon is often configured without ever running. The package handles all three without configuration.
 
-Everything driven by queue events works on either platform out of the box — throughput, wait time, runtimes, failures, chains, batches, the scheduler panel. Those listen on Laravel's own queue events, which every driver fires. Only the snapshot side (depth, in-flight, delayed) talks to the driver at all.
+Everything driven by queue events works on either platform out of the box, throughput, wait time, runtimes, failures, chains, batches, the scheduler panel. Those listen on Laravel's own queue events, which every driver fires. Only the snapshot side (depth, in-flight, delayed) talks to the driver at all.
 
 ## Both platforms
 
@@ -18,7 +18,7 @@ Neither platform tells the package which queues exist, so `snapshots[]` is yours
 ],
 ```
 
-Use the **logical** queue name — the one you dispatch to. Naming the suffixed queue works too; both resolve to the same key.
+Use the **logical** queue name. The one you dispatch to. Naming the suffixed queue works too; both resolve to the same key.
 
 ### One queue, two names
 
@@ -67,7 +67,7 @@ Cloud runs the workers, so keep using its worker configuration. [`queue-insights
 
 The idiomatic Vapor setup keeps `config/horizon.php` around while jobs actually run on SQS, with Horizon's service provider excluded (`extra.laravel.dont-discover` plus conditional registration). Supervisor auto-discovery is gated on that provider being loaded, so those supervisor queues are skipped rather than rendered as rows that would never receive a snapshot.
 
-If you want the config-derived rows anyway, set `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force` — the dashboard then shows a "Horizon not running" banner so nobody reads empty supervisor rows as a healthy state. See [Horizon auto-discovery](12-horizon.md).
+If you want the config-derived rows anyway, set `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force`. The dashboard then shows a "Horizon not running" banner so nobody reads empty supervisor rows as a healthy state. See [Horizon auto-discovery](12-horizon.md).
 
 ### Queue URLs in `failed_jobs`
 
@@ -77,8 +77,8 @@ If you want the config-derived rows anyway, set `QUEUE_INSIGHTS_HORIZON_AUTODISC
 
 A Vapor scheduler tick is an EventBridge event, and a cold start can push the `Starting` event past the minute it belonged to. Two settings absorb the drift:
 
-- `scheduler.sweeper.drift_seconds` (default 90) — how late a `Starting` may arrive and still count.
-- `scheduler.sweeper.min_consecutive_misses` (default 2) — how many expected fires must pass unobserved before a missed-run alert dispatches.
+- `scheduler.sweeper.drift_seconds` (default 90), how late a `Starting` may arrive and still count.
+- `scheduler.sweeper.min_consecutive_misses` (default 2), how many expected fires must pass unobserved before a missed-run alert dispatches.
 
 The defaults tolerate ordinary jitter. Raise `drift_seconds` if cold starts routinely run longer than that. See [Scheduler observability](15-scheduler.md).
 

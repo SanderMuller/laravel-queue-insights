@@ -14,7 +14,7 @@ Read [`SECURITY.md`](https://github.com/SanderMuller/laravel-queue-insights/blob
 
 ## Pending payload capture (separate budget)
 
-The completed-stream `capture.payloads` setting controls what's persisted on **completed and failed** rows. Pending and in-flight rows have their own knob because the memory math differs structurally — completed-stream entries are MAXLEN-trimmed (`N × bytes`), but pending hashes fan out as `max_per_queue × queues × TTL`, which on a 10k-row × 10-queue host is ~400 MB at 4 KB/row.
+The completed-stream `capture.payloads` setting controls what's persisted on **completed and failed** rows. Pending and in-flight rows have their own knob because the memory math differs structurally, completed-stream entries are MAXLEN-trimmed (`N × bytes`), but pending hashes fan out as `max_per_queue × queues × TTL`, which on a 10k-row × 10-queue host is ~400 MB at 4 KB/row.
 
 ```bash
 # .env

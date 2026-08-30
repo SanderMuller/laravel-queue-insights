@@ -1,6 +1,6 @@
 # Prometheus
 
-Enable via `QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true`. Mounts `GET /metrics` (path configurable) exposing queue-insights state in Prometheus 0.0.4 text format — or OpenMetrics 1.0.0 when the scraper sends `Accept: application/openmetrics-text` (Prometheus negotiates this automatically). Default-off; adoption is opt-in.
+Enable via `QUEUE_INSIGHTS_PROMETHEUS_ENABLED=true`. Mounts `GET /metrics` (path configurable) exposing queue-insights state in Prometheus 0.0.4 text format, or OpenMetrics 1.0.0 when the scraper sends `Accept: application/openmetrics-text` (Prometheus negotiates this automatically). Default-off; adoption is opt-in.
 
 Auth is **fail-closed**: the package's default middleware refuses with `403` unless `prometheus.token` (preferred for shared infra) or `prometheus.allow_ips` (CIDR list) is configured. There is no silent open default.
 
@@ -30,7 +30,7 @@ scrape_configs:
 | `queue_insights_delayed_jobs`                      | gauge   | `connection`, `queue`                                                        | Not yet runnable (`available_at > now`).                                                                        |
 | `queue_insights_oldest_pending_age_seconds`        | gauge   | `connection`, `queue`                                                        | 0 when empty.                                                                                                   |
 | `queue_insights_oldest_inflight_age_seconds`       | gauge   | `connection`, `queue`                                                        | 0 when empty.                                                                                                   |
-| `queue_insights_jobs_processed_total`              | counter | `class`, `connection`                                                        | True monotonic INCR — safe for `rate()` / `increase()`.                                                         |
+| `queue_insights_jobs_processed_total`              | counter | `class`, `connection`                                                        | True monotonic INCR, safe for `rate()` / `increase()`.                                                         |
 | `queue_insights_jobs_failed_total`                 | counter | `class`, `connection`                                                        | Same.                                                                                                           |
 | `queue_insights_job_duration_count_total`          | counter | `class`, `connection`                                                        | Mean = `rate(sum) / rate(count)` Prometheus-side.                                                               |
 | `queue_insights_job_duration_sum_seconds_total`    | counter | `class`, `connection`                                                        | Seconds (HINCRBY `sum_ms` ÷ 1000).                                                                              |
@@ -38,7 +38,7 @@ scrape_configs:
 | `queue_insights_alert_active`                      | gauge   | `rule`, `connection`, `queue`, `severity` (+ `class` for class-scoped rules) | Always 1 when present; absent series = no alert. Use `OR on() vector(0)` Grafana-side to render gaps as 0.      |
 | `queue_insights_snapshot_alive`                    | gauge   | `connection`, `queue`                                                        | 1/0. **Use this in alerts**, not `_age_seconds`.                                                                |
 | `queue_insights_snapshot_age_seconds`              | gauge   | `connection`, `queue`                                                        | **Omitted** when the snapshot key is absent (so alerts can use `absent(...)` cleanly instead of clamping to 0). |
-| `queue_insights_snapshot_errors_total`             | counter | `connection`, `queue`                                                        | Monotonic INCR — paired with the existing 10-min `snapshot:error:*` boolean.                                    |
+| `queue_insights_snapshot_errors_total`             | counter | `connection`, `queue`                                                        | Monotonic INCR, paired with the existing 10-min `snapshot:error:*` boolean.                                    |
 | `queue_insights_exporter_collect_duration_seconds` | gauge   | (none)                                                                       | Wall-clock seconds of the previous collect cycle.                                                               |
 
 Per-class metrics (`*_processed_total`, `*_failed_total`, duration aggregates) are **opt-in by class** to bound cardinality. Default `class_filter.mode = allow_list` with empty `classes` → no per-class metrics emitted. Three modes:
@@ -62,11 +62,11 @@ Per-class metrics (`*_processed_total`, `*_failed_total`, duration aggregates) a
 
 A two-tier cache (per-request memoise + 5 s Redis cache, key `prom:cache:rendered:{flavour}`) bounds thunder-herd when multiple Prometheus replicas scrape concurrently. Set `prometheus.cache_ttl_seconds = 0` to disable both layers for instant reads.
 
-Each metric family has its own toggle under `prometheus.metrics.*` (default-on) — disable any family the host doesn't need to keep the scrape body lean.
+Each metric family has its own toggle under `prometheus.metrics.*` (default-on), disable any family the host doesn't need to keep the scrape body lean.
 
 ## Scheduler metrics
 
-When `scheduler.enabled = true` AND each per-family toggle below is set, the exporter emits scheduler-side families. **Default OFF** — adoption is opt-in per family (mirrors the per-class queue metrics stance).
+When `scheduler.enabled = true` AND each per-family toggle below is set, the exporter emits scheduler-side families. **Default OFF**, adoption is opt-in per family (mirrors the per-class queue metrics stance).
 
 | Metric                                                    | Type    | Labels           | Notes                                                                                                                                                                                                 |
 |-----------------------------------------------------------|---------|------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -105,11 +105,11 @@ Toggle each family independently:
 ],
 ```
 
-`runtime_max_seconds` is intentionally NOT shipped in v1 — would need a Lua HSET-IF-GREATER write path. Operators who need lifetime max can compute `max_over_time(queue_insights_scheduled_task_runtime_sum_seconds_total[N])` Prometheus-side as a coarse proxy, or run the per-task duration sparkline in the dashboard for exact values.
+`runtime_max_seconds` is intentionally NOT shipped in v1, would need a Lua HSET-IF-GREATER write path. Operators who need lifetime max can compute `max_over_time(queue_insights_scheduled_task_runtime_sum_seconds_total[N])` Prometheus-side as a coarse proxy, or run the per-task duration sparkline in the dashboard for exact values.
 
 ## Push gateway (short-lived workers, CLI)
 
-For processes that exit before any scrape can land, `php artisan queue-insights:prometheus-push` does a one-shot collect + PUT to a configured Pushgateway. Long-running workers should be **scraped, not pushed** — push-mode is for CLI scripts and scheduled tasks where pull-mode can't reach the process.
+For processes that exit before any scrape can land, `php artisan queue-insights:prometheus-push` does a one-shot collect + PUT to a configured Pushgateway. Long-running workers should be **scraped, not pushed**, push-mode is for CLI scripts and scheduled tasks where pull-mode can't reach the process.
 
 ```bash
 # .env
