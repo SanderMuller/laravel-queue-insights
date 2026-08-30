@@ -21,18 +21,18 @@ Everything you can set without publishing the config file.
 |---|---|---|
 | `QUEUE_INSIGHTS_ENABLED` | `true` | Master switch for the package. |
 | `QUEUE_INSIGHTS_REDIS` | `default` | Redis **connection name** from `config/database.php` → `redis.connections`. Not a database number. |
-| `QUEUE_INSIGHTS_KEY_PREFIX` | `qm:{APP_ENV}:` | Prefix for every Redis key the package writes. See [Key-prefix strategies](09-ops-runbook.md#key-prefix-strategies). |
-| `QUEUE_INSIGHTS_REDIS_CLUSTER` | `false` | Wrap the prefix in a Redis hash tag so the keyspace pins to one slot. See [Redis Cluster](09-ops-runbook.md#redis-cluster). |
-| `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER` | `true` | Tri-state: `false`, `true`, or `force`. See [Horizon auto-discovery](11-horizon.md). |
+| `QUEUE_INSIGHTS_KEY_PREFIX` | `qm:{APP_ENV}:` | Prefix for every Redis key the package writes. See [Key-prefix strategies](10-ops-runbook.md#key-prefix-strategies). |
+| `QUEUE_INSIGHTS_REDIS_CLUSTER` | `false` | Wrap the prefix in a Redis hash tag so the keyspace pins to one slot. See [Redis Cluster](10-ops-runbook.md#redis-cluster). |
+| `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER` | `true` | Tri-state: `false`, `true`, or `force`. See [Horizon auto-discovery](12-horizon.md). |
 | `QUEUE_INSIGHTS_HORIZON_ENV` | `null` | Which `horizon.environments.<env>` block to read. `null` uses `app()->environment()`. |
-| `QUEUE_INSIGHTS_CAPTURE_PAYLOADS` | `off` | Completed-stream payload capture: `off`, `metadata`, or `full`. See [Payload capture](03-payload-capture.md). |
+| `QUEUE_INSIGHTS_CAPTURE_PAYLOADS` | `off` | Completed-stream payload capture: `off`, `metadata`, or `full`. See [Payload capture](04-payload-capture.md). |
 | `QUEUE_INSIGHTS_FAILURE_CONTEXT` | `true` | Capture `Context` and environment snapshots on failure. |
-| `QUEUE_INSIGHTS_SENTRY_ORG` | `null` | Sentry org **slug**. Unset hides the "View in Sentry" button. See [Failure context](06-failure-context.md#sentry-deep-link). |
+| `QUEUE_INSIGHTS_SENTRY_ORG` | `null` | Sentry org **slug**. Unset hides the "View in Sentry" button. See [Failure context](07-failure-context.md#sentry-deep-link). |
 | `QUEUE_INSIGHTS_SENTRY_URL_TEMPLATE` | `https://{org}.sentry.io/issues/?query=trace:{trace}` | Deep-link template. `{org}` and `{trace}` are substituted. |
-| `QUEUE_INSIGHTS_ALERTS_ENABLED` | `false` | Master switch for the nine queue detectors. See [Alerting](10-alerting.md). |
+| `QUEUE_INSIGHTS_ALERTS_ENABLED` | `false` | Master switch for the nine queue detectors. See [Alerting](11-alerting.md). |
 | `QUEUE_INSIGHTS_SLACK_WEBHOOK` | `null` | Incoming-webhook URL for the queue-side Slack channel. |
 | `QUEUE_INSIGHTS_SLACK_CHANNEL` | `null` | Display label only — a webhook's destination is bound on Slack's side. |
-| `QUEUE_INSIGHTS_DARK_MODE` | `true` | Master switch for the theme toggle. See [Dark mode](07-theming-and-embedding.md#dark-mode). |
+| `QUEUE_INSIGHTS_DARK_MODE` | `true` | Master switch for the theme toggle. See [Dark mode](08-theming-and-embedding.md#dark-mode). |
 | `QUEUE_INSIGHTS_CLOUD_THEME` | `true` | Offer the Cloud skin as a fourth toggle option. Requires the theme toggle. |
 | `QUEUE_INSIGHTS_CLOCK_TOGGLE` | `true` | 12h / auto / 24h control in the header. |
 | `QUEUE_INSIGHTS_REDIS_MEMORY_TILE` | `false` | Opt-in 7th headline tile summing `MEMORY USAGE` across the keyspace. |
@@ -43,14 +43,14 @@ Everything you can set without publishing the config file.
 | `QUEUE_INSIGHTS_CHAIN_LINEAGE_REDIS` | `null` | Separate Redis connection for lineage keys. `null` reuses the primary. |
 | `QUEUE_INSIGHTS_INITIATOR` | `true` | Record where each job was dispatched from. |
 | `QUEUE_INSIGHTS_BATCHES_ENABLED` | `true` | Track `Bus::batch()` progress and per-item rollups. |
-| `QUEUE_INSIGHTS_SCHEDULER_ENABLED` | `false` | Scheduler observability. See [Scheduler observability](14-scheduler.md). |
+| `QUEUE_INSIGHTS_SCHEDULER_ENABLED` | `false` | Scheduler observability. See [Scheduler observability](15-scheduler.md). |
 | `QUEUE_INSIGHTS_SCHEDULER_SNAPSHOT_REBUILD` | `true` | Rebuild the task roster from `Schedule::events()` on scheduler-relevant console commands. |
 | `QUEUE_INSIGHTS_SCHEDULER_CAPTURE` | `metadata` | Per-run output capture: `off`, `metadata`, or `full`. |
-| `QUEUE_INSIGHTS_SCHEDULER_HEARTBEAT_URL` | `null` | External heartbeat URL. See [External heartbeat](14-scheduler.md#external-heartbeat). |
+| `QUEUE_INSIGHTS_SCHEDULER_HEARTBEAT_URL` | `null` | External heartbeat URL. See [External heartbeat](15-scheduler.md#external-heartbeat). |
 | `QUEUE_INSIGHTS_SCHEDULER_ALERTS_ENABLED` | `false` | Missed, hung, and failed scheduler alerts. |
 | `QUEUE_INSIGHTS_SCHEDULER_SLACK_WEBHOOK` | `null` | Separate Slack webhook for scheduler-domain alerts. |
 | `QUEUE_INSIGHTS_SCHEDULER_SLACK_CHANNEL` | `null` | Display label for the scheduler Slack destination. |
-| `QUEUE_INSIGHTS_PROMETHEUS_ENABLED` | `false` | Mount the `/metrics` endpoint. See [Prometheus](13-prometheus.md). |
+| `QUEUE_INSIGHTS_PROMETHEUS_ENABLED` | `false` | Mount the `/metrics` endpoint. See [Prometheus](14-prometheus.md). |
 | `QUEUE_INSIGHTS_PROMETHEUS_TOKEN` | `null` | Bearer token for the scrape endpoint. Auth is fail-closed. |
 | `QUEUE_INSIGHTS_PUSHGATEWAY_URL` | `null` | Pushgateway base URL for `queue-insights:prometheus-push`. |
 | `QUEUE_INSIGHTS_PUSHGATEWAY_JOB` | `laravel-queue-insights` | `job` label on pushed metrics. |
@@ -66,11 +66,11 @@ Everything you can set without publishing the config file.
 | `redis_cluster` | `false` | Wraps `key_prefix` in a `{…}` hash tag so the package's multi-key Lua scripts and pipelines stay CROSSSLOT-legal. An existing hash tag in your prefix is left alone, not double-wrapped. The matching connection in `config/database.php` must **also** be a cluster connection (a `clusters` block, or `options.cluster`) so the client follows `MOVED` redirects. |
 | `snapshots` | two `sqs` entries, filtered on `SQS_QUEUE` and `SQS_HIGH_QUEUE` | The queues to capture. Each entry is `['connection' => …, 'queue' => …]`. The connection must exist in `config/queue.php`; the driver is auto-detected from `queue.connections.{name}.driver`. Recognised: `sqs`, `cloud`, `redis`, `database`, and `null` / `sync` (recorded with zero depth). Anything else logs a warning once per tick and snapshots nothing. |
 | `driver_overrides` | `[]` | Force a driver for a connection whose real driver can't be auto-detected. Accepts a built-in name (`sqs`, `cloud`, `redis`, `database`, `null`), a `QueueSnapshotDriver` class-string, an instance, or a closure returning one. |
-| `connection_aliases` | `[]` | Collapse several Laravel connection names onto one canonical key. Identity mappings (`A => A`) are allowed; transitive chains (`A => B`, `B => C`) and mutual cycles are rejected by the boot validator. See [Connection aliasing](12-connection-aliasing.md). |
+| `connection_aliases` | `[]` | Collapse several Laravel connection names onto one canonical key. Identity mappings (`A => A`) are allowed; transitive chains (`A => B`, `B => C`) and mutual cycles are rejected by the boot validator. See [Connection aliasing](13-connection-aliasing.md). |
 
 ### Managed platforms
 
-Laravel Cloud's `cloud` connection and Vapor's SQS setup both work without a `driver_overrides` entry, and a connection carrying a queue-name suffix keys on its logical name throughout. Which queues to list, and what else is worth checking on those platforms, is on [Vapor and Laravel Cloud](15-vapor-and-cloud.md).
+Laravel Cloud's `cloud` connection and Vapor's SQS setup both work without a `driver_overrides` entry, and a connection carrying a queue-name suffix keys on its logical name throughout. Which queues to list, and what else is worth checking on those platforms, is on [Vapor and Laravel Cloud](16-vapor-and-cloud.md).
 
 ### `horizon`
 
@@ -89,7 +89,7 @@ Laravel Cloud's `cloud` connection and Vapor's SQS setup both work without a `dr
 | `capture.max_payload_bytes` | `16384` | Whole-payload cap on the completed stream. |
 
 ::: warning
-`full` stores serialized command bodies. The default `KeyRedactingSanitizer` walks JSON keys and cannot see inside `data.command`. Apps with sensitive jobs must bind a custom `PayloadSanitizer` — see [Payload capture](03-payload-capture.md) and [SECURITY.md](https://github.com/SanderMuller/laravel-queue-insights/blob/main/SECURITY.md).
+`full` stores serialized command bodies. The default `KeyRedactingSanitizer` walks JSON keys and cannot see inside `data.command`. Apps with sensitive jobs must bind a custom `PayloadSanitizer` — see [Payload capture](04-payload-capture.md) and [SECURITY.md](https://github.com/SanderMuller/laravel-queue-insights/blob/main/SECURITY.md).
 :::
 
 ## Failure context capture
@@ -142,7 +142,7 @@ Lower these to cut Redis memory at the cost of shallower drill-down history. The
 | `silenced` | `[]` | Job-class FQCNs whose failures are hidden from the dashboard and skipped by the `failure_rate` detector. Exact match. Mirrors `horizon.silenced`. |
 | `silenced_patterns` | `[]` | `Str::is` globs (`App\Jobs\Reports\*`). Exact entries are checked first; patterns are the fallback. |
 
-Counter writes are preserved either way, so silencing is reversible without losing history. Silenced classes stay reachable by uuid — the failed-job modal and batch click-through still open them. Closure and encrypted jobs surface as `Closure@<hash>` and `Encrypted@<hash>`; the failed-list match is by display name, so a closure may need both forms listed. See [Silencing noisy jobs](10-alerting.md#silencing-noisy-jobs).
+Counter writes are preserved either way, so silencing is reversible without losing history. Silenced classes stay reachable by uuid — the failed-job modal and batch click-through still open them. Closure and encrypted jobs surface as `Closure@<hash>` and `Encrypted@<hash>`; the failed-list match is by display name, so a closure may need both forms listed. See [Silencing noisy jobs](11-alerting.md#silencing-noisy-jobs).
 
 ## Alerting
 
@@ -273,7 +273,7 @@ This needs a Redis-backed cache store — `LPUSH`/`RPOP` on a per-shape list is 
 
 | Key | Default | What it does |
 |---|---|---|
-| `work.shutdown_grace_seconds` | `120` | Window a child has to drain after the parent forwards `SIGTERM`, `SIGINT`, or `SIGQUIT`, or after a non-zero sibling exit triggers teardown. Survivors past the window get `SIGKILL`. Must be strictly greater than the largest child `--timeout` plus driver-poll latency — SQS long-poll is 20 s, Redis `BLPOP` up to 5 s, so 120 covers `--timeout=60` with headroom. See [`shutdown_grace_seconds` tuning](08-running-workers.md#shutdown-grace-seconds-tuning). |
+| `work.shutdown_grace_seconds` | `120` | Window a child has to drain after the parent forwards `SIGTERM`, `SIGINT`, or `SIGQUIT`, or after a non-zero sibling exit triggers teardown. Survivors past the window get `SIGKILL`. Must be strictly greater than the largest child `--timeout` plus driver-poll latency — SQS long-poll is 20 s, Redis `BLPOP` up to 5 s, so 120 covers `--timeout=60` with headroom. See [`shutdown_grace_seconds` tuning](09-running-workers.md#shutdown-grace-seconds-tuning). |
 
 ## Prometheus
 
@@ -295,4 +295,4 @@ This needs a Redis-backed cache store — `LPUSH`/`RPOP` on a per-shape list is 
 | `prometheus.pushgateway.job` | `laravel-queue-insights` | `job` label. |
 | `prometheus.pushgateway.instance` | `null` | `instance` label. |
 
-Auth is fail-closed: with neither `token` nor `allow_ips` set, the default middleware answers `403`. There is no silent open default. See [Prometheus](13-prometheus.md).
+Auth is fail-closed: with neither `token` nor `allow_ips` set, the default middleware answers `403`. There is no silent open default. See [Prometheus](14-prometheus.md).

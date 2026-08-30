@@ -32,7 +32,12 @@ export const sections: DocSection[] = [
                 blurb: 'Requirements, the install command, the snapshot scheduler, and the environment knobs.',
             },
             {
-                file: '03-payload-capture',
+                file: '03-getting-started',
+                text: 'Getting started',
+                blurb: 'Authorize the route, run a worker, and read depth against throughput.',
+            },
+            {
+                file: '04-payload-capture',
                 text: 'Payload capture',
                 blurb: 'Three capture modes, the separate pending budget, and binding your own sanitizer.',
             },
@@ -42,22 +47,22 @@ export const sections: DocSection[] = [
         text: 'Dashboard',
         pages: [
             {
-                file: '04-dashboard',
+                file: '05-dashboard',
                 text: 'Dashboard',
                 blurb: 'Authorisation, multi-connection scoping, retry permissions, and the filter row.',
             },
             {
-                file: '05-jobs-batches-chains',
+                file: '06-jobs-batches-chains',
                 text: 'Jobs, batches, and chains',
                 blurb: 'Wait time, the pending inspector, batch progress, chain lineage, and job initiator.',
             },
             {
-                file: '06-failure-context',
+                file: '07-failure-context',
                 text: 'Failure context',
                 blurb: 'What is captured when a job fails, and the Sentry deep-link into the matching issue.',
             },
             {
-                file: '07-theming-and-embedding',
+                file: '08-theming-and-embedding',
                 text: 'Theming and embedding',
                 blurb: 'Custom row markup, mounting inside an admin layout, dark mode, and the cloud look.',
             },
@@ -67,17 +72,17 @@ export const sections: DocSection[] = [
         text: 'Operations',
         pages: [
             {
-                file: '08-running-workers',
+                file: '09-running-workers',
                 text: 'Running workers',
                 blurb: 'The queue-insights:work supervisor, its non-goals, and shutdown grace tuning.',
             },
             {
-                file: '09-ops-runbook',
+                file: '10-ops-runbook',
                 text: 'Ops runbook',
                 blurb: 'Console commands, dashboard signals, driver quirks, key prefixes, and Redis Cluster.',
             },
             {
-                file: '10-alerting',
+                file: '11-alerting',
                 text: 'Alerting',
                 blurb: 'Nine detectors, per-rule cooldown, notification channels, typed events, and silencing.',
             },
@@ -87,27 +92,27 @@ export const sections: DocSection[] = [
         text: 'Integrations',
         pages: [
             {
-                file: '11-horizon',
+                file: '12-horizon',
                 text: 'Horizon auto-discovery',
                 blurb: 'Read supervisor queues and silenced jobs straight out of your Horizon config.',
             },
             {
-                file: '12-connection-aliasing',
+                file: '13-connection-aliasing',
                 text: 'Connection aliasing',
                 blurb: 'Collapse dispatcher/worker connection drift onto one canonical key.',
             },
             {
-                file: '13-prometheus',
+                file: '14-prometheus',
                 text: 'Prometheus',
                 blurb: 'The opt-in /metrics endpoint, the metric catalogue, and the push gateway command.',
             },
             {
-                file: '14-scheduler',
+                file: '15-scheduler',
                 text: 'Scheduler observability',
                 blurb: 'Per-task snapshots, per-run records, missed and hung detection, and retention.',
             },
             {
-                file: '15-vapor-and-cloud',
+                file: '16-vapor-and-cloud',
                 text: 'Vapor and Laravel Cloud',
                 blurb: 'What the managed platforms handle for you, and the few queues you list yourself.',
             },
@@ -117,7 +122,7 @@ export const sections: DocSection[] = [
         text: 'Reference',
         pages: [
             {
-                file: '16-configuration',
+                file: '17-configuration',
                 text: 'Configuration reference',
                 blurb: 'Every key in config/queue-insights.php, with defaults and what each one changes.',
             },

@@ -59,7 +59,7 @@ If the app ran an earlier version, drop any `driver_overrides.cloud` entry. Befo
 
 Credentials resolve the way the worker's do: a `credentials` provider name (`ecs`, `instance`) or a callable takes precedence over a `key`/`secret` pair, matching Laravel's own SQS connector. The snapshot client authenticates as the same principal as the worker.
 
-Cloud runs the workers, so keep using its worker configuration. [`queue-insights:work`](08-running-workers.md) is for hosts that supervise their own `queue:work` processes.
+Cloud runs the workers, so keep using its worker configuration. [`queue-insights:work`](09-running-workers.md) is for hosts that supervise their own `queue:work` processes.
 
 ## Vapor
 
@@ -67,7 +67,7 @@ Cloud runs the workers, so keep using its worker configuration. [`queue-insights
 
 The idiomatic Vapor setup keeps `config/horizon.php` around while jobs actually run on SQS, with Horizon's service provider excluded (`extra.laravel.dont-discover` plus conditional registration). Supervisor auto-discovery is gated on that provider being loaded, so those supervisor queues are skipped rather than rendered as rows that would never receive a snapshot.
 
-If you want the config-derived rows anyway, set `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force` — the dashboard then shows a "Horizon not running" banner so nobody reads empty supervisor rows as a healthy state. See [Horizon auto-discovery](11-horizon.md).
+If you want the config-derived rows anyway, set `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER=force` — the dashboard then shows a "Horizon not running" banner so nobody reads empty supervisor rows as a healthy state. See [Horizon auto-discovery](12-horizon.md).
 
 ### Queue URLs in `failed_jobs`
 
@@ -80,7 +80,7 @@ A Vapor scheduler tick is an EventBridge event, and a cold start can push the `S
 - `scheduler.sweeper.drift_seconds` (default 90) — how late a `Starting` may arrive and still count.
 - `scheduler.sweeper.min_consecutive_misses` (default 2) — how many expected fires must pass unobserved before a missed-run alert dispatches.
 
-The defaults tolerate ordinary jitter. Raise `drift_seconds` if cold starts routinely run longer than that. See [Scheduler observability](14-scheduler.md).
+The defaults tolerate ordinary jitter. Raise `drift_seconds` if cold starts routinely run longer than that. See [Scheduler observability](15-scheduler.md).
 
 ### Queue names come from the environment
 

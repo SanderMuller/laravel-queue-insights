@@ -59,6 +59,7 @@ Read the full documentation at **[sandermuller.github.io/laravel-queue-insights]
 **Getting started**
 - [Why Queue Insights?](https://sandermuller.github.io/laravel-queue-insights/why-queue-insights) — what it answers that `queue:work` and a `failed_jobs` table do not, and the full feature list
 - [Installation](https://sandermuller.github.io/laravel-queue-insights/installation) — requirements, the snapshot scheduler, environment knobs
+- [Getting started](https://sandermuller.github.io/laravel-queue-insights/getting-started) — authorize the route, run a worker, read the dashboard
 - [Payload capture](https://sandermuller.github.io/laravel-queue-insights/payload-capture) — the three modes, the separate pending budget, custom sanitizers
 
 **Dashboard**

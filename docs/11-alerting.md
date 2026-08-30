@@ -12,7 +12,7 @@ Enable via `QUEUE_INSIGHTS_ALERTS_ENABLED=true`. Nine detectors run every snapsh
 | `slow_p95`         | per-class | per-class p95 duration ≥ `class_threshold_ms[$class]` (opt-in per class)                                                                                                              |
 | `snapshot_errored` | per-queue | the snapshot driver threw on the most recent tick (auto-clears on next success / 10-min TTL)                                                                                          |
 | `backlog_growing`  | per-queue | least-squares depth slope over the recent samples ≥ `min_slope_per_minute` (opt-in, warms up after `min_samples` samples)                                                             |
-| `connection_drift` | global    | pending rows present under a Laravel queue connection that isn't the configured canonical for that queue (opt-in, default off — see [Connection aliasing](12-connection-aliasing.md)) |
+| `connection_drift` | global    | pending rows present under a Laravel queue connection that isn't the configured canonical for that queue (opt-in, default off — see [Connection aliasing](13-connection-aliasing.md)) |
 
 A dashboard-only watchdog (`snapshot_command_dead`) renders a top-level red banner when `live:depth` keys are absent for every configured queue — i.e. the snapshot command itself has been silent for ≥ 90 s.
 
