@@ -5,7 +5,7 @@ import { link, pages, sections, slug } from './pages'
 
 const site = 'https://sandermuller.github.io/laravel-queue-insights/'
 
-const description = 'Self-hosted, driver-agnostic queue observability for Laravel: depth, wait time, throughput, batches, chains, alerting, Prometheus, and scheduler runs — across SQS, Redis, and database queues.'
+const description = 'Self-hosted, driver-agnostic queue observability for Laravel: depth, wait time, throughput, batches, chains, alerting, Prometheus and scheduler runs, across SQS, Redis and database queues.'
 
 /**
  * A markdown link between source pages (`04-dashboard.md#anchor`) points at a file that only
