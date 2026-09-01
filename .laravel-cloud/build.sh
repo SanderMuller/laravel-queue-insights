@@ -3,7 +3,7 @@
 # Laravel Cloud build script for the queue-insights demo.
 #
 # Cloud detects this repo as a Laravel app via the existing root
-# `composer.lock` (the package's dev lockfile — kept untouched). After
+# `composer.lock` (the package's dev lockfile, kept untouched). After
 # checkout, Cloud runs this script before `composer install`. The script
 # promotes the `demo/` Laravel skeleton to the new repo root and stashes
 # the package source under `./package/` so Composer's path repository can
@@ -28,8 +28,11 @@ mkdir -p package
 
 # Stash the package source + workbench + everything else under ./package/
 # so the demo skeleton can take the new root cleanly. Negation keeps
-# `demo/`, `package/`, and `.git/` in their current locations.
-mv !(demo|package|.git) package/
+# `demo/`, `package/`, and `.git/` in their current locations, plus
+# `.lc-*`. Laravel Cloud's own build scratch (e.g. `.lc-build`) is
+# mounted into the workspace root and is not ours to move: attempting it
+# fails the build with `mv: cannot move '.lc-build': Permission denied`.
+mv !(demo|package|.git|.lc-*) package/
 
 # Promote demo to the new root.
 mv demo/* ./
@@ -59,10 +62,10 @@ php -r '
             $j["repositories"][$i]["url"] = "./package";
         }
     }
-    // The PSR-4 key in JSON is `Workbench\App\` — one backslash between
+    // The PSR-4 key in JSON is `Workbench\App\`: one backslash between
     // segments. In a PHP single-quoted string that is `\\`. Inside this
     // shell single-quoted -r argument that is also `\\` (shell single
-    // quotes are literal — no shell-level escape doubling needed).
+    // quotes are literal, so no shell-level escape doubling needed).
     if (isset($j["autoload"]["psr-4"]["Workbench\\App\\"])) {
         $j["autoload"]["psr-4"]["Workbench\\App\\"] = "./package/workbench/app/";
     }
