@@ -305,7 +305,7 @@ final class ConfigValidator
 
     /**
      * Validate that a configured Redis connection name resolves to an entry
-     * under `database.redis.connections` (or `.clusters`).
+     * under `database.redis` (or `database.redis.clusters`).
      *
      * @param  string  $key  config key being validated, for the message
      */

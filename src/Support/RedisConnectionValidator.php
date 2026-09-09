@@ -14,6 +14,9 @@ use SanderMuller\QueueInsights\Exceptions\QueueInsightsConfigException;
  */
 final class RedisConnectionValidator
 {
+    /** Keys under `database.redis` that are not connection names. */
+    private const array RESERVED = ['client', 'options', 'clusters'];
+
     /**
      * @param  string  $key  config key being validated, for the message
      */
@@ -25,28 +28,48 @@ final class RedisConnectionValidator
             );
         }
 
-        $connections = config('database.redis.connections', []);
-        $clusters = config('database.redis.clusters', []);
+        $known = self::knownNames();
 
-        $known = array_merge(
-            is_array($connections) ? array_keys($connections) : [],
-            is_array($clusters) ? array_keys($clusters) : [],
-        );
-
-        // An empty redis config means the host has not configured Redis at
-        // all — a different failure, reported by Laravel itself, and not
-        // something to pre-empt with a misleading "unknown connection".
+        // No Redis configured at all — a different failure, reported by
+        // Laravel itself, and not one to pre-empt with a misleading
+        // "unknown connection". Testbench boots in exactly this shape.
         if ($known === []) {
             return;
         }
 
         if (! in_array($connection, $known, true)) {
             throw new QueueInsightsConfigException(sprintf(
-                'queue-insights.%s names the Redis connection "%s", which is not defined under database.redis.connections. Known: %s.',
+                'queue-insights.%s names the Redis connection "%s", which is not defined under database.redis. Known: %s.',
                 $key,
                 $connection,
-                implode(', ', array_map(strval(...), $known)),
+                implode(', ', $known),
             ));
         }
+    }
+
+    /**
+     * Connection names as Laravel resolves them: every key under
+     * `database.redis` bar the reserved ones, plus every key under
+     * `database.redis.clusters` bar its own `options`.
+     *
+     * @return list<string>
+     */
+    private static function knownNames(): array
+    {
+        $redis = config('database.redis', []);
+        $clusters = config('database.redis.clusters', []);
+
+        $names = is_array($redis)
+            ? array_diff(array_keys($redis), self::RESERVED)
+            : [];
+
+        $clusterNames = is_array($clusters)
+            ? array_diff(array_keys($clusters), ['options'])
+            : [];
+
+        return array_values(array_map(
+            strval(...),
+            array_merge($names, $clusterNames),
+        ));
     }
 }
