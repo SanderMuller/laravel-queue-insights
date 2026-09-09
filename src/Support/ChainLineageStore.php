@@ -135,7 +135,7 @@ final class ChainLineageStore
     {
         // Prefer the per-feature override; fall back to the package's primary
         // redis_connection. Both arrive as connection NAMES (config/database.php
-        // → redis.connections), not raw client objects.
+        // → `redis`), not raw client objects.
         $override = Config::string('chain_lineage.redis_connection', '');
         $name = $override !== '' ? $override : Config::string('redis_connection', 'default');
 

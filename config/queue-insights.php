@@ -7,14 +7,19 @@ return [
     'enabled' => env('QUEUE_INSIGHTS_ENABLED', true),
 
     /*
-     | Redis connection NAME from config/database.php → redis.connections.
-     | This is not a database number — the DB lives on the chosen connection's
-     | `database` key.
+     | Redis connection NAME from config/database.php → `redis`. This is not
+     | a database number — the DB lives on the chosen connection's `database`
+     | key. A name matching no connection is rejected at boot.
      |
      | To use a dedicated DB: define a new connection in config/database.php
      | with the desired `database` number, then point QUEUE_INSIGHTS_REDIS at
      | that connection name. Keeps queue-insights keys isolated from Horizon /
      | sessions / cache / queue state on shared Redis instances.
+     |
+     | Copy the `default` block rather than writing a fresh one: a managed
+     | Redis on ACL auth needs `url` (or `username`) alongside `password`, and
+     | a block carrying only host/port/database/password authenticates as the
+     | default ACL user — every command then fails with WRONGPASS.
      */
     'redis_connection' => env('QUEUE_INSIGHTS_REDIS', 'default'),
 
@@ -604,7 +609,7 @@ return [
      */
     'chain_lineage' => [
         'enabled' => env('QUEUE_INSIGHTS_CHAIN_LINEAGE', true),
-        // Redis connection name (from config/database.php → redis.connections)
+        // Redis connection name (from config/database.php → `redis`)
         // for the claim list + interim lineage hash. null → reuses the package's
         // primary `redis_connection` above. Override only when you want lineage
         // tracking on a separate Redis instance from the rest of queue-insights
