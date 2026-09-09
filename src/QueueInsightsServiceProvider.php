@@ -93,6 +93,7 @@ use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
 use SanderMuller\QueueInsights\Support\SentryExceptionEventRegistry;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
+use SanderMuller\QueueInsights\Support\SnapshotCadence;
 
 final class QueueInsightsServiceProvider extends ServiceProvider
 {
@@ -285,6 +286,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateRetention($section($cfg, 'retention'));
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
         ConfigValidator::validateDashboard($section($cfg, 'dashboard'));
+        ConfigValidator::validateSchedule($section($cfg, 'schedule'));
         ConfigValidator::validateScheduler($section($cfg, 'scheduler'));
         ConfigValidator::validateHorizon($section($cfg, 'horizon'));
 
@@ -420,7 +422,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         $this->callAfterResolving(Schedule::class, static function (Schedule $schedule): void {
             $schedule->command('queue-insights:snapshot')
-                ->everyMinute()
+                ->cron(SnapshotCadence::snapshotCron())
                 ->withoutOverlapping();
 
             if (Config::bool('scheduler.enabled', false) && Config::bool('scheduler.sweeper.enabled', true)) {
@@ -428,7 +430,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
                 // single missed/hung run; `withoutOverlapping` so a long
                 // sweep pass never stacks behind the next minute's tick.
                 $schedule->command('queue-insights:schedule:sweep')
-                    ->everyMinute()
+                    ->cron(SnapshotCadence::sweepCron())
                     ->onOneServer()
                     ->withoutOverlapping();
             }

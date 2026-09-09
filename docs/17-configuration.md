@@ -133,7 +133,26 @@ Lower these to cut Redis memory at the cost of shallower drill-down history. The
 
 | Key | Default | What it does |
 |---|---|---|
-| `schedule.enabled` | `true` | Auto-registers `queue-insights:snapshot` on Laravel's scheduler as `->everyMinute()->withoutOverlapping()`. Set `false` to wire it yourself with `Schedule::command('queue-insights:snapshot')`. |
+| `schedule.enabled` | `true` | Auto-registers `queue-insights:snapshot` on Laravel's scheduler as `->cron(schedule.cron)->withoutOverlapping()`. Set `false` to wire it yourself with `Schedule::command('queue-insights:snapshot')`. |
+| `schedule.cron` | `* * * * *` | Cadence of the auto-registered snapshot command. Any valid cron expression; an invalid one throws at boot. |
+| `schedule.live_ttl_seconds` | `null` | TTL on the `live:*` keys behind the dashboard tiles, the watchdog banner and the `snapshot_alive` / `snapshot_age` metrics. `null` derives it per write from the time left until the next `schedule.cron` fire (evaluated in `app.schedule_timezone`), plus 30 s, floored at 90 s — so a gapped expression (office hours only) survives its idle stretches. |
+| `scheduler.sweeper.cron` | `* * * * *` | Cadence of the auto-registered `queue-insights:schedule:sweep`. The reconciler walks every expected fire since the previous sweep, so a slower cadence delays detection without missing runs. Its look-back is capped at 24 hours per sweep (1440 fires per task), so cadences beyond a few hours are not supported. |
+
+### Scale-to-zero hosts
+
+On a host that scales the app to zero when idle (Laravel Cloud, Vapor), every scheduled invocation wakes a container and is billed. A per-minute snapshot therefore keeps the app — and any database or cache it touches — permanently awake.
+
+```php
+'schedule' => [
+    'enabled' => true,
+    'cron' => env('QUEUE_INSIGHTS_SCHEDULE_CRON', '*/15 * * * *'),
+    'live_ttl_seconds' => null,
+],
+```
+
+What a slower cadence costs: queue depth, in-flight and delayed history is sampled at that resolution, and the snapshot-driven detectors (`depth`, `stalled`, `backlog_growing`, `snapshot_errored`) evaluate that often. `backlog_growing` needs `min_samples` (default 5) points before it fires, so at a quarter-hourly cadence it takes over an hour of rising depth to trigger rather than five minutes. What it does not affect: everything driven by job events — throughput, failures, durations, chain lineage, failure context — which is captured in the worker process as jobs run.
+
+Set `scheduler.sweeper.cron` in step (and `scheduler.sweeper.sweep_seconds` to match, since that is what the sweeper-age alert threshold documents). Leave `live_ttl_seconds` at `null` so the watchdog and liveness metrics scale with the cadence instead of reading "snapshotter dead" between fires. `queue_insights_snapshot_age_seconds` is unaffected by the cadence — it reads a capture timestamp, not the remaining TTL.
 
 ## Silencing
 

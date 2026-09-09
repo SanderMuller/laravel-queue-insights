@@ -13,6 +13,7 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\RedisPipeline;
+use SanderMuller\QueueInsights\Support\SnapshotCadence;
 use Throwable;
 
 final class QueueInsightsSnapshotCommand extends Command
@@ -70,15 +71,26 @@ final class QueueInsightsSnapshotCommand extends Command
             $delayed = $driver->delayed($queueInput);
 
             $now = Date::now()->getTimestamp();
+            $liveTtl = SnapshotCadence::liveTtlSeconds();
 
-            $this->writeMetric($redis, 'depth', $connection, $canonicalKey, $now, $depth);
+            // Capture time, written with the same TTL as the live keys.
+            // The age gauge reads this instead of inferring age from the
+            // remaining TTL — an inference that breaks the moment the
+            // cadence changes or the expression's gaps are uneven.
+            $redis->command('setex', [
+                KeyPrefix::make("live:at:{$connection}:{$canonicalKey}"),
+                $liveTtl,
+                (string) $now,
+            ]);
+
+            $this->writeMetric($redis, 'depth', $connection, $canonicalKey, $now, $depth, $liveTtl);
 
             if ($inFlight !== null) {
-                $this->writeMetric($redis, 'inflight', $connection, $canonicalKey, $now, $inFlight);
+                $this->writeMetric($redis, 'inflight', $connection, $canonicalKey, $now, $inFlight, $liveTtl);
             }
 
             if ($delayed !== null) {
-                $this->writeMetric($redis, 'delayed', $connection, $canonicalKey, $now, $delayed);
+                $this->writeMetric($redis, 'delayed', $connection, $canonicalKey, $now, $delayed, $liveTtl);
             }
 
             $redis->command('del', [KeyPrefix::make("snapshot:error:{$connection}:{$canonicalKey}")]);
@@ -165,6 +177,7 @@ final class QueueInsightsSnapshotCommand extends Command
         string $canonicalKey,
         int $now,
         int $value,
+        int $liveTtl,
     ): void {
         $historyKey = KeyPrefix::make("{$metric}:{$connection}:{$canonicalKey}");
         $liveKey = KeyPrefix::make("live:{$metric}:{$connection}:{$canonicalKey}");
@@ -173,7 +186,7 @@ final class QueueInsightsSnapshotCommand extends Command
         $redis->command('expire', [$historyKey, 172800]);
         $redis->command('zremrangebyscore', [$historyKey, 0, $now - 86400]);
 
-        $redis->command('setex', [$liveKey, 90, (string) $value]);
+        $redis->command('setex', [$liveKey, $liveTtl, (string) $value]);
     }
 
     /**

@@ -104,7 +104,10 @@ variants) and the snapshot command ships 1 new monotonic INCR key
 | `snapshot-errors-total:{c}:{q}` | `QueueInsightsSnapshotCommand::recordError` | `SnapshotErrorsCollector` (GET) | none (snapshot-pair count is bounded by `snapshots` config) |
 | `prom:cache:rendered:{flavour}` | `Registry::writeCache` | `Registry::readCache` | `prometheus.cache_ttl_seconds` (5 s default) |
 
-Reused, NOT re-written: `live:depth:*`, `inflight-zset:*`,
+Reused, NOT re-written: `live:depth:*`, `live:at:*` (snapshot capture
+timestamp — `SnapshotAgeCollector` reads it; never infer age from the
+live keys' remaining TTL, which now varies with `schedule.cron`),
+`inflight-zset:*`,
 `pending-zset:*`, `duration:{class}:{connection}` hash,
 `classes:{connection}` zset.
 

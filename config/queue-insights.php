@@ -250,8 +250,31 @@ return [
         'duration_samples_cap' => 500,
     ],
 
+    /*
+     | Auto-registration of `queue-insights:snapshot` on Laravel's
+     | scheduler.
+     |
+     | `cron` sets the cadence. The default `* * * * *` matches the
+     | pre-tunable `->everyMinute()` behaviour. On a scale-to-zero host
+     | (Laravel Cloud, Vapor) every invocation wakes the container, so a
+     | per-minute snapshot keeps the app — and anything it touches —
+     | permanently awake. Dial it back (a quarter-hourly expression, for
+     | example) to let the app sleep, at the cost of coarser
+     | depth/in-flight history and slower
+     | snapshot-driven alerts. Listener-driven capture (throughput,
+     | failures, durations) is unaffected either way.
+     |
+     | `live_ttl_seconds` overrides the TTL on the `live:*` keys that
+     | back the dashboard tiles, the snapshot watchdog banner and the
+     | `snapshot_alive` / `snapshot_age` metrics. Leave it null and the
+     | TTL is derived from `cron` (one cadence period + 30 s grace,
+     | floored at 90 s) so a slower cadence doesn't read as "snapshotter
+     | dead".
+     */
     'schedule' => [
         'enabled' => true,
+        'cron' => env('QUEUE_INSIGHTS_SCHEDULE_CRON', '* * * * *'),
+        'live_ttl_seconds' => env('QUEUE_INSIGHTS_SCHEDULE_LIVE_TTL', null),
     ],
 
     /*
@@ -742,6 +765,14 @@ return [
          */
         'sweeper' => [
             'enabled' => true,
+            // Cadence of the auto-registered `queue-insights:schedule:sweep`.
+            // Same scale-to-zero trade-off as `schedule.cron`: each fire
+            // wakes the container. The reconciler walks every expected fire
+            // between sweeps, so a slower cadence delays missed/hung
+            // detection but never under-detects — up to a 24h look-back per
+            // sweep, beyond which coverage is capped. Keep `sweep_seconds`
+            // in step — it is what the sweeper-age alert threshold documents.
+            'cron' => env('QUEUE_INSIGHTS_SCHEDULER_SWEEP_CRON', '* * * * *'),
             'sweep_seconds' => 60,
             'drift_seconds' => 90,
             'min_consecutive_misses' => 2,

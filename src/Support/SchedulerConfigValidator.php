@@ -95,6 +95,16 @@ final class SchedulerConfigValidator
         self::ensureArray($sweeper, 'queue-insights.scheduler.sweeper');
         assert(is_array($sweeper));
         self::validateBoolean($sweeper, 'enabled', 'queue-insights.scheduler.sweeper.enabled');
+
+        if (array_key_exists('cron', $sweeper) && $sweeper['cron'] !== null) {
+            $cron = $sweeper['cron'];
+            if (! is_string($cron) || ! SnapshotCadence::isValidCron(trim($cron))) {
+                throw new QueueInsightsConfigException(
+                    'queue-insights.scheduler.sweeper.cron must be a valid cron expression (e.g. "*/5 * * * *").'
+                );
+            }
+        }
+
         self::validatePositiveInts('scheduler.sweeper', $sweeper, ['sweep_seconds', 'drift_seconds']);
     }
 

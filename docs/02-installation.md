@@ -20,9 +20,11 @@ The service provider auto-discovers.
 
 ### Run the scheduler
 
-Every dashboard tile, alert detector, and Prometheus gauge reads from snapshots written by `php artisan queue-insights:snapshot`. The package auto-registers it on Laravel's scheduler with `->everyMinute()->withoutOverlapping()`. You just need a host that runs `php artisan schedule:work` (or the equivalent `* * * * * cd /path && php artisan schedule:run` cron).
+Every dashboard tile, alert detector, and Prometheus gauge reads from snapshots written by `php artisan queue-insights:snapshot`. The package auto-registers it on Laravel's scheduler with `->cron(...)->withoutOverlapping()`, every minute by default. You just need a host that runs `php artisan schedule:work` (or the equivalent `* * * * * cd /path && php artisan schedule:run` cron).
 
 To opt out and wire it yourself, set `queue-insights.schedule.enabled = false` and add `Schedule::command('queue-insights:snapshot')` to your own kernel.
+
+On a scale-to-zero host every scheduled invocation wakes the app container, so lower the cadence with `queue-insights.schedule.cron` instead of paying for a per-minute wake-up. See [Scale-to-zero hosts](17-configuration.md#scale-to-zero-hosts).
 
 `snapshots[]` lists the queues to capture. Static config plus Horizon autodiscovery (when `laravel/horizon` is installed) cover most setups, see the published `config/queue-insights.php` for the shape and [Horizon supervisor auto-discovery](12-horizon.md).
 

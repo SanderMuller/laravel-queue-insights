@@ -293,6 +293,17 @@ final class ConfigValidator
     }
 
     /**
+     * Validate the `schedule` block — the auto-registration toggle, the
+     * cron cadence, and the optional live-key TTL override.
+     *
+     * @param  array<array-key, mixed>  $schedule
+     */
+    public static function validateSchedule(array $schedule): void
+    {
+        ScheduleConfigValidator::validate($schedule);
+    }
+
+    /**
      * Validate the chain_lineage block. Type-checks the toggle, the redis
      * connection override (when set), and the two TTLs.
      *

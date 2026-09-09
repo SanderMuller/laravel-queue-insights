@@ -124,21 +124,34 @@ it('snapshot alive emits 1 when live:depth exists and 0 otherwise', function ():
     expect($byQueue)->toBe(['alive' => 1.0, 'dead' => 0.0]);
 });
 
-it('snapshot age omits the sample when live:depth is absent (no clamp-to-zero)', function (): void {
+it('snapshot age omits the sample when live:at is absent (no clamp-to-zero)', function (): void {
     config()->set('queue-insights.snapshots', [
         ['connection' => 'sqs', 'queue' => 'alive'],
         ['connection' => 'sqs', 'queue' => 'dead'],
     ]);
 
-    R::conn()->command('setex', [KeyPrefix::make('live:depth:sqs:alive'), 90, '0']);
+    R::conn()->command('setex', [KeyPrefix::make('live:at:sqs:alive'), 90, (string) Date::now()
+        ->getTimestamp()]);
 
     $samples = (new SnapshotAgeCollector())->collect()[0]->samples;
     expect($samples)->toHaveCount(1)
         ->and($samples[0]->labels)
-        ->toBe(['connection' => 'sqs', 'queue' => 'alive']);
-    // Age = 90 - TTL; just-written key has TTL ≈ 90 → age ≈ 0.
-    expect($samples[0]->value)->toBeLessThanOrEqual(2.0);
-    expect($samples[0]->value)->toBeGreaterThanOrEqual(0.0);
+        ->toBe(['connection' => 'sqs', 'queue' => 'alive'])
+        ->and($samples[0]->value)->toBeLessThanOrEqual(2.0)
+        ->and($samples[0]->value)->toBeGreaterThanOrEqual(0.0);
+});
+
+it('snapshot age reports the seconds since capture, independent of the key TTL', function (): void {
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'sqs', 'queue' => 'alive'],
+    ]);
+
+    R::conn()->command('setex', [KeyPrefix::make('live:at:sqs:alive'), 900, (string) (Date::now()
+        ->getTimestamp() - 120)]);
+
+    $samples = (new SnapshotAgeCollector())->collect()[0]->samples;
+    expect($samples[0]->value)->toBeGreaterThanOrEqual(120.0)
+        ->toBeLessThanOrEqual(122.0);
 });
 
 it('honours per-metric isEnabled toggles', function (): void {

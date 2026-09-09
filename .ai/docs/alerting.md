@@ -6,7 +6,7 @@ This is the AI-facing reference for the alerting subsystem. End-user docs live i
 
 | Rule | File | Scope | Fires when | Reads |
 |---|---|---|---|---|
-| `depth` | `src/Alerts/Detectors/DepthDetector.php` | per-queue | `live:depth` ≥ a configured threshold (highest matching severity wins) | `live:depth:{c}:{q}` (90 s TTL) |
+| `depth` | `src/Alerts/Detectors/DepthDetector.php` | per-queue | `live:depth` ≥ a configured threshold (highest matching severity wins) | `live:depth:{c}:{q}` (TTL from `SnapshotCadence::liveTtlSeconds()`, 90 s at the default per-minute cadence) |
 | `stalled` | `src/Alerts/Detectors/StalledDetector.php` | per-queue | depth ≥ `min_depth` AND `ZCOUNT wait:{c}:{q} now-idle_seconds +inf == 0` | `live:depth:{c}:{q}`, `wait:{c}:{q}` zset |
 | `oldest_pending` | `src/Alerts/Detectors/OldestPendingDetector.php` | per-queue | oldest `available_at <= now` ≥ `seconds` | `pending-zset:{c}:{q}`, `pending:{uuid}` hash |
 | `stuck_inflight` | `src/Alerts/Detectors/StuckInFlightDetector.php` | per-queue | oldest `started_at` ≥ `seconds` | `inflight-zset:{c}:{q}`, `pending:{uuid}` hash |
@@ -22,7 +22,8 @@ Each `*Detector::detect()` returns `?Issue` and is **pure** w.r.t. side effects 
 
 | Detector reads | Written by |
 |---|---|
-| `live:depth:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::writeMetric` (`SETEX`, 90 s) |
+| `live:depth:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::writeMetric` (`SETEX`, `SnapshotCadence::liveTtlSeconds()` — 90 s at the default cadence, otherwise the time left until the next `schedule.cron` fire + 30 s) |
+| `live:at:{c}:{q}` | same command — snapshot capture timestamp (unix seconds), same TTL as the live metric keys; read by `Prometheus\Collectors\SnapshotAgeCollector` |
 | `wait:{c}:{q}` zset | `Listeners\RecordJobProcessing` line 87+ — **must** canonicalise queue key (`CanonicalQueueKey::from`); see Phase 2 finding in `internal/specs/alerting.md` |
 | `pending-zset:{c}:{q}` | `Listeners\RecordJobQueued::writePendingTracking` (canonical key) |
 | `pending:{uuid}` hash | same listener; fields `connection,queue,class,queued_at,available_at,batch_id,state,started_at` |

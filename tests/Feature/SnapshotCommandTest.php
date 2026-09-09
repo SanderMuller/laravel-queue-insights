@@ -97,6 +97,23 @@ it('writes depth + inflight + delayed history ZSETs with 48h EXPIRE and 24h trim
         ->toBeLessThanOrEqual(90);
 });
 
+it('sizes the live cache TTL from the configured snapshot cadence', function (): void {
+    config()->set('queue-insights.schedule.cron', '*/15 * * * *');
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub(42, 5, 7));
+    config()->set('queue-insights.snapshots', [
+        ['connection' => 'sqsq', 'queue' => 'work'],
+    ]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    // Time left until the next quarter-hour fire, plus 30s grace, floored
+    // at the historical 90s.
+    expect(R::int('ttl', 'qmtest:live:depth:sqsq:work'))->toBeGreaterThanOrEqual(90)
+        ->toBeLessThanOrEqual(930)
+        ->and(R::int('ttl', 'qmtest:live:at:sqsq:work'))->toBeGreaterThanOrEqual(90);
+});
+
 it('skips live cache + history for a metric that the driver returns null for', function (): void {
     config()->set('queue.connections.nullish', ['driver' => 'redis']);
     config()->set('queue-insights.driver_overrides.nullish', fn () => driverStub(3));

@@ -7,13 +7,16 @@ use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\SnapshotCadence;
 use Throwable;
 
 /**
  * Dashboard-only watchdog (spec §1.1). The `live:depth:{c}:{q}` keys all
- * have a 90s TTL — if NONE are present for any configured queue, the
- * snapshot command has been dead for at least 90s. Renders a top-level
- * red banner so operators don't stare at a frozen dashboard.
+ * carry a TTL derived from the configured snapshot cadence (90s at the
+ * default per-minute cadence, see {@see SnapshotCadence}) — if NONE are
+ * present for any configured queue, the snapshot command has been dead
+ * for at least that long. Renders a top-level red banner so operators
+ * don't stare at a frozen dashboard.
  *
  * Cannot run from inside `QueueInsightsSnapshotCommand` — `writeMetric`
  * stamps the keys before any in-loop detector would read them. The

@@ -2,17 +2,20 @@
 
 namespace SanderMuller\QueueInsights\Prometheus\Collectors;
 
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Prometheus\Collector;
 use SanderMuller\QueueInsights\Prometheus\Exposition\MetricFamily;
 use SanderMuller\QueueInsights\Prometheus\Exposition\Sample;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\SnapshotCadence;
 use SanderMuller\QueueInsights\Support\SnapshotPairs;
 
 /**
- * Age of the most recent snapshot per queue — derived from the
- * `live:depth:{c}:{q}` TTL (the key is written with a 90 s SETEX).
+ * Age of the most recent snapshot per queue — `now` minus the capture
+ * timestamp the snapshot command stamps into `live:at:{c}:{q}` (same TTL
+ * as the live metric keys, see {@see SnapshotCadence}).
  *
  * The metric is **omitted** when the key is absent so a dead snapshot
  * loop reads as `absent(queue_insights_snapshot_age_seconds)`, not as
@@ -21,8 +24,6 @@ use SanderMuller\QueueInsights\Support\SnapshotPairs;
  */
 final class SnapshotAgeCollector implements Collector
 {
-    private const int LIVE_DEPTH_TTL_SECONDS = 90;
-
     public function isEnabled(): bool
     {
         return Config::bool('prometheus.metrics.snapshot_age', true);
@@ -36,19 +37,18 @@ final class SnapshotAgeCollector implements Collector
         $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
         $samples = [];
+        $now = Date::now()
+            ->getTimestamp();
         foreach (SnapshotPairs::all() as $pair) {
-            $ttl = $redis->command('ttl', [KeyPrefix::make("live:depth:{$pair['connection']}:{$pair['queue']}")]);
-            // -2 (key missing) and -1 (no TTL) both omit the sample so a
-            // dead snapshot loop reads as `absent(...)` rather than zero.
-            if (! is_int($ttl)) {
+            $capturedAt = $redis->command('get', [KeyPrefix::make("live:at:{$pair['connection']}:{$pair['queue']}")]);
+            // Absent key (never snapshotted, or the snapshot loop died and
+            // the key aged out) omits the sample so alerts read
+            // `absent(...)` rather than a misleading zero.
+            if (! is_numeric($capturedAt)) {
                 continue;
             }
 
-            if ($ttl < 0) {
-                continue;
-            }
-
-            $age = max(0, self::LIVE_DEPTH_TTL_SECONDS - $ttl);
+            $age = max(0, $now - (int) $capturedAt);
 
             $samples[] = new Sample(
                 name: 'queue_insights_snapshot_age_seconds',

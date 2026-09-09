@@ -13,6 +13,7 @@ use Illuminate\Support\Str;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\SnapshotCadence;
 use Throwable;
 
 /**
@@ -29,6 +30,9 @@ use Throwable;
 final readonly class MissedRunReconciler
 {
     private const string LAST_SWEPT_KEY_SUFFIX = 'sched:sweeper:last_swept_ms';
+
+    /** Matches the 1440-fire enumeration cap in `fireTimesBetween`. */
+    private const int MAX_WINDOW_MS = 86_400_000;
 
     public function __construct(
         private RunStore $store,
@@ -60,6 +64,13 @@ final readonly class MissedRunReconciler
         // nowMs untouched so the liveness gauge keeps reading "now".
         $evalFrom = $lastSwept - $driftMs;
         $evalTo = $nowMs - $driftMs;
+
+        // `fireTimesBetween` enumerates at most 1440 fires per task — a day
+        // of a per-minute schedule. A longer window would silently drop
+        // everything past that cap while still advancing the checkpoint, so
+        // clamp it: coverage stops at a day rather than pretending to reach
+        // further. Sweeper cadences beyond a few hours are out of scope.
+        $evalFrom = max($evalFrom, $evalTo - self::MAX_WINDOW_MS);
 
         $missedCount = 0;
         foreach ($schedule->events() as $event) {
@@ -271,10 +282,16 @@ final readonly class MissedRunReconciler
 
     private function writeLastSweptMs(int $nowMs): void
     {
+        // The checkpoint has to outlive the gap between sweeps: expiring it
+        // resets the look-back to two minutes and silently drops everything
+        // in between. Four sweep periods of head-room, never below the
+        // original hour.
+        $ttl = max(3600, SnapshotCadence::secondsUntilNextFire(SnapshotCadence::sweepCron()) * 4);
+
         Redis::connection(Config::string('redis_connection', 'default'))
             ->command('setex', [
                 KeyPrefix::make(self::LAST_SWEPT_KEY_SUFFIX),
-                3600,
+                $ttl,
                 (string) $nowMs,
             ]);
     }

@@ -38,8 +38,9 @@ requirements and the environment knobs, and
 
 Every tile, alert detector, and Prometheus gauge reads from snapshots written by
 `queue-insights:snapshot`. The package registers it on Laravel's scheduler with
-`->everyMinute()->withoutOverlapping()`, so a host running `php artisan schedule:work` (or the
-equivalent cron) is all it needs.
+`->cron(...)->withoutOverlapping()` (every minute by default, tunable via `schedule.cron` for
+scale-to-zero hosts), so a host running `php artisan schedule:work` (or the equivalent cron) is
+all it needs.
 
 The dashboard mounts at `/queue-insights` when `dashboard.enabled=true`. Authorise it with a Gate:
 
