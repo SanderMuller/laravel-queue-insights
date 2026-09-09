@@ -4,6 +4,38 @@ All notable changes to `laravel-queue-insights` are documented here. Format loos
 
 New entries are prepended automatically by `.github/workflows/update-changelog.yml` from the published GitHub release body — do not edit historical entries to add releases.
 
+## 0.33.0 - 2026-09-09
+
+<!-- verified-sha: e233693a1c1591eb5707f7dbb2aba0fc9a531995 -->
+### Added
+
+- **The snapshot cadence is configurable.** `schedule.cron` (env `QUEUE_INSIGHTS_SCHEDULE_CRON`) sets how often `queue-insights:snapshot` runs, and `scheduler.sweeper.cron` (env `QUEUE_INSIGHTS_SCHEDULER_SWEEP_CRON`) does the same for `queue-insights:schedule:sweep`. Both default to `* * * * *`, so nothing changes unless you change it.
+  
+  This is for hosts that scale to zero. On Laravel Cloud and Vapor each scheduled task is its own invocation, and an invocation wakes the app container — so a per-minute snapshot keeps the app, its database, and its cache awake around the clock, whether or not any jobs are running. Lowering the cadence lets the app sleep. Depth, in-flight, and delayed history is then sampled at that resolution and the snapshot-driven detectors evaluate that often; everything captured from job events — throughput, failures, durations, chain lineage, failure context — is written by the worker as jobs run and is untouched. See [Scale-to-zero hosts](https://sandermuller.github.io/laravel-queue-insights/configuration#scale-to-zero-hosts).
+  
+- `schedule.live_ttl_seconds` overrides the TTL on the `live:*` keys. Left at `null` it is derived per write from the time remaining until the next `schedule.cron` fire, evaluated in `app.schedule_timezone`, plus 30 s of grace and floored at the previous 90 s. A gapped expression such as `* 9-17 * * 1-5` therefore keeps its keys alive across nights and weekends rather than reading as a dead snapshotter.
+  
+- An invalid cron expression in either key, or a non-positive `live_ttl_seconds`, is rejected at boot rather than silently falling back.
+  
+
+### Fixed
+
+- `queue_insights_snapshot_age_seconds` read the age off the live key's remaining TTL, which only held while that TTL was a fixed 90 s. The snapshot command now stamps the capture time into `live:at:{connection}:{queue}` and the gauge reads that, so the age stays correct across a cadence change. The metric is still omitted — not zero — when no snapshot is present.
+  
+- The missed-run sweeper's checkpoint expired after a fixed hour. A sweep cadence longer than that reset the look-back to two minutes and dropped every expected fire in between. The checkpoint TTL now scales with the sweep cadence, and the reconciler caps its look-back at 24 hours to match the per-task fire-enumeration limit instead of advancing past fires it never examined.
+  
+
+### Internals
+
+- `Support/SnapshotCadence` owns the cadence and everything derived from it; `Support/ScheduleConfigValidator` owns the `schedule` block's boot-time validation.
+- `dragonmantank/cron-expression` is now a declared dependency. It was already installed through `illuminate/console` and already used directly.
+
+### What's Changed
+
+* chore(deps): bump actions/setup-node from 6 to 7 by @dependabot[bot] in https://github.com/SanderMuller/laravel-queue-insights/pull/13
+
+**Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.32.0...0.33.0
+
 ## 0.32.0 - 2026-08-21
 
 <!-- verified-sha: 97d6f7b85a6f990ad7f3bd3eec706a6b8d154e88 -->
@@ -47,6 +79,7 @@ New entries are prepended automatically by `.github/workflows/update-changelog.y
   'scheduler' => [
       'snapshot_rebuild_commands' => ['schedule:*', 'queue-insights:*', 'cron:tick'],
   ],
+  
   
   
   ```
@@ -259,6 +292,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
   
   
   
+  
   ```
 - **Horizon autodiscovery is now runtime-gated, with a "Horizon not running" banner.** `horizon.autodiscover` becomes tri-state (`true` / `false` / `'force'`). Default `true` only autodiscovers when Horizon's service provider is **actually loaded** in the running app — important for Vapor and similar setups where `config/horizon.php` defines supervisors that are never run from this app context (jobs route to SQS, Horizon's provider is excluded). When `'force'` is set without the provider loaded, the dashboard surfaces a top-level red banner so operators don't read empty supervisor rows as a healthy state. See [README.md](README.md#horizon-supervisor-auto-discovery) for the full tri-state matrix.
 - **Sharpened alert output across mail / Slack / scheduler channels.** Every detector now produces operator-readable single-line descriptions (multi-line stack traces collapsed); the typed `SnapshotErrored` event payload still keeps the **raw** `error_message` so host listeners forwarding to Sentry / external systems get the full text. Scheduler alerts gained human-readable task labels in their notification subject + body so on-call doesn't have to map task keys back to commands.
@@ -320,6 +354,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
   
   
   
+  
   ```
 - **`php artisan queue-insights:migrate-aliases` command.** One-shot migration for hosts that published `connection_aliases` and don't want to wait for `pending.ttl_seconds` (default 24h) to drain the orphan pending zsets. Walks every `pending-zset:{from}:*` + `inflight-zset:{from}:*` per non-identity alias, ZRANGE WITHSCORES → ZADD NX (preserves timestamp scores) → DEL source, then rewrites `pending:{uuid}.connection` from `{from}` → `{to}`. Default dry-run; `--force` to actually mutate. **NOT online-safe** — requires operator-quiesced dispatch + drained workers. The dry-run path prints the quiescence runbook.
 - **`connection_aliases` validator rejects Redis glob metacharacters.** `*`, `?`, `[`, `]`, `\` in alias keys or values now fail at boot rather than letting the migration command issue a `KEYS pending-zset:{from}:*` pattern that could match unrelated zsets and shred them via ZADD/DEL. Pure correctness hardening; no operator action required unless your config already trips the new rule (in which case the error message names the offending key).
@@ -342,6 +377,7 @@ The dashboard was restyled to a calmer, Laravel-Cloud-inspired look. Same data a
       'redis' => 'redis-staging',
       'redis-staging' => 'redis-staging',
   ],
+  
   
   
   
@@ -520,6 +556,7 @@ Run the sweeper on its own short cron once capture is enabled, otherwise missed 
 ```php
 // app/Console/Kernel.php
 $schedule->command('queue-insights:schedule:sweep')->everyMinute();
+
 
 
 
@@ -768,6 +805,7 @@ Plus dashboard-only `snapshot_command_dead` watchdog — top banner when `live:d
 
 
 
+
 ```
 `mergeConfigFrom` is shallow — published config doesn't pick up new nested defaults. Copy keys from the package config when migrating.
 
@@ -898,6 +936,7 @@ Batches, in-flight, chained-job inspector. Drop-in upgrade from 0.3.x — no sch
 
 
 
+
 ```
 **Full Changelog**: https://github.com/SanderMuller/laravel-queue-insights/compare/0.3.0...0.4.0
 
@@ -933,6 +972,7 @@ Pending & delayed-jobs inspector — driver-agnostic via event capture (works on
     'ttl_seconds' => 86400,
     'gap_warn_threshold' => 5,
 ],
+
 
 
 
@@ -1077,6 +1117,7 @@ First public release of `sandermuller/laravel-queue-insights` — self-hosted, d
 ```bash
 composer require sandermuller/laravel-queue-insights
 php artisan vendor:publish --tag=queue-insights-config
+
 
 
 
