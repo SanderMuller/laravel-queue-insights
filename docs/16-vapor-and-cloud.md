@@ -61,6 +61,21 @@ Credentials resolve the way the worker's do: a `credentials` provider name (`ecs
 
 Cloud runs the workers, so keep using its worker configuration. [`queue-insights:work`](09-running-workers.md) is for hosts that supervise their own `queue:work` processes.
 
+### Scale to zero
+
+Cloud runs each scheduled task as its own invocation, and an invocation wakes the app container. The snapshot command registers every minute by default, so on an environment that scales to zero it is what keeps the app — and the database and cache it touches — awake around the clock.
+
+Lower the cadence to let the app sleep:
+
+```
+QUEUE_INSIGHTS_SCHEDULE_CRON="*/15 * * * *"
+QUEUE_INSIGHTS_SCHEDULER_SWEEP_CRON="*/15 * * * *"
+```
+
+Depth, in-flight and delayed history is then sampled every fifteen minutes, and the detectors that read those snapshots evaluate at that resolution. Everything captured from job events — throughput, failures, durations, chain lineage, failure context — is written by the worker as jobs run and is unaffected. The live keys, the watchdog banner and the liveness metrics size themselves from the cadence, so a slower snapshot does not read as a dead one. See [Scale-to-zero hosts](17-configuration.md#scale-to-zero-hosts).
+
+The app's own scheduled tasks count too: a task on `* * * * *` keeps the container awake no matter what this package does.
+
 ## Vapor
 
 ### Horizon configured but not running
