@@ -71,7 +71,7 @@ final readonly class HungTaskReconciler
                     'task_key' => $taskKey,
                     'exception' => $throwable::class,
                     'message' => $throwable->getMessage(),
-                    'connection' => Config::string('redis_connection', 'default'),
+                    'redis_connection' => Config::string('redis_connection', 'default'),
                 ]);
             }
         }

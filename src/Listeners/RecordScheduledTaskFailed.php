@@ -126,7 +126,7 @@ final readonly class RecordScheduledTaskFailed
             Log::warning('queue-insights: RecordScheduledTaskFailed failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
-                'connection' => Config::string('redis_connection', 'default'),
+                'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
         } finally {
             if (is_string($taskKey)) {
@@ -149,7 +149,7 @@ final readonly class RecordScheduledTaskFailed
             Log::warning('queue-insights: RecordScheduledTaskFailed failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
-                'connection' => Config::string('redis_connection', 'default'),
+                'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }

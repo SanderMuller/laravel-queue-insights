@@ -83,7 +83,7 @@ final readonly class ScheduleSnapshotter
             Log::warning('queue-insights: ScheduleSnapshotter::rebuild failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
-                'connection' => Config::string('redis_connection', 'default'),
+                'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }

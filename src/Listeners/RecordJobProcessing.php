@@ -102,7 +102,7 @@ final class RecordJobProcessing
             Log::warning('queue-insights: RecordJobProcessing failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
-                'connection' => Config::string('redis_connection', 'default'),
+                'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }
@@ -253,7 +253,7 @@ final class RecordJobProcessing
             Log::warning('queue-insights: pushChainClaim failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
-                'connection' => Config::string('redis_connection', 'default'),
+                'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }
