@@ -59,6 +59,7 @@ final readonly class RecordScheduledTaskStarting
             Log::warning('queue-insights: RecordScheduledTaskStarting failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
+                'connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }

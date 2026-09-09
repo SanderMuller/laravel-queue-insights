@@ -20,7 +20,7 @@ Everything you can set without publishing the config file.
 | Variable | Default | What it does |
 |---|---|---|
 | `QUEUE_INSIGHTS_ENABLED` | `true` | Master switch for the package. |
-| `QUEUE_INSIGHTS_REDIS` | `default` | Redis **connection name** from `config/database.php` → `redis.connections`. Not a database number. |
+| `QUEUE_INSIGHTS_REDIS` | `default` | Redis **connection name** from `config/database.php` → `redis.connections`. Not a database number. A name with no matching connection is rejected at boot. |
 | `QUEUE_INSIGHTS_KEY_PREFIX` | `qm:{APP_ENV}:` | Prefix for every Redis key the package writes. See [Key-prefix strategies](10-ops-runbook.md#key-prefix-strategies). |
 | `QUEUE_INSIGHTS_REDIS_CLUSTER` | `false` | Wrap the prefix in a Redis hash tag so the keyspace pins to one slot. See [Redis Cluster](10-ops-runbook.md#redis-cluster). |
 | `QUEUE_INSIGHTS_HORIZON_AUTODISCOVER` | `true` | Tri-state: `false`, `true`, or `force`. See [Horizon auto-discovery](12-horizon.md). |

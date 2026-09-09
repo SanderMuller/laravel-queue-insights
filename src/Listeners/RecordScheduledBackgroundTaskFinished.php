@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
+use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
 
 /**
@@ -55,6 +56,7 @@ final readonly class RecordScheduledBackgroundTaskFinished
             Log::warning('queue-insights: RecordScheduledBackgroundTaskFinished failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
+                'connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }

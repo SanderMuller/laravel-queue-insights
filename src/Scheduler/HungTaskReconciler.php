@@ -7,6 +7,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
+use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
 
 /**
@@ -70,6 +71,7 @@ final readonly class HungTaskReconciler
                     'task_key' => $taskKey,
                     'exception' => $throwable::class,
                     'message' => $throwable->getMessage(),
+                    'connection' => Config::string('redis_connection', 'default'),
                 ]);
             }
         }

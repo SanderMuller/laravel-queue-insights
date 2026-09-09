@@ -36,6 +36,8 @@ Most hosts only set these two at install time; everything else lives in the
 | Var                            | Default | Purpose                                                                                      |
 |--------------------------------|---------|----------------------------------------------------------------------------------------------|
 | `QUEUE_INSIGHTS_REDIS`         | `default` | Laravel Redis connection name the package writes to. Point at a dedicated DB on shared Redis. |
+
+Pointing this at a hand-written connection means that connection has to carry everything the default one does. A managed Redis that authenticates with an ACL user needs `url` (or `username`) as well as `password` — a block with only host, port, database and password authenticates as the default ACL user and every command on it fails with `WRONGPASS`. Copy the `default` block and change what you mean to change. A name that matches no connection at all is rejected at boot rather than surfacing later from inside a listener.
 | `QUEUE_INSIGHTS_KEY_PREFIX`    | `qm:{APP_ENV}:` | Prefix for every Redis key the package writes. See [Key-prefix strategies](10-ops-runbook.md#key-prefix-strategies). |
 
 Subsystems each carry their own `.enabled` switch (`dashboard.enabled`, `pending.enabled`, `alerts.enabled`, `prometheus.enabled`, `scheduler.enabled`, `batches.enabled`, `initiator.enabled`), flip those individually rather than reaching for a global kill switch.

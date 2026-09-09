@@ -68,6 +68,7 @@ final readonly class RecordScheduledTaskFinished
             Log::warning('queue-insights: RecordScheduledTaskFinished failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
+                'connection' => Config::string('redis_connection', 'default'),
             ]);
         } finally {
             // Always pop the frame Starting pushed — early returns above
@@ -95,6 +96,7 @@ final readonly class RecordScheduledTaskFinished
             Log::warning('queue-insights: RecordScheduledTaskFinished failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
+                'connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }

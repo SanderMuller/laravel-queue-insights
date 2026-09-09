@@ -304,6 +304,17 @@ final class ConfigValidator
     }
 
     /**
+     * Validate that a configured Redis connection name resolves to an entry
+     * under `database.redis.connections` (or `.clusters`).
+     *
+     * @param  string  $key  config key being validated, for the message
+     */
+    public static function validateRedisConnectionName(string $connection, string $key): void
+    {
+        RedisConnectionValidator::validate($connection, $key);
+    }
+
+    /**
      * Validate the chain_lineage block. Type-checks the toggle, the redis
      * connection override (when set), and the two TTLs.
      *
@@ -326,6 +337,8 @@ final class ConfigValidator
                     'queue-insights.chain_lineage.redis_connection must be a non-empty string or null.'
                 );
             }
+
+            self::validateRedisConnectionName($connection, 'chain_lineage.redis_connection');
         }
 
         foreach (['claim_ttl_seconds', 'lineage_ttl_seconds'] as $key) {

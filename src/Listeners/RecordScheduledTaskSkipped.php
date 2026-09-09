@@ -11,6 +11,7 @@ use SanderMuller\QueueInsights\Scheduler\HostId;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\SkipReasonResolver;
 use SanderMuller\QueueInsights\Scheduler\TaskKey;
+use SanderMuller\QueueInsights\Support\Config;
 use Throwable;
 
 final readonly class RecordScheduledTaskSkipped
@@ -34,6 +35,7 @@ final readonly class RecordScheduledTaskSkipped
             Log::warning('queue-insights: RecordScheduledTaskSkipped failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
+                'connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }

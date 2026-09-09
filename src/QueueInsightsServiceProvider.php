@@ -287,6 +287,10 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         ConfigValidator::validateRetention($section($cfg, 'retention'));
         ConfigValidator::validatePrometheus($section($cfg, 'prometheus'));
         ConfigValidator::validateDashboard($section($cfg, 'dashboard'));
+        ConfigValidator::validateRedisConnectionName(
+            Config::string('redis_connection', 'default'),
+            'redis_connection',
+        );
         ConfigValidator::validateSchedule($section($cfg, 'schedule'));
         ConfigValidator::validateScheduler($section($cfg, 'scheduler'));
         ConfigValidator::validateHorizon($section($cfg, 'horizon'));

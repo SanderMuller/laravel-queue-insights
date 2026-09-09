@@ -80,6 +80,7 @@ final readonly class MissedRunReconciler
                 Log::warning('queue-insights: MissedRunReconciler::reconcileEvent failed', [
                     'exception' => $throwable::class,
                     'message' => $throwable->getMessage(),
+                    'connection' => Config::string('redis_connection', 'default'),
                 ]);
             }
         }

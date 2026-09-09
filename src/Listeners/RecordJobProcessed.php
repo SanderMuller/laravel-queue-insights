@@ -143,6 +143,7 @@ final readonly class RecordJobProcessed
             Log::warning('queue-insights: RecordJobProcessed failed', [
                 'exception' => $throwable::class,
                 'message' => $throwable->getMessage(),
+                'connection' => Config::string('redis_connection', 'default'),
             ]);
         }
     }
