@@ -210,6 +210,11 @@ parameters:
             identifier: disallowed.function
             path: tests/Fixtures/SnapshotterRaceRunner.php
             reportUnmatched: false
+        # Same APP_KEY-on-fresh-CI reason as the two launchers above.
+        -
+            identifier: disallowed.function
+            path: tests/Fixtures/DashboardBootProbe.php
+            reportUnmatched: false
         # Upstream Testbench PHPDoc bug: `Application::configure()` reads the
         # option key `enables_package_discoveries` at runtime
         # (testbench-core Foundation/Application.php — `isset($options['enables_package_discoveries'])`),
@@ -226,6 +231,7 @@ parameters:
             paths:
                 - tests/Fixtures/SnapshotterRaceRunner.php
                 - tests/Fixtures/SupervisorLauncher.php
+                - tests/Fixtures/DashboardBootProbe.php
             reportUnmatched: false
         -
             identifier: staticMethod.void

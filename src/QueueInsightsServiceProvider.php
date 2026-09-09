@@ -94,6 +94,7 @@ use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
 use SanderMuller\QueueInsights\Support\SentryExceptionEventRegistry;
 use SanderMuller\QueueInsights\Support\SilencedJobs;
 use SanderMuller\QueueInsights\Support\SnapshotCadence;
+use Throwable;
 
 final class QueueInsightsServiceProvider extends ServiceProvider
 {
@@ -384,15 +385,33 @@ final class QueueInsightsServiceProvider extends ServiceProvider
             return;
         }
 
-        Livewire::component('queue-insights-dashboard', QueueInsightsDashboard::class);
-        // The alert-rules panel is a `#[Lazy]` child component — registering
-        // it here keeps the parent dashboard's initial render free of the
-        // panel's builder + 98-line blade pass.
-        Livewire::component('queue-insights-alert-rules-panel', AlertRulesPanel::class);
-        // Schedule observability panel — also lazy. Renders empty body when
-        // `scheduler.enabled = false` so the tab strip can decide whether
-        // to surface the tab without paying for a full reader pass.
-        Livewire::component('queue-insights-schedule-panel', ScheduleInsightsPanel::class);
+        // Deferred to `booted` because `Livewire::component()` resolves
+        // `livewire.finder`, which Livewire's own provider registers. Boot
+        // order between the two providers is not guaranteed — a host (or a
+        // Testbench/Larastan bootstrap) that boots this provider first would
+        // otherwise die on a missing `livewire.finder` binding.
+        $this->app->booted(function (): void {
+            try {
+                Livewire::component('queue-insights-dashboard', QueueInsightsDashboard::class);
+                // The alert-rules panel is a `#[Lazy]` child component — registering
+                // it here keeps the parent dashboard's initial render free of the
+                // panel's builder + 98-line blade pass.
+                Livewire::component('queue-insights-alert-rules-panel', AlertRulesPanel::class);
+                // Schedule observability panel — also lazy. Renders empty body when
+                // `scheduler.enabled = false` so the tab strip can decide whether
+                // to surface the tab without paying for a full reader pass.
+                Livewire::component('queue-insights-schedule-panel', ScheduleInsightsPanel::class);
+            } catch (Throwable $throwable) {
+                // Livewire's classes are on disk but its service provider never
+                // registered its bindings — package discovery off, or a host
+                // listing providers by hand. Registration resolves
+                // `livewire.finder` (Livewire 4) and would take the whole app
+                // down over a dashboard that cannot render anyway.
+                Log::info('queue-insights: dashboard disabled, livewire bindings unavailable', [
+                    'message' => $throwable->getMessage(),
+                ]);
+            }
+        });
 
         $this->loadRoutesFrom(__DIR__ . '/../routes/web.php');
     }
