@@ -1,5 +1,6 @@
 <?php declare(strict_types=1);
 
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Redis;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Http\Livewire\QueueInsightsDashboard;
@@ -300,7 +301,7 @@ it('XSS layer 2 — hook body runs highlightJson + insertAdjacentHTML on hostile
     $nodeProcess->run();
 
     $output = $nodeProcess->getOutput() . $nodeProcess->getErrorOutput();
-    @unlink($tmp);
+    File::delete($tmp);
 
     $decoded = json_decode(trim($output), true);
     expect($decoded)->toBeArray();

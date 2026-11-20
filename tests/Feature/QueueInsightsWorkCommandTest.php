@@ -32,7 +32,7 @@ final class StubWorkerFactory implements WorkerProcessFactory
     {
         $env = $this->envByConnection[$connection] ?? [];
         $process = new Process(
-            [PHP_BINARY, dirname(__DIR__) . '/Fixtures/StubWorker.php', $connection, ...$queues],
+            [PHP_BINARY, __DIR__ . '/../Fixtures/StubWorker.php', $connection, ...$queues],
             null,
             $env,
         );

@@ -3,7 +3,7 @@
 use Symfony\Component\Process\Process;
 
 it('boots with the dashboard enabled while livewire has no registered provider', function (): void {
-    $probe = dirname(__DIR__) . '/Fixtures/DashboardBootProbe.php';
+    $probe = __DIR__ . '/../Fixtures/DashboardBootProbe.php';
     if (! is_file($probe)) {
         $this->markTestSkipped('DashboardBootProbe.php fixture missing');
     }

@@ -98,7 +98,7 @@ it('escalates to SIGKILL when a child ignores SIGTERM past the grace window', fu
         {
             $env = $this->envByConnection[$connection] ?? [];
             $process = new Process(
-                [PHP_BINARY, dirname(__DIR__) . '/Fixtures/StubWorker.php', $connection, ...$queues],
+                [PHP_BINARY, __DIR__ . '/../Fixtures/StubWorker.php', $connection, ...$queues],
                 null,
                 $env,
             );
@@ -180,7 +180,7 @@ it('escalates to SIGKILL when a child ignores SIGTERM past the grace window', fu
  * follows Bash convention (128 + signum).
  */
 it('forwards SIGTERM to live children when the supervisor receives one', function (): void {
-    $launcher = dirname(__DIR__) . '/Fixtures/SupervisorLauncher.php';
+    $launcher = __DIR__ . '/../Fixtures/SupervisorLauncher.php';
     if (! is_file($launcher)) {
         $this->markTestSkipped('SupervisorLauncher.php fixture missing');
     }
@@ -308,7 +308,7 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
  * would indicate the timer reset.
  */
 it('does not reset the grace timer when SIGTERM is sent twice', function (): void {
-    $launcher = dirname(__DIR__) . '/Fixtures/SupervisorLauncher.php';
+    $launcher = __DIR__ . '/../Fixtures/SupervisorLauncher.php';
     if (! is_file($launcher)) {
         $this->markTestSkipped('SupervisorLauncher.php fixture missing');
     }
