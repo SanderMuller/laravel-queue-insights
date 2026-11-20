@@ -115,8 +115,18 @@ For a non-Issue side effect (e.g. write a metric to Prometheus when an alert fir
 
 Why legacy wins: hosts setting both are likely mid-migration with legacy still load-bearing; silently ignoring it risks losing prod alerts. Loud deprecation + legacy-wins is safer.
 
+## Orphaned pending entries
+
+A `pending-zset` member outlives its job when no listener moved it (no `JobProcessing` before the message left the broker, e.g. Vapor Lambda crash → SQS DLQ, or a failed listener write). Two reaps in `Console\QueueInsightsSnapshotCommand`, both before `dispatchForSnapshot` so a reaped head never alerts:
+
+- `reapStaleTracking` — members below `now - pending.ttl_seconds` whose `pending:{uuid}` hash is gone (EXISTS = 0). Pending + inflight zsets.
+- `reapDrainedQueueOrphans` — when the driver reports `depth === 0 && inFlight === 0 && delayed === 0` (a `null` never counts as 0) on this tick **and** a previous one at least `MIN_DRAINED_SECONDS` (60) earlier (`drained-at:{c}:{q}` keeps the first drained timestamp, TTL refreshed to `SnapshotCadence::liveTtlSeconds()` each drained tick, `DEL` on any non-drained tick), runnable pending members scored at or below `now - max(60, oldest_pending.seconds)` are removed by `Lua/ReapPendingOrphans.lua`: the hash is deleted only when its `ZREM` hit, so a member `MarkInFlight` moved meanwhile keeps its hash. Keys via `KeyPrefix::queueKey` (canonical alias). Pending zset only.
+
+Listener catch paths (`RecordJobQueued/Processing/Processed/Failed`) call `Support\ListenerFailureReporter` after the warning: one `ListenerFailedException` per listener per `listener_failures.report_interval_seconds` per process.
+
 ## What NOT to do
 
+- Don't dedupe `oldest_pending` on the head uuid to quiet an orphan. A real stuck job is one uuid too; fix the orphan (reap) or tune `cooldown_seconds`.
 - Don't read the cache from the snapshot command. Cooldown decisions need fresh detector output every tick.
 - Don't add a runtime config-mutation surface (admin UI / API to toggle rules). The active-rules panel is **read-only** by design — config is the source of truth, version-controlled, reviewable.
 - Don't bypass `Cooldown::acquire()` for "important" alerts. The cooldown key is per-(rule, target) — if you want louder paging for a critical issue, set a shorter `cooldown_seconds` or wire an external pager (PagerDuty channel) that handles its own escalation.

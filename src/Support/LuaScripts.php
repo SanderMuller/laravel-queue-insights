@@ -28,9 +28,16 @@ final class LuaScripts
 
     private static ?string $batchFetchCompletedMeta = null;
 
+    private static ?string $reapPendingOrphans = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
+    }
+
+    public static function reapPendingOrphans(): string
+    {
+        return self::$reapPendingOrphans ??= self::load(__DIR__ . '/Lua/ReapPendingOrphans.lua');
     }
 
     public static function markInFlight(): string

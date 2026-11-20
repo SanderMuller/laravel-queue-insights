@@ -86,6 +86,8 @@ A typed `SanderMuller\QueueInsights\Events\JobFailedAlert` event is dispatched (
 > **Heads up, `oldest_pending` / `stuck_inflight` need pending tracking.**
 > Both detectors read `pending-zset:*` / `inflight-zset:*` populated by the `RecordJobQueued` / `RecordJobProcessing` listeners. With `pending.enabled = false` they short-circuit at runtime and a one-off boot warning lists which rules were tripped. Either re-enable pending tracking or disable those rules.
 
+> **Orphaned pending entries.** A pending entry is cleared when a worker fires `JobProcessing`. If that never happens (a Vapor Lambda that dies before the worker starts until SQS moves the message to its dead-letter queue, or a listener write that fails), the entry stays behind and would hold `oldest_pending` open. Once the driver has reported the queue fully drained (0 visible, 0 in flight, 0 delayed) on two snapshot ticks in a row, runnable entries older than `oldest_pending.seconds` are removed before the detectors run, with one `info` log line per reap. Broker counts are approximate, so a single empty sample is not enough; expect one alert before the orphan is cleared. A busy queue that never drains keeps such an entry until `pending.ttl_seconds` passes. Listener failures are also reported to your exception handler, see `listener_failures` in [Configuration](17-configuration.md#pending-and-delayed-jobs).
+
 ## Notification channels
 
 The package ships four channels out of the box:

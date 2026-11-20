@@ -33,10 +33,10 @@ beforeEach(function (): void {
     config()->set('queue-insights.alerts.cooldown_seconds', 900);
 });
 
-function quietDriver(int $depth = 0): QueueSnapshotDriver
+function quietDriver(int $depth = 0, ?int $inFlight = null, ?int $delayed = null): QueueSnapshotDriver
 {
-    return new readonly class ($depth) implements QueueSnapshotDriver {
-        public function __construct(private int $d) {}
+    return new readonly class ($depth, $inFlight, $delayed) implements QueueSnapshotDriver {
+        public function __construct(private int $d, private ?int $i, private ?int $del) {}
 
         public function depth(string $queue): int
         {
@@ -45,12 +45,12 @@ function quietDriver(int $depth = 0): QueueSnapshotDriver
 
         public function inFlight(string $queue): ?int
         {
-            return null;
+            return $this->i;
         }
 
         public function delayed(string $queue): ?int
         {
-            return null;
+            return $this->del;
         }
 
         public function canonicalKey(string $queue): string
@@ -160,6 +160,33 @@ it('fires OldestPendingAging when the oldest available_at is older than the thre
         && $e->oldestClass === 'App\\Jobs\\Slow'
         && $e->ageSeconds >= 600
         && $e->thresholdSeconds === 60);
+});
+
+it('does not fire OldestPendingAging for an orphan head when the broker reports the queue fully drained', function (): void {
+    // hihaho HIHAHO-87C shape: the head's backing hash is still alive (well
+    // inside pending.ttl_seconds) but the job never left pending-zset. The
+    // broker reports nothing visible, in flight or delayed, so the head
+    // cannot be a real waiting job.
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0, 0, 0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'orphan-uuid']);
+    $redis->command('hset', [KeyPrefix::make('pending:orphan-uuid'), 'class', 'App\\Jobs\\Slow']);
+
+    // The previous tick already saw the queue drained.
+    $redis->command('setex', [KeyPrefix::make('drained-at:sqsq:work'), 90, (string) (Date::now()->getTimestamp() - 60)]);
+
+    Event::fake([OldestPendingAging::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertNotDispatched(OldestPendingAging::class);
 });
 
 it('skips delayed (not-yet-due) entries when picking the oldest pending', function (): void {
