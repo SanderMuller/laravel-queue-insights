@@ -189,6 +189,31 @@ it('does not fire OldestPendingAging for an orphan head when the broker reports 
     Event::assertNotDispatched(OldestPendingAging::class);
 });
 
+it('keeps a drained-queue entry and alerts on it when pending.reap_drained_orphans is false', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0, 0, 0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.pending.reap_drained_orphans', false);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'kept-uuid']);
+    $redis->command('hset', [KeyPrefix::make('pending:kept-uuid'), 'class', 'App\\Jobs\\Slow']);
+    $redis->command('setex', [KeyPrefix::make('drained-at:sqsq:work'), 90, (string) (Date::now()->getTimestamp() - 60)]);
+
+    Event::fake([OldestPendingAging::class]);
+
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertDispatched(OldestPendingAging::class);
+    expect($redis->command('zscore', [KeyPrefix::make('pending-zset:sqsq:work'), 'kept-uuid']))->toBeNumeric()
+        ->and($redis->command('exists', [KeyPrefix::make('pending:kept-uuid')]))
+        ->toBe(1);
+});
+
 it('skips delayed (not-yet-due) entries when picking the oldest pending', function (): void {
     config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
     config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0));

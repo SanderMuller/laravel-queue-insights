@@ -197,7 +197,7 @@ final class QueueInsightsSnapshotCommand extends Command
         ?int $inFlight,
         ?int $delayed,
     ): void {
-        if (! Config::bool('pending.enabled', true)) {
+        if (! Config::bool('pending.enabled', true) || ! Config::bool('pending.reap_drained_orphans', true)) {
             return;
         }
 

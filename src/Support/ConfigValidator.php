@@ -81,10 +81,12 @@ final class ConfigValidator
      */
     public static function validatePending(array $pending): void
     {
-        if (isset($pending['enabled']) && ! is_bool($pending['enabled'])) {
-            throw new QueueInsightsConfigException(
-                'queue-insights.pending.enabled must be a boolean.'
-            );
+        foreach (['enabled', 'reap_drained_orphans'] as $key) {
+            if (isset($pending[$key]) && ! is_bool($pending[$key])) {
+                throw new QueueInsightsConfigException(
+                    "queue-insights.pending.{$key} must be a boolean."
+                );
+            }
         }
 
         foreach (['max_per_queue', 'ttl_seconds', 'gap_warn_threshold'] as $key) {

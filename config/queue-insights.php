@@ -561,6 +561,13 @@ return [
         // read the snapshot count, not the listed sample, as truth.
         'gap_warn_threshold' => 5,
 
+        // Remove runnable entries older than `alerts.rules.oldest_pending.seconds`
+        // once the driver has reported the queue fully drained on two snapshot
+        // ticks at least 60 s apart. Broker counts are approximate (SQS), so a
+        // misreport could drop a live job's row; set false to keep every entry
+        // until `ttl_seconds`.
+        'reap_drained_orphans' => env('QUEUE_INSIGHTS_PENDING_REAP_DRAINED_ORPHANS', true),
+
         /*
          | Per-pending-row payload capture. Parallel to the completed-stream
          | `capture.payloads` block above, but with a separate budget because

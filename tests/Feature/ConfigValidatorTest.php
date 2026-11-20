@@ -90,6 +90,12 @@ it('rejects a non-boolean pending.enabled', function (): void {
     })->toThrow(QueueInsightsConfigException::class, 'pending.enabled must be a boolean');
 });
 
+it('rejects a non-boolean pending.reap_drained_orphans', function (): void {
+    expect(function (): void {
+        ConfigValidator::validatePending(['reap_drained_orphans' => 'false']);
+    })->toThrow(QueueInsightsConfigException::class, 'pending.reap_drained_orphans must be a boolean');
+});
+
 it('rejects a non-int max_per_queue', function (): void {
     expect(function (): void {
         ConfigValidator::validatePending(['max_per_queue' => '10000']);
