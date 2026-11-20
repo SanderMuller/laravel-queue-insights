@@ -541,12 +541,15 @@ return [
      | The job-lifecycle listeners catch tracking errors and log a warning so
      | a job never breaks. With `report` on, each listener also hands one
      | ListenerFailedException to the app's exception handler (Sentry etc.)
-     | per `report_interval_seconds`, per worker process. False keeps
-     | failures in the log only.
+     | per `report_interval_seconds`, shared across workers through
+     | `cache_store` (null = the app's default store). When that store is
+     | unreachable too, each worker process throttles on its own. False
+     | keeps failures in the log only.
      */
     'listener_failures' => [
         'report' => env('QUEUE_INSIGHTS_REPORT_LISTENER_FAILURES', true),
         'report_interval_seconds' => 300,
+        'cache_store' => env('QUEUE_INSIGHTS_LISTENER_FAILURES_CACHE_STORE'),
     ],
 
     'pending' => [

@@ -229,7 +229,8 @@ All opt-in, all gated by cooldown.
 | `pending.capture.max_payload_bytes` | `4096` | A quarter of the completed cap, so 10k pending rows land near 40 MB. |
 | `pending.capture.include_command_body` | `false` | Persist `data.command` under `full` mode. Off by default: the `redact_keys` regex walks JSON keys and cannot reach properties inside a PHP-serialized blob, and a per-uuid hash with a 24-hour TTL is a wider confidentiality window than the bounded completed stream. Turn it on only after confirming your job classes carry no secrets as properties. |
 | `listener_failures.report` | `true` | The job lifecycle listeners never let a tracking error break a job: they catch it and log a warning. With this on, each listener also passes a `ListenerFailedException` (wrapping the original) to your exception handler, so a missed tracking write shows up in Sentry or similar. Env: `QUEUE_INSIGHTS_REPORT_LISTENER_FAILURES`. |
-| `listener_failures.report_interval_seconds` | `300` | At most one report per listener per interval, per worker process, so a Redis outage does not flood the error tracker. |
+| `listener_failures.report_interval_seconds` | `300` | At most one report per listener per interval across all workers, so a Redis outage does not flood the error tracker. If the cache store can't be reached either, each worker process applies the interval on its own. |
+| `listener_failures.cache_store` | `null` | Cache store that holds the shared throttle. `null` uses the app's default store. Pick a store that doesn't live on the queue-insights Redis connection if you want the shared throttle to hold during an outage of that connection. Env: `QUEUE_INSIGHTS_LISTENER_FAILURES_CACHE_STORE`. |
 
 ## Chain lineage
 

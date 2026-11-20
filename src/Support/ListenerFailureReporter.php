@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Date;
 use SanderMuller\QueueInsights\Exceptions\ListenerFailedException;
 use Throwable;
@@ -14,8 +15,12 @@ use Throwable;
  * entry never moved to in-flight) leaves a trace in the error tracker
  * without flooding it during a Redis outage.
  *
- * The throttle is per worker process (container singleton), so N workers
- * report at most N events per interval per listener.
+ * The throttle has two layers. A per-process one (container singleton)
+ * keeps the hot path free of I/O. A shared one, a `Cache::add` lock on
+ * the app's cache store, limits reports across all workers to one per
+ * listener per interval. If the cache write fails too (the cache often
+ * lives on the same Redis that is down), the per-process throttle alone
+ * decides.
  *
  * @internal
  */
@@ -41,9 +46,24 @@ final class ListenerFailureReporter
 
             $this->lastReportedAt[$listener] = $now;
 
+            if (! $this->claimSharedSlot($listener, $interval)) {
+                return;
+            }
+
             report(new ListenerFailedException($listener, $throwable));
         } catch (Throwable) {
             // Reporting must never break the job the listener runs beside.
+        }
+    }
+
+    private function claimSharedSlot(string $listener, int $interval): bool
+    {
+        try {
+            $store = Config::string('listener_failures.cache_store');
+
+            return Cache::store($store === '' ? null : $store)->add("queue-insights:listener-failure-reported:{$listener}", 1, max(1, $interval));
+        } catch (Throwable) {
+            return true;
         }
     }
 }

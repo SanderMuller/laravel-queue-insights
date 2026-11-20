@@ -54,6 +54,27 @@ it('reports at most once per listener per interval', function (): void {
     Exceptions::assertReportedCount(3);
 });
 
+it('shares the throttle across worker processes through the cache store', function (): void {
+    config()->set('cache.default', 'array');
+
+    // A fresh singleton stands in for a second worker process.
+    resolve(ListenerFailureReporter::class)->report('RecordJobProcessing', new RuntimeException('a'));
+    app()->forgetInstance(ListenerFailureReporter::class);
+    resolve(ListenerFailureReporter::class)->report('RecordJobProcessing', new RuntimeException('b'));
+
+    Exceptions::assertReportedCount(1);
+});
+
+it('falls back to the per-process throttle when the cache store is unavailable', function (): void {
+    config()->set('queue-insights.listener_failures.cache_store', 'missing-store');
+
+    resolve(ListenerFailureReporter::class)->report('RecordJobProcessing', new RuntimeException('a'));
+    app()->forgetInstance(ListenerFailureReporter::class);
+    resolve(ListenerFailureReporter::class)->report('RecordJobProcessing', new RuntimeException('b'));
+
+    Exceptions::assertReportedCount(2);
+});
+
 it('does not report when listener failure reporting is disabled', function (): void {
     config()->set('queue-insights.listener_failures.report', false);
 
