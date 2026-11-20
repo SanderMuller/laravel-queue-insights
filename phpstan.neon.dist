@@ -111,6 +111,7 @@ parameters:
                 - tests/Unit/Prometheus/
                 - tests/Unit/Scheduler/
                 - tests/Unit/Support/SentryExceptionEventRegistryTest.php
+                - tests/Feature/Scheduler/SentryHookInstallTest.php
                 - tests/Pest.php
             reportUnmatched: false
         -

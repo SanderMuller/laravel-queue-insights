@@ -24,6 +24,9 @@ final class SentryExceptionEventRegistry
     /** @var WeakMap<Throwable, string>|null */
     private static ?WeakMap $map = null;
 
+    /** @var WeakMap<Options, true>|null */
+    private static ?WeakMap $hooked = null;
+
     public static function record(Throwable $exception, string $eventId): void
     {
         self::map()[$exception] = $eventId;
@@ -35,8 +38,9 @@ final class SentryExceptionEventRegistry
     }
 
     /**
-     * No-op when no Sentry client is bound. Must be called after the hub is
-     * initialised — service-provider boot and inside test helpers that swap the hub.
+     * No-op when no Sentry client is bound, and when this client's options
+     * already carry the hook. Must run after the host's Sentry provider has
+     * set its hub, so it runs on the first `ScheduledTaskStarting`, not at boot.
      */
     public static function installBeforeSendHook(): void
     {
@@ -49,6 +53,13 @@ final class SentryExceptionEventRegistry
         if (! $options instanceof Options) {
             return;
         }
+
+        self::$hooked ??= new WeakMap();
+        if (isset(self::$hooked[$options])) {
+            return;
+        }
+
+        self::$hooked[$options] = true;
 
         $existing = $options->getBeforeSendCallback();
         $options->setBeforeSendCallback(

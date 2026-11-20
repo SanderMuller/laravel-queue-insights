@@ -330,7 +330,6 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $this->registerDashboard();
         $this->registerPrometheus();
         $this->registerSchedulerObservability($cfg);
-        SentryExceptionEventRegistry::installBeforeSendHook();
     }
 
     /**
@@ -345,6 +344,13 @@ final class QueueInsightsServiceProvider extends ServiceProvider
 
         $events = $this->app->make(Dispatcher::class);
         if ($events instanceof Dispatcher) {
+            // Installed on the first task start, not at boot: package
+            // discovery boots this provider before sentry/sentry-laravel sets
+            // its hub, so a boot-time install found no client and never ran.
+            $events->listen(
+                ScheduledTaskStarting::class,
+                SentryExceptionEventRegistry::installBeforeSendHook(...),
+            );
             $events->listen(
                 ScheduledTaskStarting::class,
                 RecordScheduledTaskStarting::class,

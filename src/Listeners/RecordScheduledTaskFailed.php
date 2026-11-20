@@ -58,8 +58,9 @@ final readonly class RecordScheduledTaskFailed
 
             // Sentry event ID — keyed by the exact exception object so unrelated
             // captures on the same hub cannot produce a wrong link. Populated by
-            // the beforeSend hook installed at boot; present only when
-            // sentry-laravel's listener fired (and captured) before ours.
+            // the beforeSend hook installed on the first task start; present
+            // only when sentry-laravel's listener fired (and captured) before
+            // ours.
             $sentryEventId = SentryExceptionEventRegistry::get($exception)
                 ?? ($previous instanceof Throwable ? SentryExceptionEventRegistry::get($previous) : null);
             if ($sentryEventId !== null) {

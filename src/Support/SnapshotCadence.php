@@ -103,6 +103,12 @@ final class SnapshotCadence
 
     public static function isValidCron(string $cron): bool
     {
+        // The default needs no parse; skipping it keeps the cron library
+        // out of every request's boot.
+        if ($cron === self::DEFAULT_CRON) {
+            return true;
+        }
+
         return $cron !== '' && CronExpression::isValidExpression($cron);
     }
 
