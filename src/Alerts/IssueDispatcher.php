@@ -84,10 +84,8 @@ final readonly class IssueDispatcher
             return;
         }
 
-        foreach ($this->detector->jobClasses() as $class) {
-            foreach ($this->detector->detectClassScoped($class) as $issue) {
-                $this->handle($issue);
-            }
+        foreach ($this->detector->detectClassScopedMany($this->detector->jobClasses()) as $issue) {
+            $this->handle($issue);
         }
     }
 

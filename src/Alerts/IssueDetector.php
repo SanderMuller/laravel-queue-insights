@@ -44,23 +44,13 @@ final readonly class IssueDetector
 
         $pairs = $this->queueScope();
         if ($pairs !== []) {
-            $batch = new IssueDetectorBatch(
-                $this->depthDetector,
-                $this->stalledDetector,
-                $this->oldestPendingDetector,
-                $this->stuckInFlightDetector,
-                $this->snapshotErroredDetector,
-                $this->backlogGrowingDetector,
-            );
-            foreach ($batch->run($pairs) as $issue) {
+            foreach ($this->batch()->run($pairs) as $issue) {
                 $issues[] = $issue;
             }
         }
 
-        foreach ($this->queueInsights->jobClasses() as $class) {
-            foreach ($this->detectClassScoped($class) as $issue) {
-                $issues[] = $issue;
-            }
+        foreach ($this->detectClassScopedMany($this->queueInsights->jobClasses()) as $issue) {
+            $issues[] = $issue;
         }
 
         // Global enumerator — opt-in, default off. Walks every configured
@@ -86,31 +76,44 @@ final readonly class IssueDetector
      */
     public function detectClassScoped(string $class): array
     {
+        return $this->detectClassScopedMany([$class]);
+    }
+
+    /**
+     * Class-scoped rules for every class, with the failure-rate reads for
+     * all of them in one pipelined round trip.
+     *
+     * @param  list<string>  $classes
+     * @return list<Issue>
+     */
+    public function detectClassScopedMany(array $classes): array
+    {
+        $failures = $this->failureRateDetector->detectMany($classes);
+
         $issues = [];
+        foreach ($classes as $class) {
+            if (isset($failures[$class])) {
+                $issues[] = $failures[$class];
+            }
 
-        $failure = $this->failureRateDetector->detect($class);
-        if ($failure instanceof Issue) {
-            $issues[] = $failure;
-        }
-
-        $slow = $this->slowP95Detector->detect($class);
-        if ($slow instanceof Issue) {
-            $issues[] = $slow;
+            $slow = $this->slowP95Detector->detect($class);
+            if ($slow instanceof Issue) {
+                $issues[] = $slow;
+            }
         }
 
         return $issues;
     }
 
     /**
-     * Snapshot-command path: the depth value is already in hand from the
-     * driver, so the depth detector skips its live:depth round trip. Other
-     * detectors run normally.
+     * Snapshot-command path: one queue through the pipelined batch, with the
+     * driver's depth used in place of the `live:depth` read.
      *
      * @return list<Issue>
      */
     public function detectForSnapshot(string $connection, string $canonicalQueue, int $depth): array
     {
-        return $this->detectQueueScoped($connection, $canonicalQueue, depth: $depth);
+        return $this->batch()->run([[$connection, $canonicalQueue]], [$depth]);
     }
 
     /**
@@ -124,46 +127,16 @@ final readonly class IssueDetector
         return $this->snapshotErroredDetector->detect($connection, $canonicalQueue);
     }
 
-    /**
-     * @return list<Issue>
-     */
-    private function detectQueueScoped(string $connection, string $canonicalQueue, ?int $depth): array
+    private function batch(): IssueDetectorBatch
     {
-        $issues = [];
-
-        $depthIssue = $depth === null
-            ? $this->depthDetector->detect($connection, $canonicalQueue)
-            : $this->depthDetector->detectWithDepth($connection, $canonicalQueue, $depth);
-        if ($depthIssue instanceof Issue) {
-            $issues[] = $depthIssue;
-        }
-
-        $stalled = $this->stalledDetector->detect($connection, $canonicalQueue);
-        if ($stalled instanceof Issue) {
-            $issues[] = $stalled;
-        }
-
-        $oldest = $this->oldestPendingDetector->detect($connection, $canonicalQueue);
-        if ($oldest instanceof Issue) {
-            $issues[] = $oldest;
-        }
-
-        $stuck = $this->stuckInFlightDetector->detect($connection, $canonicalQueue);
-        if ($stuck instanceof Issue) {
-            $issues[] = $stuck;
-        }
-
-        $errored = $this->snapshotErroredDetector->detect($connection, $canonicalQueue);
-        if ($errored instanceof Issue) {
-            $issues[] = $errored;
-        }
-
-        $backlog = $this->backlogGrowingDetector->detect($connection, $canonicalQueue);
-        if ($backlog instanceof Issue) {
-            $issues[] = $backlog;
-        }
-
-        return $issues;
+        return new IssueDetectorBatch(
+            $this->depthDetector,
+            $this->stalledDetector,
+            $this->oldestPendingDetector,
+            $this->stuckInFlightDetector,
+            $this->snapshotErroredDetector,
+            $this->backlogGrowingDetector,
+        );
     }
 
     /**

@@ -48,9 +48,10 @@ final readonly class IssueDetectorBatch
 
     /**
      * @param  list<array{0: string, 1: string}>  $pairs
+     * @param  array<int, int>  $knownDepths  depth by pair index, used instead of `live:depth`
      * @return list<Issue>
      */
-    public function run(array $pairs): array
+    public function run(array $pairs, array $knownDepths = []): array
     {
         $flags = $this->collectEnabledFlags();
         if (! in_array(true, $flags, true)) {
@@ -73,6 +74,11 @@ final readonly class IssueDetectorBatch
         $stride = $this->stride($flags);
 
         [$perPair, $classLookups] = $this->decodePhase1($pairs, $phase1, $stride, $flags, $now);
+        foreach ($knownDepths as $i => $depth) {
+            if (isset($perPair[$i])) {
+                $perPair[$i]['depthRaw'] = (string) $depth;
+            }
+        }
 
         $classByPair = $this->runPhase2($redis, $classLookups);
 

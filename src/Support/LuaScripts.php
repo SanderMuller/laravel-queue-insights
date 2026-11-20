@@ -30,6 +30,8 @@ final class LuaScripts
 
     private static ?string $movePendingOrphans = null;
 
+    private static ?string $reapStaleMembers = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
@@ -38,6 +40,11 @@ final class LuaScripts
     public static function movePendingOrphans(): string
     {
         return self::$movePendingOrphans ??= self::load(__DIR__ . '/Lua/MovePendingOrphans.lua');
+    }
+
+    public static function reapStaleMembers(): string
+    {
+        return self::$reapStaleMembers ??= self::load(__DIR__ . '/Lua/ReapStaleMembers.lua');
     }
 
     public static function markInFlight(): string

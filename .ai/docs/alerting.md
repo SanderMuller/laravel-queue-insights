@@ -28,7 +28,7 @@ Each `*Detector::detect()` returns `?Issue` and is **pure** w.r.t. side effects 
 | `pending-zset:{c}:{q}` | `Listeners\RecordJobQueued::writePendingTracking` (canonical key) |
 | `pending:{uuid}` hash | same listener; fields `connection,queue,class,queued_at,available_at,batch_id,state,started_at` |
 | `inflight-zset:{c}:{q}` | `Listeners\RecordJobProcessing::markInFlight` via Lua `markInFlight()` script (canonical key) |
-| `pending-orphans:{c}:{q}` / `drained-at:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::moveDrainedQueueOrphans` (see Orphaned pending entries) |
+| `pending-orphans:{c}:{q}` / `drained-at:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::runCleanup` (see Orphaned pending entries) |
 | `processed:{class}:{YmdH}` / `failed:{class}:{YmdH}` | `Listeners\RecordJobProcessed` / `RecordJobFailed` |
 | `duration:samples:{class}` | `Listeners\RecordJobProcessed` (RPUSH, capped at 500) |
 | `snapshot:error:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::recordError` (catch branch only, 600 s TTL) |
@@ -42,13 +42,15 @@ When adding a new detector, the writer must already exist or you ship it in the 
 ```
 QueueInsightsSnapshotCommand
     ├── for each (connection, queue) pair:
-    │   ├── snapshot driver → write metrics
+    │   ├── snapshot driver → depth / in-flight / delayed
+    │   ├── RedisBatch #1: queueLiveWrites + queueCleanupReads (one round trip)
+    │   ├── RedisBatch #2: runCleanup — reap + drained-marker + orphan move (skipped when empty)
     │   └── IssueDispatcher::dispatchForSnapshot(c, q, depth)
     │       └── IssueDetector::detectForSnapshot(c, q, depth)
-    │           └── runs queue-scoped detectors (DepthDetector::detectWithDepth, ...)
+    │           └── IssueDetectorBatch::run([[c, q]], [depth]) — driver depth replaces the live:depth read
     ├── catch path: IssueDispatcher::dispatchSnapshotError(c, q)
     └── after the loop: IssueDispatcher::dispatchClassScoped()
-        └── IssueDetector::detectClassScoped($class) for each $class in qi:classes
+        └── IssueDetector::detectClassScopedMany(qi:classes) — failure-rate MGETs for every class in one pipeline
 
 QueueInsightsDashboard::render
     └── DashboardData::build
@@ -100,7 +102,7 @@ Most operator-driven asks are new detectors. Pattern:
 1. Create `src/Alerts/Detectors/MyDetector.php` exposing `detect(string $connection, string $canonicalQueue): ?Issue` (queue-scoped) or `detect(string $class): ?Issue` (class-scoped).
 2. Add the rule key + config defaults to `config/queue-insights.php` under `alerts.rules.*`.
 3. Add validation to `Support\ConfigValidator::validateAlerts()` — every shipped rule has its own `validate{Rule}Rule()` method already; copy that template.
-4. Inject the detector into `Alerts\IssueDetector` (constructor + `detectQueueScoped()` or `detectClassScoped()`).
+4. Inject the detector into `Alerts\IssueDetector`. Queue-scoped: add its reads to `IssueDetectorBatch` (phase 1 + `stride` + `decodePairSlice`) — the snapshot command and `detectAll` both go through the batch. Class-scoped: `detectClassScopedMany()`; batch its reads across classes like `FailureRateDetector::detectMany` rather than one round trip per class.
 5. Add a typed event class under `src/Events/` and wire it into `IssueDispatcher::fireEvent()` match expression.
 6. Tests — feature test under `tests/Feature/AlertingDetectorsTest.php` (queue-scoped) or `AlertingClassDetectorsTest.php` (class-scoped) seeding fixture Redis state, plus a config-validator unit test.
 
@@ -120,8 +122,8 @@ Why legacy wins: hosts setting both are likely mid-migration with legacy still l
 
 A `pending-zset` member outlives its job when no listener moved it (no `JobProcessing` before the message left the broker, e.g. Vapor Lambda crash → SQS DLQ, or a failed listener write).
 
-- `QueueInsightsSnapshotCommand::reapStaleTracking` — members below `now - pending.ttl_seconds` whose `pending:{uuid}` hash is gone (EXISTS = 0). Pending + inflight zsets.
-- `QueueInsightsSnapshotCommand::moveDrainedQueueOrphans` — after two drained snapshots ≥ `MIN_DRAINED_SECONDS` apart (`drained-at:{c}:{q}` marker, reset on any non-zero or null count), Lua `MovePendingOrphans` moves runnable members older than the `oldest_pending` threshold from `pending-zset` to `pending-orphans:{c}:{q}` (score kept, `pending:{uuid}` hash kept). `MarkInFlight` (KEYS[4]) and the processed/failed cleanup ZREM from `pending-orphans`, so a job that runs after all recovers. `reapStaleTracking` covers `pending-orphans` too. Nothing reads the set for display.
+- `QueueInsightsSnapshotCommand::runCleanup` (reap) — members below `now - pending.ttl_seconds` (read in batch #1) are passed to Lua `ReapStaleMembers`, which ZREMs only those whose `pending:{uuid}` hash is gone. Pending, inflight and `pending-orphans` zsets.
+- `QueueInsightsSnapshotCommand::runCleanup` (move) — after two drained snapshots ≥ `MIN_DRAINED_SECONDS` apart (`drained-at:{c}:{q}` marker, reset on any non-zero or null count), Lua `MovePendingOrphans` moves runnable members older than the `oldest_pending` threshold from `pending-zset` to `pending-orphans:{c}:{q}` (score kept, `pending:{uuid}` hash kept). `MarkInFlight` (KEYS[4]) and the processed/failed cleanup ZREM from `pending-orphans`, so a job that runs after all recovers. The reap covers `pending-orphans` too. Nothing reads the set for display.
 - `OldestPendingDetector` holds the alert back while `live:depth`, `live:inflight` and `live:delayed` (written by the snapshot just before the detectors run) are all present and `0` — `queueReportedEmpty()`. Both paths: `detect()` MGETs them only once the head crossed the threshold; `IssueDetectorBatch` pipelines the MGET next to the head read (stride +1 for `oldest`). A missing key never holds back.
 
 Don't bring back a reap that deletes pending entries on broker counts. SQS counts are approximate (0.35.0 and 0.36.0 shipped one; 0.37.0 removed it): a wrong "empty" may move an entry, never drop a live job's row. The hold alone (0.37.0) was not enough: the orphan stayed the head, so once the queue got new work it fired at its own age and masked real aging jobs.

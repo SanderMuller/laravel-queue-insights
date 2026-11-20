@@ -93,6 +93,24 @@ it('fires JobClassFailureRateExceeded when ratio crosses threshold and total >= 
         && $e->severity === 'warning');
 });
 
+it('evaluates every class from one batched read', function (): void {
+    config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 20);
+    config()->set('queue-insights.alerts.rules.failure_rate.ratio', 0.10);
+
+    seedClass('App\\Jobs\\Healthy', processed: 99, failed: 1);
+    seedClass('App\\Jobs\\Flaky', processed: 80, failed: 20);
+    seedClass('App\\Jobs\\Rare', processed: 0, failed: 5);
+    seedClass('App\\Jobs\\AlsoFlaky', processed: 10, failed: 30);
+
+    /** @var IssueDetector $detector */
+    $detector = resolve(IssueDetector::class);
+    $issues = $detector->detectClassScopedMany(['App\\Jobs\\Healthy', 'App\\Jobs\\Flaky', 'App\\Jobs\\Rare', 'App\\Jobs\\AlsoFlaky', '']);
+
+    expect(array_map(fn (Issue $i): ?string => $i->jobClass, $issues))->toBe(['App\\Jobs\\Flaky', 'App\\Jobs\\AlsoFlaky'])
+        ->and($issues[1]->context['failed'])->toBe(30)
+        ->and($issues[1]->context['processed'])->toBe(10);
+});
+
 it('failure-rate Issue title appends the short class name for operator triage', function (): void {
     noopSnapshotConfig();
     config()->set('queue-insights.alerts.rules.failure_rate.min_jobs', 1);
