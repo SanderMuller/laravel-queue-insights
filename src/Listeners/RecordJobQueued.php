@@ -18,6 +18,7 @@ use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\PendingPayloadSnapshot;
 use SanderMuller\QueueInsights\Support\RedisEval;
@@ -86,6 +87,8 @@ final class RecordJobQueued
                 'message' => $throwable->getMessage(),
                 'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
+
+            resolve(ListenerFailureReporter::class)->report('RecordJobQueued', $throwable);
         }
     }
 

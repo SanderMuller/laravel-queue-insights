@@ -228,6 +228,8 @@ All opt-in, all gated by cooldown.
 | `pending.capture.payloads` | `off` | Separate budget from `capture.payloads`. Completed rows are `MAXLEN`-trimmed (`N × bytes`); pending hashes fan out as `max_per_queue × queues × TTL`, which is roughly 400 MB on a 10k-row × 10-queue host at 4 KB per row. |
 | `pending.capture.max_payload_bytes` | `4096` | A quarter of the completed cap, so 10k pending rows land near 40 MB. |
 | `pending.capture.include_command_body` | `false` | Persist `data.command` under `full` mode. Off by default: the `redact_keys` regex walks JSON keys and cannot reach properties inside a PHP-serialized blob, and a per-uuid hash with a 24-hour TTL is a wider confidentiality window than the bounded completed stream. Turn it on only after confirming your job classes carry no secrets as properties. |
+| `listener_failures.report` | `true` | The job lifecycle listeners never let a tracking error break a job: they catch it and log a warning. With this on, each listener also passes a `ListenerFailedException` (wrapping the original) to your exception handler, so a missed tracking write shows up in Sentry or similar. Env: `QUEUE_INSIGHTS_REPORT_LISTENER_FAILURES`. |
+| `listener_failures.report_interval_seconds` | `300` | At most one report per listener per interval, per worker process, so a Redis outage does not flood the error tracker. |
 
 ## Chain lineage
 

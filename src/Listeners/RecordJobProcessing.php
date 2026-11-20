@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Support\ChainLineageStore;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
@@ -104,6 +105,8 @@ final class RecordJobProcessing
                 'message' => $throwable->getMessage(),
                 'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
+
+            resolve(ListenerFailureReporter::class)->report('RecordJobProcessing', $throwable);
         }
     }
 

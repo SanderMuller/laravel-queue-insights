@@ -537,6 +537,18 @@ return [
      | Storage cost is ~500 bytes per pending job, bounded by max_per_queue.
      | Set `enabled` to false on memory-bounded production to opt out.
      */
+    /*
+     | The job-lifecycle listeners catch tracking errors and log a warning so
+     | a job never breaks. With `report` on, each listener also hands one
+     | ListenerFailedException to the app's exception handler (Sentry etc.)
+     | per `report_interval_seconds`, per worker process. False keeps
+     | failures in the log only.
+     */
+    'listener_failures' => [
+        'report' => env('QUEUE_INSIGHTS_REPORT_LISTENER_FAILURES', true),
+        'report_interval_seconds' => 300,
+    ],
+
     'pending' => [
         'enabled' => env('QUEUE_INSIGHTS_PENDING_ENABLED', true),
         'max_per_queue' => 10000,

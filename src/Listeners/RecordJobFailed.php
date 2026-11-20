@@ -18,6 +18,7 @@ use SanderMuller\QueueInsights\Support\FailureContextStore;
 use SanderMuller\QueueInsights\Support\HourBucket;
 use SanderMuller\QueueInsights\Support\InitiatorStore;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\RedisEval;
@@ -170,6 +171,8 @@ final readonly class RecordJobFailed
                 'message' => $throwable->getMessage(),
                 'redis_connection' => Config::string('redis_connection', 'default'),
             ]);
+
+            resolve(ListenerFailureReporter::class)->report('RecordJobFailed', $throwable);
         }
     }
 

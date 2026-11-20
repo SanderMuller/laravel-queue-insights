@@ -89,6 +89,7 @@ use SanderMuller\QueueInsights\Prometheus\Scheduler\CountersReader as SchedulerC
 use SanderMuller\QueueInsights\Prometheus\Scheduler\TaskFilter as SchedulerTaskFilter;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfigValidator;
+use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\Sanitizers\KeyRedactingSanitizer;
 use SanderMuller\QueueInsights\Support\Sanitizers\MetadataOnlySanitizer;
 use SanderMuller\QueueInsights\Support\SentryExceptionEventRegistry;
@@ -120,6 +121,7 @@ final class QueueInsightsServiceProvider extends ServiceProvider
         $this->app->singleton(IssueDetector::class);
         $this->app->singleton(IssueDispatcher::class);
         $this->app->singleton(SnapshotWatchdog::class);
+        $this->app->singleton(ListenerFailureReporter::class);
         // ActiveIssuesProvider keeps a per-request memoise on the instance —
         // bind (not singleton) so each Livewire render gets a fresh
         // instance and the memoise doesn't leak across requests under
