@@ -122,7 +122,7 @@ A `pending-zset` member outlives its job when no listener moved it (no `JobProce
 - `reapStaleTracking` — members below `now - pending.ttl_seconds` whose `pending:{uuid}` hash is gone (EXISTS = 0). Pending + inflight zsets.
 - `reapDrainedQueueOrphans` — when the driver reports `depth === 0 && inFlight === 0 && delayed === 0` (a `null` never counts as 0) on this tick **and** a previous one at least `MIN_DRAINED_SECONDS` (60) earlier (`drained-at:{c}:{q}` keeps the first drained timestamp, TTL refreshed to `SnapshotCadence::liveTtlSeconds()` each drained tick, `DEL` on any non-drained tick), runnable pending members scored at or below `now - max(60, oldest_pending.seconds)` are removed by `Lua/ReapPendingOrphans.lua`: the hash is deleted only when its `ZREM` hit, so a member `MarkInFlight` moved meanwhile keeps its hash. Keys via `KeyPrefix::queueKey` (canonical alias). Pending zset only.
 
-Listener catch paths (`RecordJobQueued/Processing/Processed/Failed`) call `Support\ListenerFailureReporter` after the warning: one `ListenerFailedException` per listener per `listener_failures.report_interval_seconds` per process.
+Listener catch paths (`RecordJobQueued/Processing/Processed/Failed`) call `Support\ListenerFailureReporter` after the warning: one `ListenerFailedException` per listener per `listener_failures.report_interval_seconds`. Throttled per process first, then across workers via `Cache::add` on `listener_failures.cache_store` (null = app default); a cache failure falls back to the per-process throttle. Don't move that shared lock onto the queue-insights Redis connection: it is the connection that fails during the outages this throttles.
 
 ## What NOT to do
 
