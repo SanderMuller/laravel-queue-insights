@@ -6,6 +6,8 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Contracts\QueueSnapshotDriver;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
+use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -258,6 +260,120 @@ it('does not reap an old-scored member whose backing pending hash is still alive
     Artisan::call('queue-insights:snapshot');
 
     expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))->toBe(['old-but-live']);
+});
+
+it('moves runnable pending members past the oldest_pending threshold to the orphan set when the broker reports the queue fully drained', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub(0, 0, 0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 600);
+
+    $r = Redis::connection('default');
+    $now = Date::now()->getTimestamp();
+
+    // Orphan with a live backing hash: past the threshold, inside the TTL.
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 3600, 'orphan']);
+    $r->command('hset', ['qmtest:pending:orphan', 'class', 'App\\Jobs\\Gone']);
+    // Inside the grace window: the broker count may simply lag a fresh push.
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now - 30, 'fresh']);
+    // Not yet due: never touched.
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', $now + 600, 'future']);
+
+    // One empty sample is not enough evidence, nor is an immediate re-run.
+    Artisan::call('queue-insights:snapshot');
+    Artisan::call('queue-insights:snapshot');
+    expect($r->command('zcard', ['qmtest:pending-zset:sqsq:work']))->toBe(3);
+
+    Date::setTestNow(Date::now()->addSeconds(60));
+    Artisan::call('queue-insights:snapshot');
+
+    expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))->toBe(['fresh', 'future'])
+        ->and($r->command('zrange', ['qmtest:pending-orphans:sqsq:work', 0, -1]))->toBe(['orphan'])
+        ->and(R::int('zscore', 'qmtest:pending-orphans:sqsq:work', 'orphan'))->toBe($now - 3600)
+        ->and($r->command('exists', ['qmtest:pending:orphan']))->toBe(1)
+        ->and($r->command('ttl', ['qmtest:pending-orphans:sqsq:work']))->toBeGreaterThan(0);
+});
+
+it('moves drained-queue orphans under the canonical connection alias', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.connection_aliases', ['sqsq' => 'canon']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub(0, 0, 0));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 600);
+
+    $r = Redis::connection('default');
+    $r->command('zadd', ['qmtest:pending-zset:canon:work', Date::now()->getTimestamp() - 3600, 'orphan']);
+
+    Artisan::call('queue-insights:snapshot');
+    Date::setTestNow(Date::now()->addSeconds(60));
+    Artisan::call('queue-insights:snapshot');
+
+    expect($r->command('zcard', ['qmtest:pending-zset:canon:work']))->toBe(0)
+        ->and($r->command('zrange', ['qmtest:pending-orphans:canon:work', 0, -1]))->toBe(['orphan']);
+});
+
+it('keeps aged pending members when the broker is not fully drained', function (int $depth, ?int $inFlight, ?int $delayed): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub($depth, $inFlight, $delayed));
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 600);
+
+    $r = Redis::connection('default');
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', Date::now()->getTimestamp() - 3600, 'aged']);
+
+    Artisan::call('queue-insights:snapshot');
+    Date::setTestNow(Date::now()->addSeconds(60));
+    Artisan::call('queue-insights:snapshot');
+
+    expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))->toBe(['aged'])
+        ->and($r->command('exists', ['qmtest:pending-orphans:sqsq:work']))->toBe(0);
+})->with([
+    'visible messages' => [3, 0, 0],
+    'messages in flight' => [0, 2, 0],
+    'delayed messages' => [0, 0, 1],
+    'in-flight count unknown' => [0, null, 0],
+    'delayed count unknown' => [0, 0, null],
+]);
+
+it('needs two consecutive drained snapshots before moving orphans', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 600);
+
+    $r = Redis::connection('default');
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', Date::now()->getTimestamp() - 3600, 'aged']);
+
+    // drained → busy → drained: the busy tick resets the evidence.
+    foreach ([0, 4, 0] as $depth) {
+        config()->set('queue-insights.driver_overrides.sqsq', fn () => driverStub($depth, 0, 0));
+        Artisan::call('queue-insights:snapshot');
+        Date::setTestNow(Date::now()->addSeconds(60));
+    }
+
+    expect($r->command('zrange', ['qmtest:pending-zset:sqsq:work', 0, -1]))->toBe(['aged']);
+});
+
+it('leaves a member a worker moved to in-flight before the move script ran', function (): void {
+    $r = Redis::connection('default');
+    $r->command('zadd', ['qmtest:pending-zset:sqsq:work', 1, 'orphan']);
+
+    $moved = RedisEval::exec(
+        $r,
+        LuaScripts::movePendingOrphans(),
+        2,
+        'qmtest:pending-zset:sqsq:work',
+        'qmtest:pending-orphans:sqsq:work',
+        '86400',
+        'orphan',
+        'moved-meanwhile',
+    );
+
+    expect($moved)->toBe(1)
+        ->and($r->command('zrange', ['qmtest:pending-orphans:sqsq:work', 0, -1]))->toBe(['orphan']);
 });
 
 it('skips the stale-tracking reaps when pending tracking is disabled', function (): void {

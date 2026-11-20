@@ -28,9 +28,16 @@ final class LuaScripts
 
     private static ?string $batchFetchCompletedMeta = null;
 
+    private static ?string $movePendingOrphans = null;
+
     public static function updateMaxDuration(): string
     {
         return self::$updateMaxDuration ??= self::load(__DIR__ . '/Lua/UpdateMaxDuration.lua');
+    }
+
+    public static function movePendingOrphans(): string
+    {
+        return self::$movePendingOrphans ??= self::load(__DIR__ . '/Lua/MovePendingOrphans.lua');
     }
 
     public static function markInFlight(): string

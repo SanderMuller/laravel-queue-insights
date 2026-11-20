@@ -189,6 +189,35 @@ it('does not fire OldestPendingAging for an orphan head when the broker reports 
         ->and($redis->command('exists', [KeyPrefix::make('pending:orphan-uuid')]))->toBe(1);
 });
 
+it('alerts on the real aging job, not a moved orphan, once a drained queue gets new work', function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 3600, 'orphan-uuid']);
+
+    // Two drained snapshots a minute apart move the orphan out.
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0, 0, 0));
+    Artisan::call('queue-insights:snapshot');
+    Date::setTestNow(Date::now()->addSeconds(60));
+    Artisan::call('queue-insights:snapshot');
+
+    // New work arrives and one job starts aging.
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 300, 'real-uuid']);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(1, 0, 0));
+
+    Event::fake([OldestPendingAging::class]);
+    Date::setTestNow(Date::now()->addSeconds(60));
+    Artisan::call('queue-insights:snapshot');
+
+    Event::assertDispatched(OldestPendingAging::class, fn (OldestPendingAging $e): bool => $e->oldestUuid === 'real-uuid');
+    Event::assertNotDispatched(OldestPendingAging::class, fn (OldestPendingAging $e): bool => $e->oldestUuid === 'orphan-uuid');
+});
+
 it('fires OldestPendingAging when any queue count is non-zero or missing', function (int $depth, ?int $inFlight, ?int $delayed): void {
     config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
     config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver($depth, $inFlight, $delayed));

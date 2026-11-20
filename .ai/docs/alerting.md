@@ -28,6 +28,7 @@ Each `*Detector::detect()` returns `?Issue` and is **pure** w.r.t. side effects 
 | `pending-zset:{c}:{q}` | `Listeners\RecordJobQueued::writePendingTracking` (canonical key) |
 | `pending:{uuid}` hash | same listener; fields `connection,queue,class,queued_at,available_at,batch_id,state,started_at` |
 | `inflight-zset:{c}:{q}` | `Listeners\RecordJobProcessing::markInFlight` via Lua `markInFlight()` script (canonical key) |
+| `pending-orphans:{c}:{q}` / `drained-at:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::moveDrainedQueueOrphans` (see Orphaned pending entries) |
 | `processed:{class}:{YmdH}` / `failed:{class}:{YmdH}` | `Listeners\RecordJobProcessed` / `RecordJobFailed` |
 | `duration:samples:{class}` | `Listeners\RecordJobProcessed` (RPUSH, capped at 500) |
 | `snapshot:error:{c}:{q}` | `Console\QueueInsightsSnapshotCommand::recordError` (catch branch only, 600 s TTL) |
@@ -120,9 +121,10 @@ Why legacy wins: hosts setting both are likely mid-migration with legacy still l
 A `pending-zset` member outlives its job when no listener moved it (no `JobProcessing` before the message left the broker, e.g. Vapor Lambda crash → SQS DLQ, or a failed listener write).
 
 - `QueueInsightsSnapshotCommand::reapStaleTracking` — members below `now - pending.ttl_seconds` whose `pending:{uuid}` hash is gone (EXISTS = 0). Pending + inflight zsets.
+- `QueueInsightsSnapshotCommand::moveDrainedQueueOrphans` — after two drained snapshots ≥ `MIN_DRAINED_SECONDS` apart (`drained-at:{c}:{q}` marker, reset on any non-zero or null count), Lua `MovePendingOrphans` moves runnable members older than the `oldest_pending` threshold from `pending-zset` to `pending-orphans:{c}:{q}` (score kept, `pending:{uuid}` hash kept). `MarkInFlight` (KEYS[4]) and the processed/failed cleanup ZREM from `pending-orphans`, so a job that runs after all recovers. `reapStaleTracking` covers `pending-orphans` too. Nothing reads the set for display.
 - `OldestPendingDetector` holds the alert back while `live:depth`, `live:inflight` and `live:delayed` (written by the snapshot just before the detectors run) are all present and `0` — `queueReportedEmpty()`. Both paths: `detect()` MGETs them only once the head crossed the threshold; `IssueDetectorBatch` pipelines the MGET next to the head read (stride +1 for `oldest`). A missing key never holds back.
 
-Don't bring back a reap that deletes pending entries on broker counts. SQS counts are approximate (0.35.0 and 0.36.0 shipped one; it was removed after): a wrong "empty" must only skip an alert for a tick, never drop a live job's row.
+Don't bring back a reap that deletes pending entries on broker counts. SQS counts are approximate (0.35.0 and 0.36.0 shipped one; 0.37.0 removed it): a wrong "empty" may move an entry, never drop a live job's row. The hold alone (0.37.0) was not enough: the orphan stayed the head, so once the queue got new work it fired at its own age and masked real aging jobs.
 
 Listener catch paths (`RecordJobQueued/Processing/Processed/Failed`) call `Support\ListenerFailureReporter` after the warning: one `ListenerFailedException` per listener per `listener_failures.report_interval_seconds`. Throttled per process first, then across workers via `Cache::add` on `listener_failures.cache_store` (null = app default); a cache failure falls back to the per-process throttle. Don't move that shared lock onto the queue-insights Redis connection: it is the connection that fails during the outages this throttles.
 

@@ -12,12 +12,16 @@ use SanderMuller\QueueInsights\Drivers\QueueSnapshotDriverFactory;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
+use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\RedisPipeline;
 use SanderMuller\QueueInsights\Support\SnapshotCadence;
 use Throwable;
 
 final class QueueInsightsSnapshotCommand extends Command
 {
+    private const int MIN_DRAINED_SECONDS = 60;
+
     protected $signature = 'queue-insights:snapshot';
 
     protected $description = 'Capture live depth / in-flight / delayed counts for each configured queue.';
@@ -99,6 +103,7 @@ final class QueueInsightsSnapshotCommand extends Command
 
             $this->writeDepthSample($redis, $connection, $canonicalKey, $now, $depth);
             $this->reapStaleTracking($redis, $connection, $canonicalKey, $now);
+            $this->moveDrainedQueueOrphans($redis, $connection, $canonicalKey, $now, $depth, $inFlight, $delayed);
 
             $this->dispatcher->dispatchForSnapshot($connection, $canonicalKey, $depth);
         } catch (Throwable $throwable) {
@@ -110,7 +115,7 @@ final class QueueInsightsSnapshotCommand extends Command
     }
 
     /**
-     * Reap orphaned `pending-zset` / `inflight-zset` members — entries
+     * Reap stale `pending-zset` / `inflight-zset` / `pending-orphans` members — entries
      * whose backing `pending:{uuid}` hash is gone (TTL'd out) but whose
      * zset member lingered because a cleanup `zrem` was missed. On SQS
      * this is the common case: a job consumed by a worker without the
@@ -138,7 +143,7 @@ final class QueueInsightsSnapshotCommand extends Command
         // live-window lower bound so the two never disagree on an edge member.
         $floor = $now - Config::int('pending.ttl_seconds', 86400);
 
-        foreach (['pending-zset', 'inflight-zset'] as $zset) {
+        foreach (['pending-zset', 'inflight-zset', 'pending-orphans'] as $zset) {
             $key = KeyPrefix::make("{$zset}:{$connection}:{$canonicalKey}");
 
             $candidates = $redis->command('zrangebyscore', [$key, '-inf', "({$floor}"]);
@@ -170,6 +175,85 @@ final class QueueInsightsSnapshotCommand extends Command
                 $redis->command('zrem', [$key, ...$orphans]);
             }
         }
+    }
+
+    /**
+     * When the broker reports the queue fully drained, every runnable
+     * `pending-zset` member is a job whose pending → in-flight move was never
+     * recorded (e.g. a Vapor Lambda that died before `JobProcessing` until
+     * SQS moved the message to its DLQ). Such an orphan would stay the
+     * oldest entry and fire `oldest_pending` once the queue gets new work.
+     *
+     * The entry is moved to `pending-orphans`, not deleted: the hash stays,
+     * and `MarkInFlight` / the processed and failed cleanup take it out of
+     * that set, so a job SQS miscounted still recovers when it runs.
+     *
+     * Broker counts are approximate (SQS) or read non-atomically, so one
+     * empty sample is not enough: the queue must also have been drained on
+     * the previous tick, at least MIN_DRAINED_SECONDS earlier (the marker
+     * keeps the first drained time and expires with the live keys, so a
+     * missed tick resets it). A `null` count never moves anything.
+     */
+    private function moveDrainedQueueOrphans(
+        RedisConnection $redis,
+        string $connection,
+        string $canonicalKey,
+        int $now,
+        int $depth,
+        ?int $inFlight,
+        ?int $delayed,
+    ): void {
+        if (! Config::bool('pending.enabled', true)) {
+            return;
+        }
+
+        // Listeners write under the canonical connection alias.
+        $key = KeyPrefix::queueKey('pending-zset', $connection, $canonicalKey);
+        $drainedKey = KeyPrefix::queueKey('drained-at', $connection, $canonicalKey);
+
+        if ($depth !== 0 || $inFlight !== 0 || $delayed !== 0) {
+            $redis->command('del', [$drainedKey]);
+
+            return;
+        }
+
+        $drainedSince = $redis->command('get', [$drainedKey]);
+        if (! is_numeric($drainedSince)) {
+            $redis->command('setex', [$drainedKey, SnapshotCadence::liveTtlSeconds(), (string) $now]);
+
+            return;
+        }
+
+        $redis->command('expire', [$drainedKey, SnapshotCadence::liveTtlSeconds()]);
+
+        // Two back-to-back runs can read the same stale SQS counts.
+        if ($now - (int) $drainedSince < self::MIN_DRAINED_SECONDS) {
+            return;
+        }
+
+        $grace = max(60, Config::int('alerts.rules.oldest_pending.seconds', 600));
+        $candidates = $redis->command('zrangebyscore', [$key, '-inf', (string) ($now - $grace)]);
+        $uuids = is_array($candidates) ? array_values(array_filter($candidates, is_string(...))) : [];
+        if ($uuids === []) {
+            return;
+        }
+
+        $moved = RedisEval::exec(
+            $redis,
+            LuaScripts::movePendingOrphans(),
+            2,
+            $key,
+            KeyPrefix::queueKey('pending-orphans', $connection, $canonicalKey),
+            (string) Config::int('pending.ttl_seconds', 86400),
+            ...$uuids,
+        );
+
+        Log::info('queue-insights: moved pending entries to the orphan set on a drained queue', [
+            'connection' => $connection,
+            'queue' => $canonicalKey,
+            'count' => is_numeric($moved) ? (int) $moved : null,
+            'uuids' => array_slice($uuids, 0, 10),
+        ]);
     }
 
     private function writeMetric(

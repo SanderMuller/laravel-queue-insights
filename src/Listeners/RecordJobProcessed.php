@@ -116,6 +116,7 @@ final readonly class RecordJobProcessed
             if ($uuid !== null && Config::bool('pending.enabled', true)) {
                 $batch->command('del', [KeyPrefix::make("pending:{$uuid}")]);
                 $batch->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                $batch->command('zrem', [KeyPrefix::make("pending-orphans:{$connectionName}:{$queueKey}"), $uuid]);
                 // In-flight zset entry was added by RecordJobProcessing; drop
                 // it now so the dashboard's In-flight group only ever shows
                 // jobs that are actually running.

@@ -108,10 +108,11 @@ final class RecordJobProcessing
 
         $batch->eval(
             LuaScripts::markInFlight(),
-            3,
+            4,
             KeyPrefix::make("pending:{$uuid}"),
             KeyPrefix::make("pending-zset:{$connection}:{$queueKey}"),
             KeyPrefix::make("inflight-zset:{$connection}:{$queueKey}"),
+            KeyPrefix::make("pending-orphans:{$connection}:{$queueKey}"),
             $uuid,
             (string) $startedAt,
             (string) Config::int('pending.ttl_seconds', 86400),
@@ -235,7 +236,7 @@ final class RecordJobProcessing
             // strips them — reuse the caller's already-canonicalised values
             // to skip a config walk. Any override drops us back to the full
             // resolution so the chain-claim key matches what the child's
-            // `RecordJobQueued::resolveChainLineage` will compute on the
+            // `RecordJobQueued::chainClaimKey` will compute on the
             // overridden connection (its config-default queue, if any).
             $chainConnection = $context['chain_connection'];
             $chainQueue = $context['chain_queue'];
@@ -244,7 +245,7 @@ final class RecordJobProcessing
                 $queueKey = $defaultQueueKey;
             } else {
                 // Canonicalise the override so the claim key matches what
-                // the child's `RecordJobQueued::resolveChainLineage` will
+                // the child's `RecordJobQueued::chainClaimKey` will
                 // compute (the child's `$event->connectionName` is also
                 // canonicalised at the listener top). Without this,
                 // `Bus::chain(...)->onConnection('redis')` would push a

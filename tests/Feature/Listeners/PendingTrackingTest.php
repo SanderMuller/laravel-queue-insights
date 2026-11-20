@@ -278,6 +278,35 @@ it('RecordJobFailed cleans pending tracking as belt-and-suspenders', function ()
         ->toBe(0);
 });
 
+it('RecordJobProcessing takes a job out of the orphan set when it runs after all', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69ORPH';
+
+    (new RecordJobQueued())->handle(makePendingEvent($uuid, 'redis', 'work'));
+    Redis::connection('default')->command('zrem', ['qmtest:pending-zset:redis:work', $uuid]);
+    Redis::connection('default')->command('zadd', ['qmtest:pending-orphans:redis:work', 1, $uuid]);
+
+    (new RecordJobProcessing())->handle(makePendingProcessingEvent($uuid, 'redis', 'work'));
+
+    expect(R::int('zcard', 'qmtest:pending-orphans:redis:work'))->toBe(0)
+        ->and(R::int('zcard', 'qmtest:inflight-zset:redis:work'))->toBe(1)
+        ->and(R::str('hget', 'qmtest:pending:' . $uuid, 'state'))->toBe('in_flight');
+});
+
+it('RecordJobProcessed and RecordJobFailed take the job out of the orphan set', function (string $outcome): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69OCLN';
+
+    Redis::connection('default')->command('zadd', ['qmtest:pending-orphans:redis:work', 1, $uuid]);
+
+    $job = makePendingJobMock($uuid);
+    if ($outcome === 'processed') {
+        resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'redis', job: $job));
+    } else {
+        resolve(RecordJobFailed::class)->handle(new JobFailed(connectionName: 'redis', job: $job, exception: new RuntimeException('boom')));
+    }
+
+    expect(R::int('zcard', 'qmtest:pending-orphans:redis:work'))->toBe(0);
+})->with(['processed', 'failed']);
+
 it('RecordJobFailed stamps failed-runtime:{uuid} when start:{uuid} was set', function (): void {
     $uuid = '01ARZ3NDEKTSV4RRFFQ69TIME';
 

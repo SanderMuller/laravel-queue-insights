@@ -83,6 +83,7 @@ it('runs a 3-key Lua script (MarkInFlight) without CROSSSLOT', function (): void
     $hash = KeyPrefix::make('pending:uuid-1');
     $pendingZset = KeyPrefix::make('pending-zset:redis:default');
     $inflightZset = KeyPrefix::make('inflight-zset:redis:default');
+    $orphanZset = KeyPrefix::make('pending-orphans:redis:default');
 
     // Seed the pending side so the pending → in-flight transition has
     // something to move.
@@ -92,10 +93,11 @@ it('runs a 3-key Lua script (MarkInFlight) without CROSSSLOT', function (): void
     RedisEval::exec(
         $redis,
         LuaScripts::markInFlight(),
-        3,
+        4,
         $hash,
         $pendingZset,
         $inflightZset,
+        $orphanZset,
         'uuid-1',
         '200',
         '86400',

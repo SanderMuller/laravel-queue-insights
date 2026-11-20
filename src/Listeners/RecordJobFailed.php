@@ -99,6 +99,7 @@ final readonly class RecordJobFailed
                 if (Config::bool('pending.enabled', true)) {
                     $batch->command('del', [KeyPrefix::make("pending:{$uuid}")]);
                     $batch->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                    $batch->command('zrem', [KeyPrefix::make("pending-orphans:{$connectionName}:{$queueKey}"), $uuid]);
                     // Inflight-zset entry was added by RecordJobProcessing.
                     $batch->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuid]);
                 }
