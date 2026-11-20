@@ -101,7 +101,9 @@ final readonly class IssueDetectorBatch
      */
     private function runPhase1(RedisConnection $redis, array $pairs, array $flags, int $now, int $stalledThreshold, int $retentionFloor): array
     {
-        return RedisPipeline::run($redis, static function (mixed $client) use ($pairs, $flags, $now, $stalledThreshold, $retentionFloor): void {
+        $queueCountKeys = $this->oldestPendingDetector->queueCountKeys(...);
+
+        return RedisPipeline::run($redis, static function (mixed $client) use ($pairs, $flags, $now, $stalledThreshold, $retentionFloor, $queueCountKeys): void {
             foreach ($pairs as [$c, $q]) {
                 if ($flags['depth'] || $flags['stalled']) {
                     $client->get(KeyPrefix::make("live:depth:{$c}:{$q}"));
@@ -120,6 +122,7 @@ final readonly class IssueDetectorBatch
                         (string) $now,
                         ['LIMIT' => [0, 1], 'WITHSCORES' => true],
                     );
+                    $client->mget($queueCountKeys($c, $q));
                 }
 
                 if ($flags['stuck']) {
@@ -158,6 +161,11 @@ final readonly class IssueDetectorBatch
             }
         }
 
+        // oldest_pending reads its zset head plus the snapshot's queue counts.
+        if ($flags['oldest']) {
+            ++$stride;
+        }
+
         return $stride;
     }
 
@@ -165,7 +173,7 @@ final readonly class IssueDetectorBatch
      * @param  list<array{0: string, 1: string}>  $pairs
      * @param  list<mixed>  $phase1
      * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
-     * @return array{0: array<int, array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}>, 1: list<array{idx: int, kind: 'oldest'|'stuck', uuid: string}>}
+     * @return array{0: array<int, array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, oldestQueueEmpty: bool, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}>, 1: list<array{idx: int, kind: 'oldest'|'stuck', uuid: string}>}
      */
     private function decodePhase1(array $pairs, array $phase1, int $stride, array $flags, int $now): array
     {
@@ -187,7 +195,7 @@ final readonly class IssueDetectorBatch
     /**
      * @param  list<mixed>  $phase1
      * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
-     * @return array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}
+     * @return array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, oldestQueueEmpty: bool, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}
      */
     private function decodePairSlice(array $phase1, int $offset, array $flags): array
     {
@@ -195,6 +203,7 @@ final readonly class IssueDetectorBatch
             'depthRaw' => null,
             'recent' => null,
             'oldestHead' => null,
+            'oldestQueueEmpty' => false,
             'stuckHead' => null,
             'errorRaw' => null,
             'samples' => [],
@@ -213,7 +222,8 @@ final readonly class IssueDetectorBatch
 
         if ($flags['oldest']) {
             $state['oldestHead'] = ZsetHead::firstMemberScore($phase1[$offset + $cursor] ?? null);
-            ++$cursor;
+            $state['oldestQueueEmpty'] = OldestPendingDetector::queueReportedEmpty($phase1[$offset + $cursor + 1] ?? null);
+            $cursor += 2;
         }
 
         if ($flags['stuck']) {
@@ -234,13 +244,13 @@ final readonly class IssueDetectorBatch
     }
 
     /**
-     * @param  array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}  $state
+     * @param  array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, oldestQueueEmpty: bool, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}  $state
      * @param  list<array{idx: int, kind: 'oldest'|'stuck', uuid: string}>  $classLookups
      * @param-out list<array{idx: int, kind: 'oldest'|'stuck', uuid: string}>  $classLookups
      */
     private function collectClassLookups(array $state, int $i, int $now, int $oldestThreshold, int $stuckThreshold, array &$classLookups): void
     {
-        if ($state['oldestHead'] !== null) {
+        if ($state['oldestHead'] !== null && ! $state['oldestQueueEmpty']) {
             $age = $now - (int) $state['oldestHead'][1];
             if ($age >= $oldestThreshold) {
                 $classLookups[] = ['idx' => $i, 'kind' => 'oldest', 'uuid' => $state['oldestHead'][0]];
@@ -282,7 +292,7 @@ final readonly class IssueDetectorBatch
 
     /**
      * @param  list<array{0: string, 1: string}>  $pairs
-     * @param  array<int, array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}>  $perPair
+     * @param  array<int, array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, oldestQueueEmpty: bool, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}>  $perPair
      * @param  array{oldest: array<int, ?string>, stuck: array<int, ?string>}  $classByPair
      * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return list<Issue>
@@ -300,7 +310,7 @@ final readonly class IssueDetectorBatch
     }
 
     /**
-     * @param  array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}  $state
+     * @param  array{depthRaw: mixed, recent: mixed, oldestHead: ?array{0: string, 1: float|int}, oldestQueueEmpty: bool, stuckHead: ?array{0: string, 1: float|int}, errorRaw: mixed, samples: list<array{0: int, 1: int}>}  $state
      * @param  array{oldest: array<int, ?string>, stuck: array<int, ?string>}  $classByPair
      * @param  array{depth: bool, stalled: bool, oldest: bool, stuck: bool, errored: bool, backlog: bool}  $flags
      * @return list<Issue>
@@ -319,7 +329,7 @@ final readonly class IssueDetectorBatch
         }
 
         if ($flags['oldest']) {
-            $issues[] = $this->oldestPendingDetector->evaluate($c, $q, $state['oldestHead'], $classByPair['oldest'][$i] ?? null, $now);
+            $issues[] = $this->oldestPendingDetector->evaluate($c, $q, $state['oldestHead'], $classByPair['oldest'][$i] ?? null, $now, $state['oldestQueueEmpty']);
         }
 
         if ($flags['stuck']) {

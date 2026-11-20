@@ -179,40 +179,90 @@ it('does not fire OldestPendingAging for an orphan head when the broker reports 
     $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'orphan-uuid']);
     $redis->command('hset', [KeyPrefix::make('pending:orphan-uuid'), 'class', 'App\\Jobs\\Slow']);
 
-    // The previous tick already saw the queue drained.
-    $redis->command('setex', [KeyPrefix::make('drained-at:sqsq:work'), 90, (string) (Date::now()->getTimestamp() - 60)]);
-
     Event::fake([OldestPendingAging::class]);
 
     Artisan::call('queue-insights:snapshot');
 
     Event::assertNotDispatched(OldestPendingAging::class);
+    // Held back, not deleted: the row stays until pending.ttl_seconds.
+    expect($redis->command('zscore', [KeyPrefix::make('pending-zset:sqsq:work'), 'orphan-uuid']))->toBeNumeric()
+        ->and($redis->command('exists', [KeyPrefix::make('pending:orphan-uuid')]))->toBe(1);
 });
 
-it('keeps a drained-queue entry and alerts on it when pending.reap_drained_orphans is false', function (): void {
+it('fires OldestPendingAging when any queue count is non-zero or missing', function (int $depth, ?int $inFlight, ?int $delayed): void {
     config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
-    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0, 0, 0));
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver($depth, $inFlight, $delayed));
     config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
     config()->set('queue-insights.pending.enabled', true);
-    config()->set('queue-insights.pending.reap_drained_orphans', false);
     config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
     config()->set('queue-insights.alerts.rules.depth.thresholds', []);
     config()->set('queue-insights.alerts.rules.stalled.enabled', false);
 
     $redis = Redis::connection('default');
-    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'kept-uuid']);
-    $redis->command('hset', [KeyPrefix::make('pending:kept-uuid'), 'class', 'App\\Jobs\\Slow']);
-    $redis->command('setex', [KeyPrefix::make('drained-at:sqsq:work'), 90, (string) (Date::now()->getTimestamp() - 60)]);
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'aged-uuid']);
+    $redis->command('hset', [KeyPrefix::make('pending:aged-uuid'), 'class', 'App\\Jobs\\Slow']);
 
     Event::fake([OldestPendingAging::class]);
 
     Artisan::call('queue-insights:snapshot');
 
+    Event::assertDispatched(OldestPendingAging::class, fn (OldestPendingAging $e): bool => $e->oldestClass === 'App\\Jobs\\Slow');
+})->with([
+    'messages waiting' => [3, 0, 0],
+    'messages in flight' => [0, 2, 0],
+    'delayed messages' => [0, 0, 1],
+    'in-flight count unknown' => [0, null, 0],
+    'delayed count unknown' => [0, 0, null],
+]);
+
+it("does not hold oldest_pending back on a previous tick's count when the driver stops reporting it", function (): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'aged-uuid']);
+
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0, 0, 0));
+    Artisan::call('queue-insights:snapshot');
+
+    Event::fake([OldestPendingAging::class]);
+    config()->set('queue-insights.driver_overrides.sqsq', fn () => quietDriver(0, null, 0));
+    Artisan::call('queue-insights:snapshot');
+
     Event::assertDispatched(OldestPendingAging::class);
-    expect($redis->command('zscore', [KeyPrefix::make('pending-zset:sqsq:work'), 'kept-uuid']))->toBeNumeric()
-        ->and($redis->command('exists', [KeyPrefix::make('pending:kept-uuid')]))
-        ->toBe(1);
 });
+
+it('holds oldest_pending back in detectAll while the last snapshot reported the queue empty', function (?string $inFlight, int $expected): void {
+    config()->set('queue.connections.sqsq', ['driver' => 'sqs']);
+    config()->set('queue-insights.snapshots', [['connection' => 'sqsq', 'queue' => 'work']]);
+    config()->set('queue-insights.pending.enabled', true);
+    config()->set('queue-insights.alerts.rules.oldest_pending.seconds', 60);
+    config()->set('queue-insights.alerts.rules.depth.thresholds', []);
+    config()->set('queue-insights.alerts.rules.stalled.enabled', false);
+
+    $redis = Redis::connection('default');
+    $redis->command('zadd', [KeyPrefix::make('pending-zset:sqsq:work'), Date::now()->getTimestamp() - 600, 'orphan-uuid']);
+    $redis->command('setex', [KeyPrefix::make('live:depth:sqsq:work'), 90, '0']);
+    $redis->command('setex', [KeyPrefix::make('live:delayed:sqsq:work'), 90, '0']);
+    if ($inFlight !== null) {
+        $redis->command('setex', [KeyPrefix::make('live:inflight:sqsq:work'), 90, $inFlight]);
+    }
+
+    $issues = array_filter(
+        resolve(IssueDetector::class)->detectAll(),
+        fn (Issue $issue): bool => $issue->rule === 'oldest_pending',
+    );
+
+    expect($issues)->toHaveCount($expected);
+})->with([
+    'queue empty' => ['0', 0],
+    'job in flight' => ['1', 1],
+    'in-flight count missing' => [null, 1],
+]);
 
 it('skips delayed (not-yet-due) entries when picking the oldest pending', function (): void {
     config()->set('queue.connections.sqsq', ['driver' => 'sqs']);

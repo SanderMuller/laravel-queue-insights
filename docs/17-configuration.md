@@ -224,7 +224,6 @@ All opt-in, all gated by cooldown.
 | `pending.enabled` | `true` | The `JobQueued` listener stamps each job's metadata into a hash plus a per-queue sorted set, which is what makes the pending view work on SQS where queue peeking isn't possible. Roughly 500 bytes per pending job. |
 | `pending.max_per_queue` | `10000` | Rows tracked per queue. |
 | `pending.ttl_seconds` | `86400` (24 h) | Row lifetime. |
-| `pending.reap_drained_orphans` | `true` | Env `QUEUE_INSIGHTS_PENDING_REAP_DRAINED_ORPHANS`. Remove runnable entries older than `oldest_pending.seconds` once the driver has reported the queue fully drained on two snapshot ticks at least 60 s apart. SQS counts are approximate, so a misreport can drop the row of a job that is still queued; the job itself is untouched. Set `false` to keep entries until `pending.ttl_seconds`. See [orphaned pending entries](11-alerting.md). |
 | `pending.gap_warn_threshold` | `5` | Drift between the tracked count and the snapshot count beyond which the dashboard shows a "tracking gap" badge, the signal to read the snapshot count as truth, not the listed sample. |
 | `pending.capture.payloads` | `off` | Separate budget from `capture.payloads`. Completed rows are `MAXLEN`-trimmed (`N × bytes`); pending hashes fan out as `max_per_queue × queues × TTL`, which is roughly 400 MB on a 10k-row × 10-queue host at 4 KB per row. |
 | `pending.capture.max_payload_bytes` | `4096` | A quarter of the completed cap, so 10k pending rows land near 40 MB. |

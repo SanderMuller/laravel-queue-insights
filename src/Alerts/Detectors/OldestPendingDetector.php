@@ -19,6 +19,12 @@ use SanderMuller\QueueInsights\Support\ZsetHead;
  *
  * Requires `pending.enabled = true`; the per-uuid hash + zset writes happen
  * in RecordJobQueued. Auto-disabled at boot when pending tracking is off.
+ *
+ * Held back while the last snapshot reported the queue empty (0 waiting,
+ * 0 in flight, 0 delayed): the head is then a tracking orphan, for example
+ * a job whose worker died before `JobProcessing` until SQS moved it to its
+ * dead-letter queue. The entry itself is left alone, so a count that is
+ * wrong for one tick only delays the alert by a tick.
  */
 final class OldestPendingDetector
 {
@@ -50,16 +56,22 @@ final class OldestPendingDetector
 
         $head = ZsetHead::firstMemberScore($row);
 
-        // Only resolve the job class when the head is going to cross the
-        // threshold — saves a per-tick HGET for queues whose oldest pending
-        // is still within the configured window. evaluate() short-circuits
-        // on the same age check so this stays an exact pre-flight.
+        // Only read the queue counts and the job class when the head is going
+        // to cross the threshold. evaluate() short-circuits on the same age
+        // check so this stays an exact pre-flight.
         $jobClass = null;
+        $queueReportedEmpty = false;
         if ($head !== null && $now - (int) $head[1] >= $this->thresholdSeconds()) {
-            $jobClass = $this->resolveClass($redis, $head[0]);
+            $queueReportedEmpty = self::queueReportedEmpty(
+                $redis->command('mget', [$this->queueCountKeys($connection, $canonicalQueue)]),
+            );
+
+            if (! $queueReportedEmpty) {
+                $jobClass = $this->resolveClass($redis, $head[0]);
+            }
         }
 
-        return $this->evaluate($connection, $canonicalQueue, $head, $jobClass, $now);
+        return $this->evaluate($connection, $canonicalQueue, $head, $jobClass, $now, $queueReportedEmpty);
     }
 
     /**
@@ -67,10 +79,11 @@ final class OldestPendingDetector
      * Callers MUST gate on `ruleEnabled()` before enqueuing reads.
      *
      * @param  array{0: string, 1: float|int}|null  $head  [uuid, availableAt] or null when absent
+     * @param  bool  $queueReportedEmpty  see `queueReportedEmpty()`
      */
-    public function evaluate(string $connection, string $canonicalQueue, ?array $head, ?string $jobClass, int $now): ?Issue
+    public function evaluate(string $connection, string $canonicalQueue, ?array $head, ?string $jobClass, int $now, bool $queueReportedEmpty = false): ?Issue
     {
-        if ($head === null) {
+        if ($head === null || $queueReportedEmpty) {
             return null;
         }
 
@@ -137,6 +150,40 @@ final class OldestPendingDetector
     public function retentionSeconds(): int
     {
         return Config::int('pending.ttl_seconds', 86400);
+    }
+
+    /**
+     * The `live:*` keys the snapshot command writes for this queue, in the
+     * order `queueReportedEmpty()` reads them.
+     *
+     * @return list<string>
+     */
+    public function queueCountKeys(string $connection, string $canonicalQueue): array
+    {
+        return array_map(
+            static fn (string $metric): string => KeyPrefix::make("live:{$metric}:{$connection}:{$canonicalQueue}"),
+            ['depth', 'inflight', 'delayed'],
+        );
+    }
+
+    /**
+     * True only when all three counts are present and zero. A missing key
+     * (driver without that count, or no recent snapshot) never holds the
+     * alert back.
+     */
+    public static function queueReportedEmpty(mixed $counts): bool
+    {
+        if (! is_array($counts) || count($counts) !== 3) {
+            return false;
+        }
+
+        foreach ($counts as $count) {
+            if (! is_numeric($count) || (int) $count !== 0) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private function resolveClass(RedisConnection $redis, string $uuid): ?string

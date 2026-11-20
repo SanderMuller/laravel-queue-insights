@@ -117,16 +117,18 @@ Why legacy wins: hosts setting both are likely mid-migration with legacy still l
 
 ## Orphaned pending entries
 
-A `pending-zset` member outlives its job when no listener moved it (no `JobProcessing` before the message left the broker, e.g. Vapor Lambda crash → SQS DLQ, or a failed listener write). Two reaps in `Console\QueueInsightsSnapshotCommand`, both before `dispatchForSnapshot` so a reaped head never alerts:
+A `pending-zset` member outlives its job when no listener moved it (no `JobProcessing` before the message left the broker, e.g. Vapor Lambda crash → SQS DLQ, or a failed listener write).
 
-- `reapStaleTracking` — members below `now - pending.ttl_seconds` whose `pending:{uuid}` hash is gone (EXISTS = 0). Pending + inflight zsets.
-- `reapDrainedQueueOrphans` — when the driver reports `depth === 0 && inFlight === 0 && delayed === 0` (a `null` never counts as 0) on this tick **and** a previous one at least `MIN_DRAINED_SECONDS` (60) earlier (`drained-at:{c}:{q}` keeps the first drained timestamp, TTL refreshed to `SnapshotCadence::liveTtlSeconds()` each drained tick, `DEL` on any non-drained tick), runnable pending members scored at or below `now - max(60, oldest_pending.seconds)` are removed by `Lua/ReapPendingOrphans.lua`: the hash is deleted only when its `ZREM` hit, so a member `MarkInFlight` moved meanwhile keeps its hash. Keys via `KeyPrefix::queueKey` (canonical alias). Pending zset only. Off when `pending.reap_drained_orphans` is false (or `pending.enabled` is false).
+- `QueueInsightsSnapshotCommand::reapStaleTracking` — members below `now - pending.ttl_seconds` whose `pending:{uuid}` hash is gone (EXISTS = 0). Pending + inflight zsets.
+- `OldestPendingDetector` holds the alert back while `live:depth`, `live:inflight` and `live:delayed` (written by the snapshot just before the detectors run) are all present and `0` — `queueReportedEmpty()`. Both paths: `detect()` MGETs them only once the head crossed the threshold; `IssueDetectorBatch` pipelines the MGET next to the head read (stride +1 for `oldest`). A missing key never holds back.
+
+Don't bring back a reap that deletes pending entries on broker counts. SQS counts are approximate (0.35.0 and 0.36.0 shipped one; it was removed after): a wrong "empty" must only skip an alert for a tick, never drop a live job's row.
 
 Listener catch paths (`RecordJobQueued/Processing/Processed/Failed`) call `Support\ListenerFailureReporter` after the warning: one `ListenerFailedException` per listener per `listener_failures.report_interval_seconds`. Throttled per process first, then across workers via `Cache::add` on `listener_failures.cache_store` (null = app default); a cache failure falls back to the per-process throttle. Don't move that shared lock onto the queue-insights Redis connection: it is the connection that fails during the outages this throttles.
 
 ## What NOT to do
 
-- Don't dedupe `oldest_pending` on the head uuid to quiet an orphan. A real stuck job is one uuid too; fix the orphan (reap) or tune `cooldown_seconds`.
+- Don't dedupe `oldest_pending` on the head uuid to quiet an orphan. A real stuck job is one uuid too; rely on the empty-queue hold or tune `cooldown_seconds`.
 - Don't read the cache from the snapshot command. Cooldown decisions need fresh detector output every tick.
 - Don't add a runtime config-mutation surface (admin UI / API to toggle rules). The active-rules panel is **read-only** by design — config is the source of truth, version-controlled, reviewable.
 - Don't bypass `Cooldown::acquire()` for "important" alerts. The cooldown key is per-(rule, target) — if you want louder paging for a critical issue, set a shorter `cooldown_seconds` or wire an external pager (PagerDuty channel) that handles its own escalation.
