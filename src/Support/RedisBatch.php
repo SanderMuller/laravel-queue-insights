@@ -7,6 +7,7 @@ use Illuminate\Redis\Connections\PhpRedisClusterConnection;
 use Illuminate\Redis\Connections\PhpRedisConnection;
 use Redis;
 use RuntimeException;
+use Throwable;
 
 /**
  * Collects Redis commands and sends them in one round trip. The job
@@ -71,18 +72,29 @@ final class RedisBatch
         $client = $this->phpRedisClient();
         $client?->clearLastError();
 
-        $results = count($commands) === 1
-            ? [$this->redis->command($commands[0][0], $commands[0][1])]
-            : RedisPipeline::run($this->redis, static function (mixed $pipe) use ($commands): void {
-                foreach ($commands as [$method, $parameters]) {
-                    $call = [$pipe, $method];
-                    if (! is_callable($call)) {
-                        throw new RuntimeException("queue-insights: Redis client cannot pipeline {$method}");
-                    }
+        try {
+            $results = count($commands) === 1
+                ? [$this->redis->command($commands[0][0], $commands[0][1])]
+                : RedisPipeline::run($this->redis, static function (mixed $pipe) use ($commands): void {
+                    foreach ($commands as [$method, $parameters]) {
+                        $call = [$pipe, $method];
+                        if (! is_callable($call)) {
+                            throw new RuntimeException("queue-insights: Redis client cannot pipeline {$method}");
+                        }
 
-                    $call(...$parameters);
-                }
-            });
+                        $call(...$parameters);
+                    }
+                });
+        } catch (Throwable $throwable) {
+            // Laravel 12 does not discard a phpredis pipeline the callback threw
+            // out of, so every later command on the shared connection would be
+            // queued and never sent. Laravel 13 discards it itself.
+            if ($client?->getMode() === Redis::PIPELINE) {
+                $client->discard();
+            }
+
+            throw $throwable;
+        }
 
         $error = $client?->getLastError();
         if (is_string($error) && $error !== '') {
