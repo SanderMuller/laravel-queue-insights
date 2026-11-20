@@ -282,7 +282,7 @@ final readonly class DashboardData
 
         if ($selectedPending !== null) {
             // Hydrate parent_class on the in-flight / pending modal.
-            // `RecordJobProcessing::copyLineageToPending` stamps
+            // `RecordJobProcessing::handle` stamps
             // parent_uuid onto the pending hash, and PendingJobsReader
             // now surfaces it on the row, but the class label has to be
             // resolved from the `qi:class:{uuid}` side-key — same path

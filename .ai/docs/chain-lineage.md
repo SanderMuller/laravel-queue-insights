@@ -26,7 +26,7 @@ JobQueued(child)      ──► RPOP qi:chain-claim:{conn}:{queue}:{ownClass}:{t
 JobProcessing(child)  ──► HSET pending:{uuid} parent_uuid (in-flight modal)
 
 JobProcessed(child)   ──► XADD completed-stream entry includes parent_uuid field
-                          DEL  qi:lineage:{child-uuid}     (durable copy lives on the row)
+                          (qi:lineage:{child-uuid} is NOT deleted — left to its 7d TTL)
 
 JobFailed(child)      ──► (no copy — qi:lineage:{uuid} survives at 7d TTL,
                           RowEnricher::failed reads it directly per page)
@@ -40,7 +40,7 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
 | Key | Writer | Reader | TTL | Purpose |
 |---|---|---|---|---|
 | `qi:chain-claim:{conn}:{queue}:{nextClass}:{tailFp}` | `RecordJobProcessing` (LPUSH via Lua) | `RecordJobQueued` (RPOP) | `chain_lineage.claim_ttl_seconds` (60 s) | Per-shape FIFO list of parent UUIDs awaiting attribution |
-| `qi:lineage:{child-uuid}` | `RecordJobQueued` on claim hit | `RowEnricher::failed`, `RecordJobProcessing` (copy to pending), `RecordJobProcessed` (copy to stream then `forgetLineage`) | `chain_lineage.lineage_ttl_seconds` (7 d) | Interim child→parent pointer; durable for failed-row reads |
+| `qi:lineage:{child-uuid}` | `RecordJobQueued` on claim hit | `RowEnricher::failed`, `RecordJobProcessing` (copy to pending), `RecordJobProcessed` (copy to stream; never deleted) | `chain_lineage.lineage_ttl_seconds` (7 d) | Child→parent pointer; the only parent record a failed row has |
 | `qi:class:{uuid}` | `RecordJobProcessed`, `RecordJobFailed` | `ParentClassResolver::resolve(Many)` | `chain_lineage.lineage_ttl_seconds` (7 d) | uuid → class label; used to render `Parent: {uuid} (Class)` |
 | `parent_uuid` field on the completed-stream XADD | `RecordJobProcessed` (copies from `qi:lineage:{uuid}`) | `RowEnricher::completed` | stream retention | Hot-path read with no Redis hit |
 
@@ -50,11 +50,15 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
   - `pushChainClaim()` — write side. Decodes parent payload via
     `SerializedCommandReader::extractChainContext`, builds the key, LPUSHes the
     parent UUID through `LuaScripts::pushChainClaim()` (atomic LPUSH+EXPIRE).
-  - `copyLineageToPending()` — child's read side. Reads `qi:lineage:{uuid}`,
-    HSETs `parent_uuid` onto the pending hash. Skipped when pending tracking
-    is disabled.
+  - `readPushedAndLineage()` — child's read side. Reads `pushed:{uuid}` and
+    `qi:lineage:{uuid}` in one pipeline (lineage separately when
+    `ChainLineageStore::usesPrimaryConnection()` is false); `handle()` then
+    queues an HSET of `parent_uuid` onto the pending hash in its write batch.
 - `src/Listeners/RecordJobQueued.php`
-  - `resolveChainLineage()` — RPOPs unconditionally on every `JobQueued`.
+  - `chainClaimKey()` + the RPOP in `handle()` — RPOPs unconditionally on
+    every `JobQueued` (inside the listener's write batch on the primary
+    connection, via `ChainLineageStore::popClaim` otherwise), then
+    `writeLineage` on a hit.
     Phase 0 finding #3 confirms `chainConnection`/`chainQueue` are stripped
     by `SerializesModels::__serialize`, so they cannot be used as a "chained
     child" gate. Root jobs miss harmlessly. Cross-shape collision is the
@@ -64,8 +68,11 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
     returns null and skips the lookup, so the read-side never collides on a
     partially-parsed parent fingerprint.
 - `src/Listeners/RecordJobProcessed.php`
-  - `resolveParentUuid()` — copies `qi:lineage:{uuid}` into the stream entry
-    and forgets the interim hash. Idempotent: stream entry is appended once.
+  - `readStartAndLineage()` — reads `qi:lineage:{uuid}` and copies it into
+    the stream entry's `parent_uuid`. The key is left to its TTL, not deleted:
+    a child that failed, was retried and then succeeded still has its
+    `failed_jobs` row, which `RowEnricher::failed` reads the key for.
+    (`ChainLineageStore::forgetLineage` exists but nothing calls it.)
   - `qi:class:{uuid}` SETEX block — writes the parent-class index used by
     `ParentClassResolver`.
 - `src/Listeners/RecordJobFailed.php`
@@ -107,8 +114,8 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
    ship on that version.
 2. **Never overwrite a non-null `parent_uuid` with null on the durable
    record.** The retry path can re-fire `JobQueued` with a payload that
-   yields no chain extraction; `resolveChainLineage` returns early in that
-   case so the existing `qi:lineage:{uuid}` is preserved.
+   yields no chain extraction; `chainClaimKey` returns null in that case,
+   so nothing is popped and the existing `qi:lineage:{uuid}` is preserved.
 3. **List semantics, not single-key SETEX.** Two parents with identical
    shape concurrently in flight would otherwise overwrite each other's
    ticket. LPUSH+RPOP bounds the worst case to "FIFO order across
