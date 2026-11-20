@@ -180,7 +180,7 @@ final readonly class RecordJobProcessed
 
         $parent = match (true) {
             $batched => $results[1] ?? null,
-            $wantsLineage => $lineage->readLineage($uuid),
+            $wantsLineage => ChainLineageStore::bestEffort('RecordJobProcessed', static fn (): ?string => $lineage->readLineage($uuid)),
             default => null,
         };
 

@@ -2,7 +2,9 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use Closure;
 use Illuminate\Redis\Connections\Connection as RedisConnection;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 use Throwable;
 
@@ -21,6 +23,33 @@ use Throwable;
  */
 final class ChainLineageStore
 {
+    /**
+     * Run a lineage read or write from a listener without letting a failure
+     * of the lineage Redis (`chain_lineage.redis_connection` can point at its
+     * own instance) cost the listener's other writes: log, report, and
+     * continue with the parent unresolved.
+     *
+     * @template T
+     *
+     * @param  Closure(): T  $operation
+     * @return T|null
+     */
+    public static function bestEffort(string $listener, Closure $operation): mixed
+    {
+        try {
+            return $operation();
+        } catch (Throwable $throwable) {
+            Log::warning("queue-insights: {$listener} chain lineage failed", [
+                'exception' => $throwable::class,
+                'message' => $throwable->getMessage(),
+            ]);
+
+            resolve(ListenerFailureReporter::class)->report($listener, $throwable);
+
+            return null;
+        }
+    }
+
     public function pushClaim(string $key, string $parentUuid, int $ttlSeconds): void
     {
         if ($parentUuid === '' || $ttlSeconds <= 0) {

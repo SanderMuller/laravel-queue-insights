@@ -9,8 +9,11 @@ use Illuminate\Queue\Worker;
 use Illuminate\Queue\WorkerOptions;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Bus;
+use Illuminate\Support\Facades\Date;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Schema;
 use Mockery\MockInterface;
+use SanderMuller\QueueInsights\Exceptions\ListenerFailedException;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessing;
 use SanderMuller\QueueInsights\Listeners\RecordJobQueued;
@@ -102,6 +105,26 @@ it('single-link chain stamps parent_uuid on the child stream entry', function ()
     // succeeded sequence) would otherwise orphan the historical
     // failed_jobs row's parent attribution. Codex review.
     expect(lineageFor($child['uuid'] ?? ''))->toBe($parent['uuid']);
+});
+
+it('keeps every other listener write when the separate lineage Redis is down', function (): void {
+    Exceptions::fake();
+    config()->set('queue-insights.chain_lineage.redis_connection', 'unreachable-lineage');
+
+    Bus::chain([new ChainParentJob(), new ChainChildJob()])->dispatch();
+    workChainTestQueue(2);
+
+    $entries = StreamEntries::fromXrange(R::raw('xrange', 'qmtest:completed', '-', '+'));
+    $bucket = Date::now('UTC')->format('YmdH');
+
+    expect($entries)->toHaveCount(2)
+        ->and(R::int('get', 'qmtest:processed:' . ChainChildJob::class . ':' . $bucket))->toBe(1)
+        ->and(R::int('zcard', 'qmtest:pending-zset:database:default'))->toBe(0)
+        ->and(R::int('zcard', 'qmtest:inflight-zset:database:default'))->toBe(0);
+
+    foreach (['RecordJobQueued', 'RecordJobProcessing', 'RecordJobProcessed'] as $listener) {
+        Exceptions::assertReported(fn (ListenerFailedException $e): bool => $e->listener === $listener);
+    }
 });
 
 it('multi-link chain attributes each link to its dispatcher', function (): void {

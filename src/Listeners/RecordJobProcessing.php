@@ -144,7 +144,7 @@ final class RecordJobProcessing
 
         $parent = match (true) {
             $batched => $results[1] ?? null,
-            $wantsLineage => $lineage->readLineage($uuid),
+            $wantsLineage => ChainLineageStore::bestEffort('RecordJobProcessing', static fn (): ?string => $lineage->readLineage($uuid)),
             default => null,
         };
 

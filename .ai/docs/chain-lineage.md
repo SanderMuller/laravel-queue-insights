@@ -133,6 +133,13 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
    stream — the side-key is the contract; aged-out parents render as
    "uuid only".
 
+7. **A lineage Redis failure never costs the listener's other writes.**
+   `chain_lineage.redis_connection` can name its own instance. Lineage
+   reads/writes on that path go through `ChainLineageStore::bestEffort`
+   (log + `ListenerFailureReporter`, continue with the parent unresolved);
+   `pushChainClaim` has its own catch. Don't call the store bare from a
+   listener.
+
 ## Config surface
 
 ```php

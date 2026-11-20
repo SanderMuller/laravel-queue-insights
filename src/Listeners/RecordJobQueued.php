@@ -88,12 +88,14 @@ final class RecordJobQueued
 
             $results = $batch->execute();
 
-            $parentUuid = $claimIndex !== null
-                ? $results[$claimIndex] ?? null
-                : ($claimKey !== null ? $lineage->popClaim($claimKey) : null);
-            if (is_string($parentUuid) && $parentUuid !== '') {
-                $lineage->writeLineage($uuid, $parentUuid, Config::int('chain_lineage.lineage_ttl_seconds', 604800));
-            }
+            ChainLineageStore::bestEffort('RecordJobQueued', static function () use ($claimIndex, $results, $claimKey, $lineage, $uuid): void {
+                $parentUuid = $claimIndex !== null
+                    ? $results[$claimIndex] ?? null
+                    : ($claimKey !== null ? $lineage->popClaim($claimKey) : null);
+                if (is_string($parentUuid) && $parentUuid !== '') {
+                    $lineage->writeLineage($uuid, $parentUuid, Config::int('chain_lineage.lineage_ttl_seconds', 604800));
+                }
+            });
 
             $this->writeInitiatorTracking($uuid, $callSite);
         } catch (Throwable $throwable) {
