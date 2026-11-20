@@ -252,7 +252,7 @@ final readonly class DashboardData
             try {
                 $bulkRetryCount = count(FailedJobUuidCollector::collect($failedFilters));
             } catch (Throwable) {
-                $bulkRetryCount = null;
+                // Leave the count unknown; the button hides.
             }
         }
 

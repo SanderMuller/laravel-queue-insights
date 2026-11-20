@@ -6,6 +6,7 @@ use Illuminate\Console\Application;
 use Illuminate\Contracts\Console\Kernel as KernelContract;
 use Illuminate\Foundation\Bus\PendingDispatch;
 use stdClass;
+use Symfony\Component\Console\Command\Command;
 
 /**
  * Test-only Console Kernel that records every `call()` invocation in a static
@@ -67,7 +68,7 @@ final class RecordingConsoleKernel implements KernelContract
     }
 
     /**
-     * @return array<array-key, mixed>
+     * @return array<string, Command>
      */
     public function all(): array
     {

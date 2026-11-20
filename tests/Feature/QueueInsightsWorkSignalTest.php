@@ -263,7 +263,7 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
     while (microtime(true) < $deadline) {
         Sleep::usleep(100_000);
         $stdout .= stream_get_contents($pipes[1]);
-        $stderr .= stream_get_contents($pipes[2]);
+        stream_get_contents($pipes[2]);
 
         $status = proc_get_status($proc);
         if (! $status['running']) {
@@ -273,7 +273,7 @@ it('forwards SIGTERM to live children when the supervisor receives one', functio
 
     // Final drain.
     $stdout .= stream_get_contents($pipes[1]);
-    $stderr .= stream_get_contents($pipes[2]);
+    stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);
 
@@ -389,7 +389,7 @@ it('does not reset the grace timer when SIGTERM is sent twice', function (): voi
     $deadline = $sigSentAt + 10.0;
     while (microtime(true) < $deadline) {
         Sleep::usleep(100_000);
-        $stdout .= stream_get_contents($pipes[1]);
+        stream_get_contents($pipes[1]);
         $stderr .= stream_get_contents($pipes[2]);
         $status = proc_get_status($proc);
         if (! $status['running']) {
@@ -400,7 +400,7 @@ it('does not reset the grace timer when SIGTERM is sent twice', function (): voi
     $exitElapsed = microtime(true) - $sigSentAt;
 
     // Final drain.
-    $stdout .= stream_get_contents($pipes[1]);
+    stream_get_contents($pipes[1]);
     $stderr .= stream_get_contents($pipes[2]);
     fclose($pipes[1]);
     fclose($pipes[2]);

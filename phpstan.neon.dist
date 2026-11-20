@@ -56,6 +56,15 @@ parameters:
             identifier: trait.unused
             reportUnmatched: false
 
+        # Larastan ≥ 3.15 resolves `Redis::connection()` to the client the
+        # dev install's config names (phpredis). The package also supports
+        # predis, so Redis-connection accessors must keep the abstract
+        # `Connection` return type.
+        -
+            identifier: typePerfect.narrowReturnObjectType
+            message: '#PhpRedisConnection#'
+            reportUnmatched: false
+
         # Livewire's Testable became generic (`Testable<TComponent>`) in v4 but
         # was non-generic in v3. Our composer constraint is `^3.0 || ^4.0` so
         # PHPStan sees a different shape depending on which Livewire is locked

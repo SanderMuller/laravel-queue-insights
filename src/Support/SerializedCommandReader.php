@@ -2,8 +2,6 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
-use Throwable;
-
 /**
  * Reads PHP-serialized job-command payloads (the `data.command` field on a queue
  * payload) without instantiating the underlying class. Uses `allowed_classes => false`
@@ -21,13 +19,9 @@ final class SerializedCommandReader
      */
     public static function extract(string $blob): ?array
     {
-        try {
-            // `@` suppresses the E_WARNING that allowed_classes=false emits when it
-            // demotes user-defined classes to __PHP_Incomplete_Class — we expect that.
-            $decoded = @unserialize($blob, ['allowed_classes' => false]);
-        } catch (Throwable) {
-            return null;
-        }
+        // `@` suppresses the E_WARNING that allowed_classes=false emits when it
+        // demotes user-defined classes to __PHP_Incomplete_Class — we expect that.
+        $decoded = @unserialize($blob, ['allowed_classes' => false]);
 
         if (! is_object($decoded)) {
             return null;

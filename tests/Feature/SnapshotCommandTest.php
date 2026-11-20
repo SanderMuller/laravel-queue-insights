@@ -83,8 +83,6 @@ it('writes depth + inflight + delayed history ZSETs with 48h EXPIRE and 24h trim
 
     Artisan::call('queue-insights:snapshot');
 
-    $r = Redis::connection('default');
-
     expect(R::int('zcard', 'qmtest:depth:sqsq:work'))->toBe(1)
         ->and(R::int('zcard', 'qmtest:inflight:sqsq:work'))->toBe(1)
         ->and(R::int('zcard', 'qmtest:delayed:sqsq:work'))->toBe(1)
@@ -125,8 +123,6 @@ it('skips live cache + history for a metric that the driver returns null for', f
 
     Artisan::call('queue-insights:snapshot');
 
-    $r = Redis::connection('default');
-
     expect(R::int('zcard', 'qmtest:depth:nullish:work'))->toBe(1)
         ->and(R::int('exists', 'qmtest:inflight:nullish:work'))->toBe(0)
         ->and(R::int('exists', 'qmtest:delayed:nullish:work'))->toBe(0)
@@ -145,8 +141,6 @@ it('does not collide connection-scoped keys when the same queue name is used on 
     ]);
 
     Artisan::call('queue-insights:snapshot');
-
-    $r = Redis::connection('default');
 
     expect(R::int('get', 'qmtest:live:depth:one:default'))->toBe(1)
         ->and(R::int('get', 'qmtest:live:depth:two:default'))->toBe(99);
@@ -199,8 +193,6 @@ it('produces the same canonical key regardless of URL vs name input (SQS equival
     ]);
 
     Artisan::call('queue-insights:snapshot');
-
-    $r = Redis::connection('default');
 
     // Both entries should normalize to queue key 'my-q'.
     expect(R::int('get', 'qmtest:live:depth:sqsurl:my-q'))->toBe(10);
@@ -415,8 +407,6 @@ it('falls back to NullSnapshotDriver with warning when queue connection is unkno
         ->with('queue-insights: unknown queue driver; using NullSnapshotDriver', Mockery::any());
 
     Artisan::call('queue-insights:snapshot');
-
-    $r = Redis::connection('default');
 
     // NullSnapshotDriver writes depth=0, inflight/delayed=null → no inflight/delayed keys.
     expect(R::int('get', 'qmtest:live:depth:ghost:default'))->toBe(0);

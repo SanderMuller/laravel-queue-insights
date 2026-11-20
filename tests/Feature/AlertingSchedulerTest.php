@@ -2,7 +2,6 @@
 
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event;
-use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Event as EventDispatcher;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Redis;
@@ -523,9 +522,7 @@ it('writes cooldown under the new alert:cooldown:scheduled_task_*:task: namespac
 
     $key = 'qmtest:alert:cooldown:scheduled_task_missed:task:NightlyBackup';
 
-    /** @var Connection $redis */
-    $redis = Redis::connection('default');
-    expect($redis->command('exists', [$key]))->toBeTruthy();
+    expect(Redis::connection('default')->command('exists', [$key]))->toBeTruthy();
 });
 
 /**

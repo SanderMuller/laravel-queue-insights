@@ -59,7 +59,7 @@
         "sentry/sentry": "^4.23",
         "spaze/phpstan-disallowed-calls": "^4.10",
         "symplify/phpstan-extensions": "^12.0.2",
-        "tomasvotruba/cognitive-complexity": "^1.1",
+        "tomasvotruba/cognitive-complexity": "~1.2.0",
         "tomasvotruba/type-coverage": "^2.1"
     },
     "suggest": {
