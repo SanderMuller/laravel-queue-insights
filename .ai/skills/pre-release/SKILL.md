@@ -185,7 +185,7 @@ On failure:
 
 **Do NOT write release notes until CI is green.** Release notes claim CI-matrix facts; CI is the evidence.
 
-**Workflows triggered by `release` (e.g. `release-benchmark`, `update-changelog`)** run AFTER tag creation — they're outside this gate by design and are watched in step 8b.
+**Workflows triggered by `release` (e.g. `update-changelog`)** run AFTER tag creation — they're outside this gate by design and are watched in step 8b.
 
 **`on: push` workflows re-fire on the tag-ref push** (creating a release pushes a tag ref). Those re-fire runs are watched in step 8b too — they sometimes catch environment-shape failures that the main-branch run narrowly missed.
 

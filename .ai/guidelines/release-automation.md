@@ -10,17 +10,13 @@ This means:
 - **Do not** include a changelog diff in the release PR — the post-release commit comes from CI.
 - If the changelog needs a fix *after* a release, edit `CHANGELOG.md` directly and commit — but this is unusual and only for typos or formatting issues in the auto-generated entry.
 
-## Benchmark table in release body is updated automatically
-
-`.github/workflows/release-benchmark.yml` appends the latest benchmark table between the `<!-- benchmark-start -->` / `<!-- benchmark-end -->` markers in the release body after publish. Do not paste benchmark numbers manually into the release body with those markers — write the narrative above and let CI fill in the table.
-
 ## Release workflow (summary)
 
-1. Draft release notes in `internal/release-notes-<version>.md`
-2. Commit and push code + notes file to `main`
+1. Commit and push the code to `main`
+2. Draft release notes in `internal/release-notes-<version>.md` (gitignored — the file stays local)
 3. Tag and create the GitHub release with the release-notes file as the body
-4. CI automatically:
-   - Appends the benchmark table to the release body
-   - Prepends the release body to `CHANGELOG.md` and commits it back to `main`
+4. CI automatically prepends the release body to `CHANGELOG.md` and commits it back to `main`
+
+`update-changelog` is the only workflow that runs on release publish. Nothing decorates the release body, so it is published exactly as written.
 
 No manual `CHANGELOG.md` edits are part of the release PR.
