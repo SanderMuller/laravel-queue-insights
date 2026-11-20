@@ -20,7 +20,7 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
-use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\RedisBatch;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
@@ -58,7 +58,21 @@ final readonly class RecordJobProcessed
             $bucket = $now->format('YmdH');
             $isoNow = $now->toIso8601String();
 
-            $durationMs = $this->readAndConsumeStart($redis, $event->job->uuid());
+            $uuid = $event->job->uuid();
+            $uuid = is_string($uuid) && $uuid !== '' ? $uuid : null;
+
+            // Two round trips: the reads the writes depend on, then every
+            // write in one pipeline.
+            [$startRaw, $parentUuid] = $this->readStartAndLineage($redis, $uuid);
+            $durationMs = is_numeric($startRaw)
+                ? max(0, (int) round((microtime(true) - (float) $startRaw) * 1000))
+                : null;
+
+            $batch = new RedisBatch($redis);
+
+            if ($uuid !== null && $durationMs !== null) {
+                $batch->command('del', [KeyPrefix::make("start:{$uuid}")]);
+            }
 
             // Each dual-write group runs as one Lua eval so the aggregate
             // and per-connection variants can't drift on a listener crash.
@@ -67,25 +81,21 @@ final readonly class RecordJobProcessed
             // trailing-colon key (e.g. `processed:{class}::{bucket}`).
             $counterDays = max(1, Config::int('retention.processed_counters_days', 7));
             $bucketExpireAt = HourBucket::startTs($bucket) + ($counterDays * 86400);
-            $this->writeProcessedCounters($redis, $class, $connectionName, $bucket, $bucketExpireAt);
-            $this->writeProcessedMonotonic($redis, $class, $connectionName);
+            $this->writeProcessedCounters($batch, $class, $connectionName, $bucket, $bucketExpireAt);
+            $this->writeProcessedMonotonic($batch, $class, $connectionName);
 
             if ($durationMs !== null) {
-                $this->writeDurationMetrics($redis, $class, $connectionName, $durationMs);
+                $this->writeDurationMetrics($batch, $class, $connectionName, $durationMs);
             }
 
-            $this->writeLastRun($redis, $class, $connectionName, $isoNow);
+            $this->writeLastRun($batch, $class, $connectionName, $isoNow);
 
             // qi:class:{uuid} — uuid → class index used by the backward-chain
             // lineage UI to hydrate `parent_uuid` to a class label. Skipped
             // when chain lineage is disabled (no consumer).
-            $uuidForClass = $event->job->uuid();
-            if (
-                Config::bool('chain_lineage.enabled', true)
-                && is_string($uuidForClass) && $uuidForClass !== ''
-            ) {
-                $redis->command('setex', [
-                    ParentClassResolver::classKey($uuidForClass),
+            if ($uuid !== null && Config::bool('chain_lineage.enabled', true)) {
+                $batch->command('setex', [
+                    ParentClassResolver::classKey($uuid),
                     Config::int('chain_lineage.lineage_ttl_seconds', 604800),
                     $class,
                 ]);
@@ -94,51 +104,33 @@ final readonly class RecordJobProcessed
             // Aggregate roster has no whole-key TTL (pruned 30 d by the
             // snapshot command); per-connection roster bumps EXPIRE on
             // every event so dormant connections fall off cleanly.
-            $this->writeClassesRoster($redis, $class, $connectionName, $nowTs);
+            $this->writeClassesRoster($batch, $class, $connectionName, $nowTs);
 
-            // Streams
-            $globalStreamId = $this->writeStreams($redis, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow);
-
-            // Batch tracking — index uuid → completed-stream entry id so the
-            // batch-detail view can resolve a uuid to the existing completed
-            // modal flow (which opens by stream id). Doubles as the
-            // chain-lineage uuid → target index — `UuidResolver::resolve`
-            // reads this to drive the `↰ From` click-through to the
-            // parent's modal. Written unconditionally when chain lineage
-            // is on (with the lineage TTL) so click-through works even
-            // for hosts that have batches disabled.
-            $uuidForBatch = $event->job->uuid();
-            $needsTargetIndex = Config::bool('batches.enabled', true)
-                || Config::bool('chain_lineage.enabled', true);
-            if (
-                $globalStreamId !== null
-                && $uuidForBatch !== null
-                && $uuidForBatch !== ''
-                && $needsTargetIndex
-            ) {
-                $ttl = max(
-                    Config::bool('batches.enabled', true) ? Config::int('batches.ttl_seconds', 604800) : 0,
-                    Config::bool('chain_lineage.enabled', true) ? Config::int('chain_lineage.lineage_ttl_seconds', 604800) : 0,
-                );
-                $redis->command('setex', [
-                    KeyPrefix::make("uuid-completed:{$uuidForBatch}"),
-                    $ttl,
-                    $globalStreamId,
-                ]);
-            }
+            $callSite = $this->resolveInitiatorCallSite($uuid);
+            $this->writeStreams($batch, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow, $parentUuid, $callSite);
 
             // Belt-and-suspenders pending-tracking cleanup. RecordJobProcessing
             // already cleared on the pending → in-flight transition; this is
             // here for the rare case where that listener was missed (worker
             // crash between event dispatch and listener execution).
-            $uuidForCleanup = $event->job->uuid();
-            if ($uuidForCleanup !== null && $uuidForCleanup !== '' && Config::bool('pending.enabled', true)) {
-                $redis->command('del', [KeyPrefix::make("pending:{$uuidForCleanup}")]);
-                $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuidForCleanup]);
+            if ($uuid !== null && Config::bool('pending.enabled', true)) {
+                $batch->command('del', [KeyPrefix::make("pending:{$uuid}")]);
+                $batch->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
                 // In-flight zset entry was added by RecordJobProcessing; drop
                 // it now so the dashboard's In-flight group only ever shows
                 // jobs that are actually running.
-                $redis->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuidForCleanup]);
+                $batch->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuid]);
+            }
+
+            $batch->execute();
+
+            // The XADDs have landed, so the call site now lives durably on
+            // the completed stream and the interim `qi:initiator:{uuid}` key
+            // is redundant. Shrink it to a 60s tail (never DEL — spec §2.2).
+            // Placed after execute(), so a failed pipeline keeps the key's
+            // full 7d TTL and no attribution is lost.
+            if ($callSite !== null && $uuid !== null) {
+                (new InitiatorStore())->shortenTtl($uuid);
             }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobProcessed failed', [
@@ -151,35 +143,60 @@ final readonly class RecordJobProcessed
         }
     }
 
-    private function readAndConsumeStart(RedisConnection $redis, ?string $uuid): ?int
+    /**
+     * Read `start:{uuid}` (for the duration) and the interim
+     * `qi:lineage:{uuid}` parent pointer in one round trip. The lineage read
+     * goes to its own connection when `chain_lineage.redis_connection`
+     * points elsewhere.
+     *
+     * The lineage key is read-only here and left to age out via its
+     * `lineage_ttl_seconds` TTL (default 7d). Two scenarios depend on this:
+     *   1. A child that failed first, was retried, and now succeeds: the
+     *      original failed_jobs row stays in the failed list and
+     *      RowEnricher::failed reads `qi:lineage:{uuid}` per render.
+     *   2. A failure between this read and the XADD — the lineage key is
+     *      the safety net until a durable record exists.
+     *
+     * @return array{mixed, ?string}
+     */
+    private function readStartAndLineage(RedisConnection $redis, ?string $uuid): array
     {
-        if ($uuid === null || $uuid === '') {
-            return null;
+        if ($uuid === null) {
+            return [null, null];
         }
 
-        $key = KeyPrefix::make("start:{$uuid}");
-        $start = $redis->command('get', [$key]);
+        $lineage = new ChainLineageStore();
+        $wantsLineage = Config::bool('chain_lineage.enabled', true);
+        $batched = $wantsLineage && $lineage->usesPrimaryConnection();
 
-        if (! is_numeric($start)) {
-            return null;
+        $reads = new RedisBatch($redis);
+        $reads->command('get', [KeyPrefix::make("start:{$uuid}")]);
+        if ($batched) {
+            $reads->command('get', [$lineage->lineageKey($uuid)]);
         }
 
-        $redis->command('del', [$key]);
+        $results = $reads->execute();
 
-        $ms = (int) round((microtime(true) - (float) $start) * 1000);
+        $parent = match (true) {
+            $batched => $results[1] ?? null,
+            $wantsLineage => $lineage->readLineage($uuid),
+            default => null,
+        };
 
-        return max($ms, 0);
+        return [$results[0] ?? null, is_string($parent) && $parent !== '' ? $parent : null];
     }
 
     private function writeStreams(
-        RedisConnection $redis,
+        RedisBatch $batch,
         JobProcessed $event,
         string $class,
         string $connectionName,
         string $queueKey,
         ?int $durationMs,
         string $isoNow,
-    ): ?string {
+        ?string $parentUuid,
+        ?string $callSite,
+    ): void {
         $baseFields = [
             'class' => $class,
             'connection' => $connectionName,
@@ -203,11 +220,7 @@ final readonly class RecordJobProcessed
 
         // Backward chain lineage — copy the interim qi:lineage:{uuid} pointer
         // (written by RecordJobQueued on a successful claim pop) into the
-        // durable stream row, then forget the interim hash so subsequent reads
-        // pick the persisted value off the row directly. The interim hash's
-        // 7-day TTL is the safety net if anything in this listener throws
-        // before the stamp lands.
-        $parentUuid = $this->resolveParentUuid($event);
+        // durable stream row.
         if ($parentUuid !== null) {
             $baseFields['parent_uuid'] = $parentUuid;
         }
@@ -222,11 +235,8 @@ final readonly class RecordJobProcessed
 
         // Initiator call site — captured queue-side by RecordJobQueued and
         // parked in the interim `qi:initiator:{uuid}` hash (call site can't
-        // ride Context). Read it back here and copy onto the durable row,
-        // same omit-when-empty pattern. The interim key is shortened to a
-        // 60s tail AFTER the XADDs land — never DEL'd — so a throw before
-        // the copy leaves the 7d TTL intact (spec §2.2).
-        $callSite = $this->resolveInitiatorCallSite($event);
+        // ride Context). Copied onto the durable row, same omit-when-empty
+        // pattern.
         if ($callSite !== null) {
             $baseFields['call_site'] = $callSite;
         }
@@ -244,57 +254,53 @@ final readonly class RecordJobProcessed
         $globalKey = KeyPrefix::make('completed');
         $perClassKey = KeyPrefix::make("completed:{$class}");
 
-        $globalStreamId = $this->xaddApprox($redis, $globalKey, $globalMax, $baseFields);
+        $this->xaddGlobal($batch, $event, $globalKey, $globalMax, $baseFields);
 
         $perClassFields = $baseFields;
         unset($perClassFields['class']);
 
-        $this->xaddApprox($redis, $perClassKey, $perClassMax, $perClassFields);
+        $this->xaddApprox($batch, $perClassKey, $perClassMax, $perClassFields);
 
         // Skip when connectionName is empty so we don't create a
         // suffix-less `qi:completed:connection:` key.
         if ($connectionName !== '') {
             $perConnKey = KeyPrefix::make("completed:connection:{$connectionName}");
-            $this->xaddApprox($redis, $perConnKey, $perConnMax, $baseFields);
+            $this->xaddApprox($batch, $perConnKey, $perConnMax, $baseFields);
         }
-
-        // The XADDs above have landed — the call site now lives durably on
-        // the completed stream, so the interim `qi:initiator:{uuid}` key is
-        // redundant. Shrink it to a 60s tail (never DEL — spec §2.2). Placed
-        // AFTER the XADDs, NOT in a finally, so a throw above keeps the key's
-        // full 7d TTL and no attribution is lost.
-        if ($callSite !== null) {
-            $uuid = $event->job->uuid();
-            if (is_string($uuid) && $uuid !== '') {
-                (new InitiatorStore())->shortenTtl($uuid);
-            }
-        }
-
-        return $globalStreamId;
     }
 
-    private function resolveParentUuid(JobProcessed $event): ?string
+    /**
+     * XADD to the global completed stream and, in the same script, index
+     * uuid → entry id (`uuid-completed:{uuid}`). The batch-detail view and
+     * the chain-lineage `↰ From` click-through follow that index to the
+     * completed modal, which opens by stream id. Written when batches or
+     * chain lineage is on, with the longer of their TTLs.
+     *
+     * @param  array<string, string>  $fields
+     */
+    private function xaddGlobal(RedisBatch $batch, JobProcessed $event, string $key, int $maxLen, array $fields): void
     {
-        if (! Config::bool('chain_lineage.enabled', true)) {
-            return null;
-        }
-
         $uuid = $event->job->uuid();
-        if (! is_string($uuid) || $uuid === '') {
-            return null;
+        $ttl = max(
+            Config::bool('batches.enabled', true) ? Config::int('batches.ttl_seconds', 604800) : 0,
+            Config::bool('chain_lineage.enabled', true) ? Config::int('chain_lineage.lineage_ttl_seconds', 604800) : 0,
+        );
+
+        if (! is_string($uuid) || $uuid === '' || $ttl <= 0) {
+            $this->xaddApprox($batch, $key, $maxLen, $fields);
+
+            return;
         }
 
-        // Read-only — the interim `qi:lineage:{uuid}` hash is intentionally
-        // left to age out via its `lineage_ttl_seconds` TTL (default 7d).
-        // Two scenarios depend on this:
-        //   1. A child that failed first, was retried, and now succeeds:
-        //      the original failed_jobs row stays in the failed list and
-        //      RowEnricher::failed reads `qi:lineage:{uuid}` per render.
-        //      Deleting here would orphan that row's parent attribution.
-        //   2. Anything throwing between this read and the XADD below —
-        //      the lineage hash is the safety net and a delete here would
-        //      lose it before any durable record exists.
-        return (new ChainLineageStore())->readLineage($uuid);
+        $batch->eval(
+            "local id = redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1], '*', unpack(ARGV, 3)) redis.call('SETEX', KEYS[2], ARGV[2], id) return id",
+            2,
+            $key,
+            KeyPrefix::make("uuid-completed:{$uuid}"),
+            (string) $maxLen,
+            (string) $ttl,
+            ...$this->flattenFields($fields),
+        );
     }
 
     /**
@@ -320,14 +326,13 @@ final readonly class RecordJobProcessed
      * capture or call-site capture is off, the uuid is missing, or no call
      * site was stamped (no application frame resolved at dispatch time).
      */
-    private function resolveInitiatorCallSite(JobProcessed $event): ?string
+    private function resolveInitiatorCallSite(?string $uuid): ?string
     {
         if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_call_site', false)) {
             return null;
         }
 
-        $uuid = $event->job->uuid();
-        if (! is_string($uuid) || $uuid === '') {
+        if ($uuid === null) {
             return null;
         }
 
@@ -384,20 +389,17 @@ final readonly class RecordJobProcessed
     /**
      * @param  array<string, string>  $fields
      */
-    private function xaddApprox(RedisConnection $redis, string $key, int $maxLen, array $fields): ?string
+    private function xaddApprox(RedisBatch $batch, string $key, int $maxLen, array $fields): void
     {
         // phpredis and Predis expose different XADD signatures. Route through eval() so a
         // single code path works on both drivers without a PhpRedisConnection::xAdd fork.
-        $result = RedisEval::exec(
-            $redis,
+        $batch->eval(
             "return redis.call('XADD', KEYS[1], 'MAXLEN', '~', ARGV[1], '*', unpack(ARGV, 2))",
             1,
             $key,
             (string) $maxLen,
             ...$this->flattenFields($fields),
         );
-
-        return is_string($result) && $result !== '' ? $result : null;
     }
 
     /**
@@ -415,18 +417,17 @@ final readonly class RecordJobProcessed
         return $out;
     }
 
-    private function writeProcessedCounters(RedisConnection $redis, string $class, string $connectionName, string $bucket, int $bucketExpireAt): void
+    private function writeProcessedCounters(RedisBatch $batch, string $class, string $connectionName, string $bucket, int $bucketExpireAt): void
     {
         if ($connectionName === '') {
             $key = KeyPrefix::make("processed:{$class}:{$bucket}");
-            $redis->command('incr', [$key]);
-            $redis->command('expireat', [$key, $bucketExpireAt]);
+            $batch->command('incr', [$key]);
+            $batch->command('expireat', [$key, $bucketExpireAt]);
 
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::incrPairWithExpire(),
             2,
             KeyPrefix::make("processed:{$class}:{$bucket}"),
@@ -448,20 +449,20 @@ final readonly class RecordJobProcessed
      * the roster, breaking monotonicity for an active class. 30 days
      * matches the `classes:{conn}` zset's retention bound.
      */
-    private function writeProcessedMonotonic(RedisConnection $redis, string $class, string $connectionName): void
+    private function writeProcessedMonotonic(RedisBatch $batch, string $class, string $connectionName): void
     {
         $aggregate = KeyPrefix::classKey('processed-total', $class);
-        $redis->command('incr', [$aggregate]);
-        $redis->command('expire', [$aggregate, self::MONOTONIC_TTL_SECONDS]);
+        $batch->command('incr', [$aggregate]);
+        $batch->command('expire', [$aggregate, self::MONOTONIC_TTL_SECONDS]);
 
         if ($connectionName !== '') {
             $perConnection = KeyPrefix::classKey('processed-total', $class, $connectionName);
-            $redis->command('incr', [$perConnection]);
-            $redis->command('expire', [$perConnection, self::MONOTONIC_TTL_SECONDS]);
+            $batch->command('incr', [$perConnection]);
+            $batch->command('expire', [$perConnection, self::MONOTONIC_TTL_SECONDS]);
         }
     }
 
-    private function writeDurationMetrics(RedisConnection $redis, string $class, string $connectionName, int $durationMs): void
+    private function writeDurationMetrics(RedisBatch $batch, string $class, string $connectionName, int $durationMs): void
     {
         // Default kept at 500 so existing installs whose published
         // `queue-insights.php` predates the new nested key don't silently
@@ -472,21 +473,20 @@ final readonly class RecordJobProcessed
 
         if ($connectionName === '') {
             $aggDuration = KeyPrefix::classKey('duration', $class);
-            $redis->command('hincrby', [$aggDuration, 'count', 1]);
-            $redis->command('hincrbyfloat', [$aggDuration, 'sum_ms', (float) $durationMs]);
-            RedisEval::exec($redis, LuaScripts::updateMaxDuration(), 1, $aggDuration, (string) $durationMs);
-            $redis->command('expire', [$aggDuration, 2592000]);
+            $batch->command('hincrby', [$aggDuration, 'count', 1]);
+            $batch->command('hincrbyfloat', [$aggDuration, 'sum_ms', (float) $durationMs]);
+            $batch->eval(LuaScripts::updateMaxDuration(), 1, $aggDuration, (string) $durationMs);
+            $batch->command('expire', [$aggDuration, 2592000]);
 
             $aggSamples = KeyPrefix::classKey('duration:samples', $class);
-            $redis->command('rpush', [$aggSamples, (string) $durationMs]);
-            $redis->command('ltrim', [$aggSamples, -$samplesCap, -1]);
-            $redis->command('expire', [$aggSamples, 2592000]);
+            $batch->command('rpush', [$aggSamples, (string) $durationMs]);
+            $batch->command('ltrim', [$aggSamples, -$samplesCap, -1]);
+            $batch->command('expire', [$aggSamples, 2592000]);
 
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::durationPair(),
             2,
             KeyPrefix::classKey('duration', $class),
@@ -500,8 +500,7 @@ final readonly class RecordJobProcessed
         // percentile read. Cap is driven by `retention.duration_samples_cap`
         // (default 200) — large enough for stable p95 reads, small enough to
         // keep per-class memory bounded under high-throughput tenants.
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::samplesPair(),
             2,
             KeyPrefix::classKey('duration:samples', $class),
@@ -512,16 +511,15 @@ final readonly class RecordJobProcessed
         );
     }
 
-    private function writeLastRun(RedisConnection $redis, string $class, string $connectionName, string $isoNow): void
+    private function writeLastRun(RedisBatch $batch, string $class, string $connectionName, string $isoNow): void
     {
         if ($connectionName === '') {
-            $redis->command('setex', [KeyPrefix::classKey('last_run', $class), 2592000, $isoNow]);
+            $batch->command('setex', [KeyPrefix::classKey('last_run', $class), 2592000, $isoNow]);
 
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::setexPair(),
             2,
             KeyPrefix::classKey('last_run', $class),
@@ -531,16 +529,15 @@ final readonly class RecordJobProcessed
         );
     }
 
-    private function writeClassesRoster(RedisConnection $redis, string $class, string $connectionName, int $nowTs): void
+    private function writeClassesRoster(RedisBatch $batch, string $class, string $connectionName, int $nowTs): void
     {
         if ($connectionName === '') {
-            $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
+            $batch->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
 
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::classesRoster(),
             2,
             KeyPrefix::make('classes'),

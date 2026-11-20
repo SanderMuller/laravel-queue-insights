@@ -126,6 +126,18 @@ final class ChainLineageStore
         $this->connection()->command('del', [$this->lineageKey($childUuid)]);
     }
 
+    /**
+     * True when lineage keys live on the package's primary Redis connection,
+     * so the job listeners can queue lineage commands into their own
+     * pipeline instead of calling this store.
+     */
+    public function usesPrimaryConnection(): bool
+    {
+        $override = Config::string('chain_lineage.redis_connection', '');
+
+        return $override === '' || $override === Config::string('redis_connection', 'default');
+    }
+
     public function lineageKey(string $childUuid): string
     {
         return KeyPrefix::make("lineage:{$childUuid}");

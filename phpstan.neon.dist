@@ -127,6 +127,8 @@ parameters:
         -
             identifier: new.internalClass
             paths:
+                - tests/Feature/Cluster/
+                - tests/Feature/Support/RedisBatchTest.php
                 - tests/Unit/Alerts/
                 - tests/Unit/Dashboard/
                 - tests/Unit/QueueAggregatesTest.php

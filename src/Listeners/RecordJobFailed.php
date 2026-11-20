@@ -4,7 +4,6 @@ namespace SanderMuller\QueueInsights\Listeners;
 
 use Carbon\CarbonImmutable;
 use Illuminate\Queue\Events\JobFailed;
-use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +20,7 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
-use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\RedisBatch;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
 use Throwable;
 
@@ -63,24 +62,31 @@ final readonly class RecordJobFailed
             $bucket = $now->format('YmdH');
             $isoNow = $now->toIso8601String();
 
-            $counterDays = max(1, Config::int('retention.failed_counters_days', 30));
-            $this->incrFailedCounters($redis, $class, $connectionName, $bucket, HourBucket::startTs($bucket) + ($counterDays * 86400));
-            $this->writeFailedMonotonic($redis, $class, $connectionName);
-
             $uuid = $event->job->uuid();
-            if ($uuid !== null && $uuid !== '') {
-                // Read `start:{uuid}` (microtime float written by RecordJobProcessing)
-                // before DELing so we can compute runtime for the failure modal +
-                // failed-row Runtime column. Mirrors RecordJobProcessed's path
-                // for successful runs but writes to a uuid-keyed side-key — the
-                // failed_jobs DB row has no duration field.
-                $startKey = KeyPrefix::make("start:{$uuid}");
-                $start = $redis->command('get', [$startKey]);
-                $redis->command('del', [$startKey]);
+            $uuid = $uuid !== null && $uuid !== '' ? $uuid : null;
+
+            // Read `start:{uuid}` (microtime float written by
+            // RecordJobProcessing) for the failure modal + failed-row Runtime
+            // column. Every write below then goes out in one pipeline.
+            $start = $uuid !== null
+                ? $redis->command('get', [KeyPrefix::make("start:{$uuid}")])
+                : null;
+
+            $batch = new RedisBatch($redis);
+
+            $counterDays = max(1, Config::int('retention.failed_counters_days', 30));
+            $this->incrFailedCounters($batch, $class, $connectionName, $bucket, HourBucket::startTs($bucket) + ($counterDays * 86400));
+            $this->writeFailedMonotonic($batch, $class, $connectionName);
+
+            if ($uuid !== null) {
+                // Mirrors RecordJobProcessed's duration path but writes to a
+                // uuid-keyed side-key — the failed_jobs DB row has no
+                // duration field.
+                $batch->command('del', [KeyPrefix::make("start:{$uuid}")]);
 
                 if (is_numeric($start)) {
                     $durationMs = max(0, (int) round((microtime(true) - (float) $start) * 1000));
-                    $redis->command('setex', [
+                    $batch->command('setex', [
                         KeyPrefix::make("failed-runtime:{$uuid}"),
                         self::FAILED_RUNTIME_TTL_SECONDS,
                         (string) $durationMs,
@@ -91,10 +97,10 @@ final readonly class RecordJobFailed
                 // already cleared on the pending → in-flight transition; this is
                 // here for the rare case where that listener was missed.
                 if (Config::bool('pending.enabled', true)) {
-                    $redis->command('del', [KeyPrefix::make("pending:{$uuid}")]);
-                    $redis->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                    $batch->command('del', [KeyPrefix::make("pending:{$uuid}")]);
+                    $batch->command('zrem', [KeyPrefix::make("pending-zset:{$connectionName}:{$queueKey}"), $uuid]);
                     // Inflight-zset entry was added by RecordJobProcessing.
-                    $redis->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuid]);
+                    $batch->command('zrem', [KeyPrefix::make("inflight-zset:{$connectionName}:{$queueKey}"), $uuid]);
                 }
 
                 // Batch tracking + chain-lineage click-through index —
@@ -113,7 +119,7 @@ final readonly class RecordJobFailed
                             Config::bool('batches.enabled', true) ? Config::int('batches.ttl_seconds', 604800) : 0,
                             Config::bool('chain_lineage.enabled', true) ? Config::int('chain_lineage.lineage_ttl_seconds', 604800) : 0,
                         );
-                        $redis->command('setex', [
+                        $batch->command('setex', [
                             KeyPrefix::make("uuid-failed:{$uuid}"),
                             $ttl,
                             (string) $failedJobsId,
@@ -136,21 +142,19 @@ final readonly class RecordJobFailed
                         $uuid,
                         ['origin' => $origin, 'call_site' => $callSite],
                         Config::int('initiator.ttl_seconds', 604800),
+                        $batch,
                     );
                 }
             }
 
-            $this->stampClassRoster($redis, $class, $connectionName, $nowTs, $isoNow);
+            $this->stampClassRoster($batch, $class, $connectionName, $nowTs, $isoNow);
 
             // qi:class:{uuid} — uuid → class index for backward-chain lineage
             // resolution. Same write as in RecordJobProcessed; failed jobs
             // also need their class addressable by uuid because a downstream
             // child can reference a failed parent in its lineage.
-            if (
-                Config::bool('chain_lineage.enabled', true)
-                && $uuid !== null && $uuid !== ''
-            ) {
-                $redis->command('setex', [
+            if ($uuid !== null && Config::bool('chain_lineage.enabled', true)) {
+                $batch->command('setex', [
                     ParentClassResolver::classKey($uuid),
                     Config::int('chain_lineage.lineage_ttl_seconds', 604800),
                     $class,
@@ -163,7 +167,9 @@ final readonly class RecordJobFailed
             // dispatch throw is caught by the same Log::warning net and never
             // loses the counter writes above; the dispatcher's event/notify
             // paths are independently try-wrapped.
-            $failureContext = $this->captureFailureContext($uuid);
+            $failureContext = $this->captureFailureContext($uuid, $batch);
+            $batch->execute();
+
             $this->dispatchFailureAlert($event, $class, $connectionName, $queueKey, $uuid, $failureContext);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobFailed failed', [
@@ -185,7 +191,7 @@ final readonly class RecordJobFailed
      *
      * @return array<string, mixed>|null
      */
-    private function captureFailureContext(?string $uuid): ?array
+    private function captureFailureContext(?string $uuid, RedisBatch $batch): ?array
     {
         if (! Config::bool('failure_context.enabled', true)) {
             return null;
@@ -198,6 +204,7 @@ final readonly class RecordJobFailed
                 $uuid,
                 $context,
                 Config::int('failure_context.ttl_seconds', 604800),
+                $batch,
             );
         }
 
@@ -226,18 +233,17 @@ final readonly class RecordJobFailed
      * Atomic INCR + EXPIREAT on both the aggregate and per-connection
      * counter keys. Empty `$connectionName` falls back to aggregate-only.
      */
-    private function incrFailedCounters(Connection $redis, string $class, string $connectionName, string $bucket, int $expireAt): void
+    private function incrFailedCounters(RedisBatch $batch, string $class, string $connectionName, string $bucket, int $expireAt): void
     {
         if ($connectionName === '') {
             $key = KeyPrefix::make("failed:{$class}:{$bucket}");
-            $redis->command('incr', [$key]);
-            $redis->command('expireat', [$key, $expireAt]);
+            $batch->command('incr', [$key]);
+            $batch->command('expireat', [$key, $expireAt]);
 
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::incrPairWithExpire(),
             2,
             KeyPrefix::make("failed:{$class}:{$bucket}"),
@@ -253,16 +259,16 @@ final readonly class RecordJobFailed
      * for the full design rationale (TTL-on-write avoids a race with
      * the snapshot prune that earlier drafts had).
      */
-    private function writeFailedMonotonic(Connection $redis, string $class, string $connectionName): void
+    private function writeFailedMonotonic(RedisBatch $batch, string $class, string $connectionName): void
     {
         $aggregate = KeyPrefix::classKey('failed-total', $class);
-        $redis->command('incr', [$aggregate]);
-        $redis->command('expire', [$aggregate, self::MONOTONIC_TTL_SECONDS]);
+        $batch->command('incr', [$aggregate]);
+        $batch->command('expire', [$aggregate, self::MONOTONIC_TTL_SECONDS]);
 
         if ($connectionName !== '') {
             $perConnection = KeyPrefix::classKey('failed-total', $class, $connectionName);
-            $redis->command('incr', [$perConnection]);
-            $redis->command('expire', [$perConnection, self::MONOTONIC_TTL_SECONDS]);
+            $batch->command('incr', [$perConnection]);
+            $batch->command('expire', [$perConnection, self::MONOTONIC_TTL_SECONDS]);
         }
     }
 
@@ -270,17 +276,16 @@ final readonly class RecordJobFailed
      * Stamp the aggregate + per-connection class rosters and the dual-write
      * `last_run` keys. Empty `$connectionName` falls back to aggregate-only.
      */
-    private function stampClassRoster(Connection $redis, string $class, string $connectionName, int $nowTs, string $isoNow): void
+    private function stampClassRoster(RedisBatch $batch, string $class, string $connectionName, int $nowTs, string $isoNow): void
     {
         if ($connectionName === '') {
-            $redis->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
-            $redis->command('setex', [KeyPrefix::classKey('last_run', $class), 2592000, $isoNow]);
+            $batch->command('zadd', [KeyPrefix::make('classes'), $nowTs, $class]);
+            $batch->command('setex', [KeyPrefix::classKey('last_run', $class), 2592000, $isoNow]);
 
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::classesRoster(),
             2,
             KeyPrefix::make('classes'),
@@ -290,8 +295,7 @@ final readonly class RecordJobFailed
             (string) 2592000,
         );
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::setexPair(),
             2,
             KeyPrefix::classKey('last_run', $class),

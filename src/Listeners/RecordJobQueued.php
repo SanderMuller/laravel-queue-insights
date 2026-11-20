@@ -3,7 +3,6 @@
 namespace SanderMuller\QueueInsights\Listeners;
 
 use Illuminate\Queue\Events\JobQueued;
-use Illuminate\Redis\Connections\Connection as RedisConnection;
 use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Log;
@@ -21,7 +20,7 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\PendingPayloadSnapshot;
-use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\RedisBatch;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
 
@@ -58,9 +57,11 @@ final class RecordJobQueued
                 return;
             }
 
-            $redis = Redis::connection(Config::string('redis_connection', 'default'));
+            // Every write below goes out in one pipeline; the only follow-up
+            // round trip is the lineage write for a popped chain claim.
+            $batch = new RedisBatch(Redis::connection(Config::string('redis_connection', 'default')));
 
-            $redis->command('setex', [
+            $batch->command('setex', [
                 KeyPrefix::make("pushed:{$uuid}"),
                 3600,
                 (string) microtime(true),
@@ -76,10 +77,24 @@ final class RecordJobQueued
             // off or no application frame resolved (e.g. a chained 2nd+ link).
             $callSite = $this->resolveCallSite();
 
-            $this->writePendingTracking($redis, $event, $uuid, $payload, $connection, $queueKey, $callSite);
-            $this->writeBatchTracking($redis, $uuid, $payload, $connection);
-            $this->resolveChainLineage($uuid, $payload, $connection, $queueKey);
-            $this->writeScheduleAttribution($redis, $uuid);
+            $this->writePendingTracking($batch, $event, $uuid, $payload, $connection, $queueKey, $callSite);
+            $this->writeBatchTracking($batch, $uuid, $payload, $connection);
+            $claimKey = $this->chainClaimKey($payload, $connection, $queueKey);
+            $lineage = new ChainLineageStore();
+            $claimIndex = $claimKey !== null && $lineage->usesPrimaryConnection()
+                ? $batch->command('rpop', [$claimKey])
+                : null;
+            $this->writeScheduleAttribution($batch, $uuid);
+
+            $results = $batch->execute();
+
+            $parentUuid = $claimIndex !== null
+                ? $results[$claimIndex] ?? null
+                : ($claimKey !== null ? $lineage->popClaim($claimKey) : null);
+            if (is_string($parentUuid) && $parentUuid !== '') {
+                $lineage->writeLineage($uuid, $parentUuid, Config::int('chain_lineage.lineage_ttl_seconds', 604800));
+            }
+
             $this->writeInitiatorTracking($uuid, $callSite);
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobQueued failed', [
@@ -101,7 +116,7 @@ final class RecordJobQueued
      * @param  array<array-key, mixed>|null  $payload  Decoded JobQueued payload.
      * @param  string  $callSite  Resolved dispatch `file:line`, '' when absent.
      */
-    private function writePendingTracking(RedisConnection $redis, JobQueued $event, string $uuid, ?array $payload, string $connection, string $queueKey, string $callSite): void
+    private function writePendingTracking(RedisBatch $batch, JobQueued $event, string $uuid, ?array $payload, string $connection, string $queueKey, string $callSite): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
@@ -126,12 +141,9 @@ final class RecordJobQueued
 
         $ttl = Config::int('pending.ttl_seconds', 86400);
 
-        // Six HSET round-trips (one per field) over a single multi-field call so
-        // the listener stays portable across phpredis variants — Predis 2.x's
-        // hset() helper is 3-arg, and `command('hset', [key, ...flat])` shape
-        // diverges between phpredis 4 and 5. The cost is ~6 commands instead of 1;
-        // listener fires per-job-queue at producer-side rate, so the absolute
-        // throughput hit is negligible vs the maintainability win.
+        // One HSET per field rather than a multi-field call: Predis 2.x's
+        // hset() helper is 3-arg, and the flat multi-field shape diverges
+        // between phpredis 4 and 5. They share the pipeline round trip.
         $data = is_array($payload) && isset($payload['data']) && is_array($payload['data']) ? $payload['data'] : null;
         $batchId = is_array($data) && isset($data['batchId']) && is_string($data['batchId']) && $data['batchId'] !== ''
             ? $data['batchId']
@@ -178,22 +190,18 @@ final class RecordJobQueued
         }
 
         foreach ($fields as $field => $value) {
-            $redis->command('hset', [$hashKey, $field, $value]);
+            $batch->command('hset', [$hashKey, $field, $value]);
         }
 
-        $redis->command('expire', [$hashKey, $ttl]);
+        $batch->command('expire', [$hashKey, $ttl]);
 
-        $redis->command('zadd', [$zsetKey, $availableAt, $uuid]);
-        $redis->command('expire', [$zsetKey, $ttl]);
+        $batch->command('zadd', [$zsetKey, $availableAt, $uuid]);
+        $batch->command('expire', [$zsetKey, $ttl]);
 
+        // Score-based eviction: keep the $cap highest-scored entries, drop
+        // the lowest available_at first. A no-op while under the cap.
         $cap = Config::int('pending.max_per_queue', 10000);
-        $count = $redis->command('zcard', [$zsetKey]);
-        if (is_int($count) && $count > $cap) {
-            // Score-based eviction (resolved Q1) — drops by lowest available_at
-            // first. ZREMRANGEBYRANK 0 N where N = (count - cap - 1) trims the
-            // overflow; the per-queue zset stays at exactly $cap entries.
-            $redis->command('zremrangebyrank', [$zsetKey, 0, $count - $cap - 1]);
-        }
+        $batch->command('zremrangebyrank', [$zsetKey, 0, -($cap + 1)]);
     }
 
     /**
@@ -327,7 +335,7 @@ final class RecordJobQueued
      *
      * @param  array<array-key, mixed>|null  $payload  Decoded JobQueued payload.
      */
-    private function writeBatchTracking(RedisConnection $redis, string $uuid, ?array $payload, string $connectionName): void
+    private function writeBatchTracking(RedisBatch $batch, string $uuid, ?array $payload, string $connectionName): void
     {
         if (! Config::bool('batches.enabled', true)) {
             return;
@@ -355,8 +363,7 @@ final class RecordJobQueued
         // created-at timestamp survives concurrent JobQueued events.
         // Routed via eval() to dodge phpredis-vs-Predis option-shape divergence
         // — same pattern as RecordJobProcessed::xaddApprox.
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             "return redis.call('ZADD', KEYS[1], 'NX', ARGV[1], ARGV[2])",
             1,
             $indexKey,
@@ -366,7 +373,7 @@ final class RecordJobQueued
         // EXPIRE on the index would reset whole-key TTL on every ZADD, so
         // old batchIds would never age out. Score-based pruning is cheap
         // (logarithmic) and self-bounding on each enqueue.
-        $redis->command('zremrangebyscore', [$indexKey, '-inf', (string) ($now - $ttl)]);
+        $batch->command('zremrangebyscore', [$indexKey, '-inf', (string) ($now - $ttl)]);
 
         // Per-connection roster — first-write-wins via Lua so concurrent
         // JobQueued events on different connections for the same batchId
@@ -377,8 +384,7 @@ final class RecordJobQueued
         // separate SETEX). Skip when connectionName is empty — drivers
         // without it can't be dropped into a per-connection roster.
         if ($connectionName !== '') {
-            RedisEval::exec(
-                $redis,
+            $batch->eval(
                 LuaScripts::batchClaimConnection(),
                 3,
                 KeyPrefix::make("batch:{$batchId}:connection"),
@@ -392,18 +398,18 @@ final class RecordJobQueued
             );
         }
 
-        $uuidsKey = KeyPrefix::make("batch:{$batchId}:uuids");
-        $count = $redis->command('llen', [$uuidsKey]);
-        if (! is_int($count) || $count < $cap) {
-            // Best-effort cap: under heavy concurrent dispatch a few writers
-            // can race past the limit before any sees it. ±10 over-cap is
-            // acceptable; Bus::findBatch()->totalJobs is the authoritative
-            // count.
-            $redis->command('rpush', [$uuidsKey, $uuid]);
-            $redis->command('expire', [$uuidsKey, $ttl]);
-        }
+        // Capped append. Bus::findBatch()->totalJobs stays the authoritative
+        // count; this list only feeds the batch-detail view.
+        $batch->eval(
+            "if redis.call('LLEN', KEYS[1]) < tonumber(ARGV[2]) then redis.call('RPUSH', KEYS[1], ARGV[1]); redis.call('EXPIRE', KEYS[1], ARGV[3]) end return 1",
+            1,
+            KeyPrefix::make("batch:{$batchId}:uuids"),
+            $uuid,
+            (string) $cap,
+            (string) $ttl,
+        );
 
-        $redis->command('setex', [
+        $batch->command('setex', [
             KeyPrefix::make("batch:uuid:{$uuid}"),
             $ttl,
             $batchId,
@@ -424,12 +430,15 @@ final class RecordJobQueued
      * — so the child carries the same tail the parent computed at push
      * time, and the keys collide deterministically.
      *
+     * Returns the claim key to RPOP, or null when lineage is off or the
+     * payload can't be fingerprinted.
+     *
      * @param  array<array-key, mixed>|null  $payload
      */
-    private function resolveChainLineage(string $uuid, ?array $payload, string $connection, string $queueKey): void
+    private function chainClaimKey(?array $payload, string $connection, string $queueKey): ?string
     {
         if (! Config::bool('chain_lineage.enabled', true)) {
-            return;
+            return null;
         }
 
         $command = is_array($payload) && isset($payload['data']) && is_array($payload['data'])
@@ -437,39 +446,27 @@ final class RecordJobQueued
             : null;
 
         if (! is_string($command) || $command === '') {
-            return;
+            return null;
         }
 
         $extracted = SerializedCommandReader::extract($command);
         if ($extracted === null) {
-            return;
+            return null;
         }
 
         $childClass = $extracted['class'];
         if (! is_string($childClass) || $childClass === '') {
-            return;
+            return null;
         }
 
         $tailClasses = $this->extractTailClasses($extracted['properties']['chained'] ?? null);
         if ($tailClasses === null) {
             // Malformed chained entry — bail rather than collide on a
             // partially-parsed parent fingerprint.
-            return;
+            return null;
         }
 
-        $store = new ChainLineageStore();
-        $key = ChainLineageClaim::key($connection, $queueKey, $childClass, $tailClasses);
-
-        $parentUuid = $store->popClaim($key);
-        if ($parentUuid === null) {
-            return;
-        }
-
-        $store->writeLineage(
-            $uuid,
-            $parentUuid,
-            Config::int('chain_lineage.lineage_ttl_seconds', 604800),
-        );
+        return ChainLineageClaim::key($connection, $queueKey, $childClass, $tailClasses);
     }
 
     /**
@@ -486,7 +483,7 @@ final class RecordJobQueued
      *     so `ScheduleReader::jobsDispatchedDuring($runId)` is a
      *     single ZRANGE.
      */
-    private function writeScheduleAttribution(RedisConnection $redis, string $uuid): void
+    private function writeScheduleAttribution(RedisBatch $batch, string $uuid): void
     {
         if (! Config::bool('scheduler.enabled', false)) {
             return;
@@ -502,17 +499,17 @@ final class RecordJobQueued
         }
 
         $hashKey = KeyPrefix::make("pending:{$uuid}");
-        $redis->command('hset', [$hashKey, 'schedule_task_key', $frame['task_key']]);
-        $redis->command('hset', [$hashKey, 'schedule_run_id', $frame['run_id']]);
+        $batch->command('hset', [$hashKey, 'schedule_task_key', $frame['task_key']]);
+        $batch->command('hset', [$hashKey, 'schedule_run_id', $frame['run_id']]);
 
         $jobsKey = KeyPrefix::make("sched:run-jobs:{$frame['run_id']}");
-        $redis->command('zadd', [$jobsKey, Date::now()->getTimestamp(), $uuid]);
+        $batch->command('zadd', [$jobsKey, Date::now()->getTimestamp(), $uuid]);
         // Cap the per-run job index so a fan-out task (e.g. an importer
         // queueing 100k jobs) can't grow the zset unbounded. Trim the
         // oldest by score; the dashboard surfaces the most-recent slice.
         $cap = Config::int('scheduler.retention.run_jobs_max', 5000);
-        $redis->command('zremrangebyrank', [$jobsKey, 0, -($cap + 1)]);
-        $redis->command('expire', [$jobsKey, Config::int('scheduler.retention.run_ttl_seconds', 604800)]);
+        $batch->command('zremrangebyrank', [$jobsKey, 0, -($cap + 1)]);
+        $batch->command('expire', [$jobsKey, Config::int('scheduler.retention.run_ttl_seconds', 604800)]);
     }
 
     /**

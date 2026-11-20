@@ -14,7 +14,7 @@ use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\ListenerFailureReporter;
 use SanderMuller\QueueInsights\Support\LuaScripts;
-use SanderMuller\QueueInsights\Support\RedisEval;
+use SanderMuller\QueueInsights\Support\RedisBatch;
 use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
 
@@ -38,67 +38,37 @@ final class RecordJobProcessing
 
             $now = microtime(true);
 
+            // Two round trips: the reads the writes depend on, then every
+            // write in one pipeline.
+            [$pushedRaw, $parentUuid] = $this->readPushedAndLineage($redis, $uuid);
+
+            $batch = new RedisBatch($redis);
+
             // Chain-claim ticket runs before child-fire so the child's
             // JobQueued listener can RPOP it (Phase 0 ordering proof).
-            $this->pushChainClaim($event, $uuid, $connection, $queueRaw, $queueKey);
+            $this->pushChainClaim($batch, $event, $uuid, $connection, $queueRaw, $queueKey);
 
             // Copy `qi:lineage:{uuid}` to the pending hash so the in-flight
             // modal renders `↰ From {uuid}` before the durable stream row
             // exists.
-            $this->copyLineageToPending($redis, $uuid);
+            if ($parentUuid !== null) {
+                $batch->command('hset', [KeyPrefix::make("pending:{$uuid}"), 'parent_uuid', $parentUuid]);
+            }
 
-            // Pending → in-flight transition runs before the wait-time path so
-            // it isn't accidentally skipped by an early return below (missing
-            // pushed key, clock-skew rejection). attempts ≥2 on retries /
+            // Pending → in-flight transition. attempts ≥2 on retries /
             // release() — stamped so the row template can flag a retry without
             // touching the failed_jobs table.
             $attempts = (int) $event->job->attempts();
-            $this->markInFlight($redis, $uuid, $connection, $queueKey, (int) $now, $attempts);
-            $redis->command('setex', [
+            $this->markInFlight($batch, $uuid, $connection, $queueKey, (int) $now, $attempts);
+            $batch->command('setex', [
                 KeyPrefix::make("start:{$uuid}"),
                 3600,
                 (string) $now,
             ]);
 
-            // Wait-time capture — derive from the pushed:{uuid} key written by
-            // RecordJobQueued. Missing-key path is the legacy / custom-driver
-            // case (no JobQueued listener was active when the job was pushed,
-            // or the driver omitted payload.uuid); render `—` for that job.
-            $pushedRaw = $redis->command('get', [KeyPrefix::make("pushed:{$uuid}")]);
-            if (! is_string($pushedRaw) || ! is_numeric($pushedRaw)) {
-                return;
-            }
+            $this->writeWaitSample($batch, $pushedRaw, $now, $uuid, $connection, $queueKey);
 
-            $waitMs = max(0, (int) round(($now - (float) $pushedRaw) * 1000));
-
-            // Cross-host clock-skew guard. The `pushed_at` timestamp comes
-            // from the producer host, `$now` from the worker host. With NTP
-            // drift either direction, raw delta can be wildly wrong.
-            // Negative skew is already clamped to 0 above. Positive skew is
-            // bounded here at 7 days — anything larger is bogus and would
-            // poison p50/p95 for the full retention window. (Codex review.)
-            if ($waitMs > 604800000) {
-                return;
-            }
-
-            // Per-job wait sample. TTL = retention window (7d) so the modal
-            // can render `Wait: …` for any job still in the recent-completed
-            // / failed views.
-            $redis->command('setex', [
-                KeyPrefix::make("wait:{$uuid}"),
-                604800,
-                (string) $waitMs,
-            ]);
-
-            // Per-queue rolling wait-time sample set. Score is `$now`
-            // (insertion ts) so trim drops oldest entries; using wait_ms as
-            // score would drop the fastest jobs and skew p50/p95 (codex).
-            // Members are uuids; `queueWaitPercentiles` MGETs `wait:{uuid}`.
-            $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
-
-            $redis->command('zadd', [$waitKey, $now, $uuid]);
-            $redis->command('zremrangebyrank', [$waitKey, 0, -1001]);
-            $redis->command('expire', [$waitKey, 604800]);
+            $batch->execute();
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobProcessing failed', [
                 'exception' => $throwable::class,
@@ -130,14 +100,13 @@ final class RecordJobProcessing
      * without a second write path. Cleanup on Processed/Failed deletes the
      * hash + both zset entries.
      */
-    private function markInFlight(RedisConnection $redis, string $uuid, string $connection, string $queueKey, int $startedAt, int $attempts): void
+    private function markInFlight(RedisBatch $batch, string $uuid, string $connection, string $queueKey, int $startedAt, int $attempts): void
     {
         if (! Config::bool('pending.enabled', true)) {
             return;
         }
 
-        RedisEval::exec(
-            $redis,
+        $batch->eval(
             LuaScripts::markInFlight(),
             3,
             KeyPrefix::make("pending:{$uuid}"),
@@ -151,32 +120,75 @@ final class RecordJobProcessing
     }
 
     /**
-     * Copy `qi:lineage:{uuid}` into the pending hash so the in-flight modal
-     * can render the parent_uuid before the job completes (and before the
-     * durable stream row exists). Idempotent: HSET overwrites the existing
-     * pending-hash field with the same value, no harm on retry. Skipped when
-     * pending tracking is disabled or the interim hash is empty.
+     * Read `pushed:{uuid}` (for the wait sample) and, when lineage feeds the
+     * pending hash, `qi:lineage:{uuid}`, in one round trip. The lineage read
+     * goes to its own connection when `chain_lineage.redis_connection`
+     * points elsewhere.
+     *
+     * @return array{mixed, ?string}
      */
-    private function copyLineageToPending(RedisConnection $redis, string $uuid): void
+    private function readPushedAndLineage(RedisConnection $redis, string $uuid): array
     {
-        if (! Config::bool('chain_lineage.enabled', true)) {
+        $lineage = new ChainLineageStore();
+        $wantsLineage = Config::bool('chain_lineage.enabled', true) && Config::bool('pending.enabled', true);
+        $batched = $wantsLineage && $lineage->usesPrimaryConnection();
+
+        $reads = new RedisBatch($redis);
+        $reads->command('get', [KeyPrefix::make("pushed:{$uuid}")]);
+        if ($batched) {
+            $reads->command('get', [$lineage->lineageKey($uuid)]);
+        }
+
+        $results = $reads->execute();
+
+        $parent = match (true) {
+            $batched => $results[1] ?? null,
+            $wantsLineage => $lineage->readLineage($uuid),
+            default => null,
+        };
+
+        return [$results[0] ?? null, is_string($parent) && $parent !== '' ? $parent : null];
+    }
+
+    /**
+     * Wait-time capture from the `pushed:{uuid}` timestamp RecordJobQueued
+     * wrote. A missing key is the legacy / custom-driver case (no JobQueued
+     * listener when the job was pushed, or no payload.uuid); the modal
+     * renders `—` for that job.
+     */
+    private function writeWaitSample(RedisBatch $batch, mixed $pushedRaw, float $now, string $uuid, string $connection, string $queueKey): void
+    {
+        if (! is_string($pushedRaw) || ! is_numeric($pushedRaw)) {
             return;
         }
 
-        if (! Config::bool('pending.enabled', true)) {
+        $waitMs = max(0, (int) round(($now - (float) $pushedRaw) * 1000));
+
+        // Cross-host clock-skew guard. `pushed_at` comes from the producer
+        // host, `$now` from the worker host. Negative skew is clamped above;
+        // anything over 7 days is bogus and would poison p50/p95 for the
+        // full retention window.
+        if ($waitMs > 604800000) {
             return;
         }
 
-        $parent = (new ChainLineageStore())->readLineage($uuid);
-        if ($parent === null) {
-            return;
-        }
-
-        $redis->command('hset', [
-            KeyPrefix::make("pending:{$uuid}"),
-            'parent_uuid',
-            $parent,
+        // Per-job wait sample, kept for the 7d retention window so the modal
+        // can render `Wait: …` for jobs in the recent-completed / failed views.
+        $batch->command('setex', [
+            KeyPrefix::make("wait:{$uuid}"),
+            604800,
+            (string) $waitMs,
         ]);
+
+        // Per-queue rolling sample set. Score is `$now` (insertion ts) so the
+        // trim drops the oldest entries; scoring by wait_ms would drop the
+        // fastest jobs and skew p50/p95. `queueWaitPercentiles` MGETs
+        // `wait:{uuid}` for the members.
+        $waitKey = KeyPrefix::make("wait:{$connection}:{$queueKey}");
+
+        $batch->command('zadd', [$waitKey, $now, $uuid]);
+        $batch->command('zremrangebyrank', [$waitKey, 0, -1001]);
+        $batch->command('expire', [$waitKey, 604800]);
     }
 
     /**
@@ -191,7 +203,7 @@ final class RecordJobProcessing
      *   - the payload is encrypted (extractChainContext returns null)
      *   - the parent has no chained tail (last link / non-chain dispatch)
      */
-    private function pushChainClaim(JobProcessing $event, string $uuid, string $defaultConnection, string $defaultQueueRaw, string $defaultQueueKey): void
+    private function pushChainClaim(RedisBatch $batch, JobProcessing $event, string $uuid, string $defaultConnection, string $defaultQueueRaw, string $defaultQueueKey): void
     {
         if (! Config::bool('chain_lineage.enabled', true)) {
             return;
@@ -247,11 +259,17 @@ final class RecordJobProcessing
 
             $key = ChainLineageClaim::key($connection, $queueKey, $context['next_class'], $tailClasses);
 
-            (new ChainLineageStore())->pushClaim(
-                $key,
-                $uuid,
-                Config::int('chain_lineage.claim_ttl_seconds', 60),
-            );
+            $ttl = Config::int('chain_lineage.claim_ttl_seconds', 60);
+            $store = new ChainLineageStore();
+            if (! $store->usesPrimaryConnection()) {
+                $store->pushClaim($key, $uuid, $ttl);
+
+                return;
+            }
+
+            if ($ttl > 0) {
+                $batch->eval(LuaScripts::pushChainClaim(), 1, $key, $uuid, (string) $ttl);
+            }
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: pushChainClaim failed', [
                 'exception' => $throwable::class,

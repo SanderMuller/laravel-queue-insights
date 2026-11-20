@@ -28,7 +28,7 @@ final class InitiatorStore
      *
      * @param  array<string, ?string>  $fields  e.g. ['origin' => 'http:...', 'call_site' => 'app/...:88']
      */
-    public function write(string $uuid, array $fields, int $ttl): void
+    public function write(string $uuid, array $fields, int $ttl, ?RedisBatch $batch = null): void
     {
         if ($uuid === '' || $ttl <= 0) {
             return;
@@ -45,7 +45,7 @@ final class InitiatorStore
             return;
         }
 
-        $redis = $this->connection();
+        $redis = $batch ?? $this->connection();
         $key = $this->key($uuid);
 
         // One HSET per field — keeps the call portable across phpredis

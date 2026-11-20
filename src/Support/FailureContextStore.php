@@ -22,7 +22,7 @@ final class FailureContextStore
      *
      * @param  array{app_context: array<array-key, mixed>, environment: array<string, scalar|null>}  $context
      */
-    public function write(string $uuid, array $context, int $ttl): void
+    public function write(string $uuid, array $context, int $ttl, ?RedisBatch $batch = null): void
     {
         if ($uuid === '' || $ttl <= 0) {
             return;
@@ -41,7 +41,7 @@ final class FailureContextStore
             return;
         }
 
-        $redis = $this->connection();
+        $redis = $batch ?? $this->connection();
         $key = $this->key($uuid);
 
         // One HSET per field — portable across phpredis variants, same

@@ -5,6 +5,7 @@ use Illuminate\Redis\Connections\PredisClusterConnection;
 use SanderMuller\QueueInsights\Support\BatchItemMeta;
 use SanderMuller\QueueInsights\Support\KeyPrefix;
 use SanderMuller\QueueInsights\Support\LuaScripts;
+use SanderMuller\QueueInsights\Support\RedisBatch;
 use SanderMuller\QueueInsights\Support\RedisEval;
 use SanderMuller\QueueInsights\Support\RedisPipeline;
 use SanderMuller\QueueInsights\Tests\Support\R;
@@ -127,6 +128,28 @@ it('runs a pipelined multi-key read through the eager cluster fallback', functio
     expect($results)->toBe(['10', '20']);
 
     $redis->command('del', [$a, $b]);
+})->group('cluster');
+
+it('runs a RedisBatch with a 2-key eval through the eager cluster fallback', function (): void {
+    $redis = R::conn('cluster');
+
+    $stream = KeyPrefix::make('cluster-batch:stream');
+    $index = KeyPrefix::make('cluster-batch:index');
+
+    $batch = new RedisBatch($redis);
+    $batch->command('setex', [KeyPrefix::make('cluster-batch:a'), 60, '1']);
+    $batch->eval(
+        "local id = redis.call('XADD', KEYS[1], '*', 'f', 'v') redis.call('SETEX', KEYS[2], 60, id) return id",
+        2,
+        $stream,
+        $index,
+    );
+    $results = $batch->execute();
+
+    expect($results)->toHaveCount(2)
+        ->and($redis->command('get', [$index]))->toBe($results[1]);
+
+    $redis->command('del', [$stream, $index, KeyPrefix::make('cluster-batch:a')]);
 })->group('cluster');
 
 it('runs a multi-key RENAME without CROSSSLOT (the purge-command pattern)', function (): void {
