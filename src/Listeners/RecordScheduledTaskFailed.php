@@ -57,10 +57,9 @@ final readonly class RecordScheduledTaskFailed
             }
 
             // Sentry event ID — keyed by the exact exception object so unrelated
-            // captures on the same hub cannot produce a wrong link. Populated by
-            // the beforeSend hook installed on the first task start; present
-            // only when sentry-laravel's listener fired (and captured) before
-            // ours.
+            // captures on the same hub cannot produce a wrong link. Present
+            // here only when something captured before this listener ran; the
+            // usual capture comes after it (see linkSentryEventLater).
             $sentryEventId = SentryExceptionEventRegistry::get($exception)
                 ?? ($previous instanceof Throwable ? SentryExceptionEventRegistry::get($previous) : null);
             if ($sentryEventId !== null) {
@@ -85,6 +84,7 @@ final readonly class RecordScheduledTaskFailed
                 $existingRunId = $this->store->recentlyFinishedRunId($taskKey);
                 if ($existingRunId !== null) {
                     $this->store->stampException($taskKey, $existingRunId, $exceptionPayload);
+                    $this->linkSentryEventLater($exception, $taskKey, $existingRunId, $exceptionPayload);
                     if ($failureContext !== null) {
                         $this->store->stampFailureContext($taskKey, $existingRunId, $failureContext);
                     }
@@ -117,6 +117,7 @@ final readonly class RecordScheduledTaskFailed
                 'output' => $this->capturer->capture($task),
                 'exception' => $exceptionPayload,
             ]);
+            $this->linkSentryEventLater($exception, $taskKey, $runId, $exceptionPayload);
 
             if ($failureContext !== null) {
                 $this->store->stampFailureContext($taskKey, $runId, $failureContext);
@@ -167,6 +168,26 @@ final readonly class RecordScheduledTaskFailed
             $event->exception,
             $failureContext,
         );
+    }
+
+    /**
+     * `schedule:run` reports the exception after dispatching this event, so
+     * the event ID is usually not known yet. Stamp it onto the run when the
+     * beforeSend hook records it.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function linkSentryEventLater(Throwable $exception, string $taskKey, string $runId, array $payload): void
+    {
+        if (isset($payload['sentry_event_id'])) {
+            return;
+        }
+
+        $store = $this->store;
+        SentryExceptionEventRegistry::whenRecorded($exception, static function (string $eventId) use ($store, $taskKey, $runId, $payload): void {
+            $payload['sentry_event_id'] = $eventId;
+            $store->stampException($taskKey, $runId, $payload);
+        });
     }
 
     private function truncate(string $value, int $cap): string

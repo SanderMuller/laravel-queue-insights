@@ -237,6 +237,58 @@ it('stores the sentry event id via stampException when Finished ran before Faile
     expect($detail['exception']['sentry_event_id'] ?? null)->toBeString()->not->toBeEmpty();
 });
 
+it('stores the sentry event id when sentry captures after the listener, in schedule:run order', function (bool $finishedFirst): void {
+    $task = makeFailureCtxScheduleEvent();
+    $taskKey = TaskKey::for($task);
+    $runId = (string) Str::ulid();
+    $now = Date::now()->getTimestampMs();
+
+    $store = new RunStore();
+    $store->recordStarting([
+        'task_key' => $taskKey,
+        'run_id' => $runId,
+        'started_at_ms' => $now,
+        'host_id' => 'host-1',
+        'is_background' => false,
+        'expected_finish_at_ms' => $now + 60_000,
+    ]);
+
+    if ($finishedFirst) {
+        $store->recordFinish([
+            'task_key' => $taskKey,
+            'run_id' => $runId,
+            'finished_at_ms' => $now,
+            'runtime_ms' => 0,
+            'exit_code' => 1,
+            'status' => 'failed',
+            'output' => null,
+            'exception' => null,
+        ]);
+    }
+
+    $exception = new RuntimeException('reported after the failed event');
+
+    withBoundSentryHub(function () use ($store, $task, $exception): void {
+        // ScheduleRunCommand dispatches ScheduledTaskFailed, then calls
+        // $handler->report($e), which is where Sentry captures.
+        (new RecordScheduledTaskFailed($store, new OutputCapturer(), resolve(IssueDispatcher::class)))
+            ->handle(new ScheduledTaskFailed($task, $exception));
+
+        captureException($exception);
+    });
+
+    $detail = (new ScheduleReader())->runDetail($taskKey, $runId);
+    if ($detail === null) {
+        throw new RuntimeException('expected a run detail for the seeded run');
+    }
+
+    expect($detail['exception']['sentry_event_id'] ?? null)->toBeString()->not->toBeEmpty()
+        ->and($detail['exception']['message'] ?? null)->toBe('reported after the failed event');
+})->with([
+    'Failed only' => false,
+    'Finished before Failed' => true,
+]);
+
 it('omits sentry_event_id when no sentry hub is bound', function (): void {
     $task = makeFailureCtxScheduleEvent();
     $taskKey = TaskKey::for($task);

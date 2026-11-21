@@ -2,6 +2,7 @@
 
 namespace SanderMuller\QueueInsights\Support;
 
+use Closure;
 use Sentry\Event;
 use Sentry\EventHint;
 use Sentry\Options;
@@ -27,9 +28,40 @@ final class SentryExceptionEventRegistry
     /** @var WeakMap<Options, true>|null */
     private static ?WeakMap $hooked = null;
 
+    /** @var WeakMap<Throwable, Closure(string): void>|null */
+    private static ?WeakMap $pending = null;
+
     public static function record(Throwable $exception, string $eventId): void
     {
         self::map()[$exception] = $eventId;
+
+        $callback = self::$pending[$exception] ?? null;
+        if ($callback === null) {
+            return;
+        }
+
+        unset(self::$pending[$exception]);
+
+        try {
+            $callback($eventId);
+        } catch (Throwable) {
+            // Runs inside Sentry's beforeSend: never break the host's capture.
+        }
+    }
+
+    /**
+     * Run `$callback` with the event ID once Sentry captures `$exception`.
+     * Laravel's `schedule:run` dispatches `ScheduledTaskFailed` before it
+     * reports the exception, so the failure listener records the run first
+     * and links the event here. Dropped with the exception if it is never
+     * captured.
+     *
+     * @param  Closure(string): void  $callback
+     */
+    public static function whenRecorded(Throwable $exception, Closure $callback): void
+    {
+        self::$pending ??= new WeakMap();
+        self::$pending[$exception] = $callback;
     }
 
     public static function get(Throwable $exception): ?string
