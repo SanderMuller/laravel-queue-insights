@@ -126,6 +126,26 @@ it('RecordJobProcessing computes wait_ms from pushed:{uuid} and writes both wait
         ->toBeLessThan(microtime(true) + 1);
 });
 
+it('drops pushed:{uuid} at pickup so a retry adds no second wait sample', function (): void {
+    $uuid = 'wait-uuid-retry';
+
+    (new RecordJobQueued())->handle(makeJobQueuedEvent($uuid, 'redis', 'video'));
+    Sleep::usleep(20_000);
+    (new RecordJobProcessing())->handle(makeJobProcessingEvent($uuid, 'redis', 'video'));
+
+    $firstWait = R::int('get', 'qmtest:wait:' . $uuid);
+    $firstScore = R::float('zscore', 'qmtest:wait:redis:video', $uuid);
+    expect(R::int('exists', 'qmtest:pushed:' . $uuid))->toBe(0);
+
+    // A retry (release / backoff) fires JobProcessing again without a new
+    // JobQueued. Its wait would count the first attempt and the backoff.
+    Sleep::usleep(20_000);
+    (new RecordJobProcessing())->handle(makeJobProcessingEvent($uuid, 'redis', 'video', attempts: 2));
+
+    expect(R::int('get', 'qmtest:wait:' . $uuid))->toBe($firstWait)
+        ->and(R::float('zscore', 'qmtest:wait:redis:video', $uuid))->toBe($firstScore);
+});
+
 it('per-queue wait ZSET key is canonicalised so SQS URLs match dashboard reads', function (): void {
     $uuid = 'sqs-uuid-1';
     $url = 'https://sqs.eu-west-1.amazonaws.com/123/work';

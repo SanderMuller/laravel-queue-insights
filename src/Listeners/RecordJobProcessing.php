@@ -68,6 +68,12 @@ final class RecordJobProcessing
 
             $this->writeWaitSample($batch, $pushedRaw, $now, $uuid, $connection, $queueKey);
 
+            // Read once: a retry fires JobProcessing again with no new
+            // JobQueued, and its wait would count the first attempt too.
+            if ($pushedRaw !== null && $pushedRaw !== false) {
+                $batch->command('del', [KeyPrefix::make("pushed:{$uuid}")]);
+            }
+
             $batch->execute();
         } catch (Throwable $throwable) {
             Log::warning('queue-insights: RecordJobProcessing failed', [
