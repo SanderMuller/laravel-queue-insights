@@ -32,6 +32,7 @@ JobFailed(child)      ──► (no copy — qi:lineage:{uuid} survives at 7d TT
                           RowEnricher::failed reads it directly per page)
 
 JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
+                                (only when the job has a chained tail)
                                 (uuid → class index; hydrates parent_uuid → label)
 ```
 
@@ -41,7 +42,7 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
 |---|---|---|---|---|
 | `qi:chain-claim:{conn}:{queue}:{nextClass}:{tailFp}` | `RecordJobProcessing` (LPUSH via Lua) | `RecordJobQueued` (RPOP) | `chain_lineage.claim_ttl_seconds` (60 s) | Per-shape FIFO list of parent UUIDs awaiting attribution |
 | `qi:lineage:{child-uuid}` | `RecordJobQueued` on claim hit | `RowEnricher::failed`, `RecordJobProcessing` (copy to pending), `RecordJobProcessed` (copy to stream; never deleted) | `chain_lineage.lineage_ttl_seconds` (7 d) | Child→parent pointer; the only parent record a failed row has |
-| `qi:class:{uuid}` | `RecordJobProcessed`, `RecordJobFailed` | `ParentClassResolver::resolve(Many)` | `chain_lineage.lineage_ttl_seconds` (7 d) | uuid → class label; used to render `Parent: {uuid} (Class)` |
+| `qi:class:{uuid}` | `RecordJobProcessed`, `RecordJobFailed` (jobs with a chained tail only) | `ParentClassResolver::resolve(Many)` | `chain_lineage.lineage_ttl_seconds` (7 d) | uuid → class label; used to render `Parent: {uuid} (Class)` |
 | `parent_uuid` field on the completed-stream XADD | `RecordJobProcessed` (copies from `qi:lineage:{uuid}`) | `RowEnricher::completed` | stream retention | Hot-path read with no Redis hit |
 
 ## Touchpoints — files that own this subsystem
@@ -128,12 +129,19 @@ JobProcessed/Failed(parent) ──► SETEX qi:class:{uuid} = class
    value equals their declared default. For default `Bus::chain()` usage
    both fields are null, both are stripped, both are unusable. The read
    side's gate is "always RPOP".
-6. **`qi:class:{uuid}` is best-effort.** The class label drops past
+6. **`qi:class:{uuid}` is written only for jobs with a chained tail.**
+   Only those can be a `parent_uuid` (the claim is pushed at the parent's
+   `JobProcessing` only when `extractChainContext` sees a tail). Writing it
+   for every job cost ~136 B of Redis per job for 7 days with no reader.
+   `qi:uuid-completed:{uuid}` likewise keeps the long TTL only for batch
+   members, chain parents and schedule-dispatched jobs (1 h otherwise,
+   for the in-flight modal's drain follow).
+7. **`qi:class:{uuid}` is best-effort.** The class label drops past
    `lineage_ttl_seconds`. Don't add a fallback that scans the completed
    stream — the side-key is the contract; aged-out parents render as
    "uuid only".
 
-7. **A lineage Redis failure never costs the listener's other writes.**
+8. **A lineage Redis failure never costs the listener's other writes.**
    `chain_lineage.redis_connection` can name its own instance. Lineage
    reads/writes on that path go through `ChainLineageStore::bestEffort`
    (log + `ListenerFailureReporter`, continue with the parent unresolved);

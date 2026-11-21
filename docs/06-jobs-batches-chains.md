@@ -57,7 +57,7 @@ The data is **event-captured into Redis** alongside Laravel's own `BatchReposito
 - `qi:batch:{id}:uuids` (list), RPUSH-ordered uuids in the batch. Bounded per batch by `batches.max_uuids_per_batch` (default 5000, best-effort under heavy concurrent dispatch).
 - `qi:batch:uuid:{uuid}` (string), reverse lookup uuid → batchId, used to render the per-row chip on completed jobs.
 
-`RecordJobProcessed` and `RecordJobFailed` add two more per-uuid index keys (`qi:uuid-completed:{uuid}` and `qi:uuid-failed:{uuid}`) so the per-item rollup can route clicks into the existing modal flows.
+`RecordJobProcessed` and `RecordJobFailed` add two more per-uuid index keys (`qi:uuid-completed:{uuid}` and `qi:uuid-failed:{uuid}`) so the per-item rollup can route clicks into the existing modal flows. `qi:uuid-completed:{uuid}` keeps the batch / chain-lineage TTL only for jobs a view links to: batch members, jobs with a chained tail, and jobs dispatched by a scheduled task (or every job, when `initiator.capture_origin` is off). Other jobs keep it for one hour, long enough for an open in-flight modal to follow its job to the completed modal.
 
 Bounded storage:
 
@@ -83,7 +83,7 @@ For **failed jobs** the source is `failed_jobs.payload.data.command` (Laravel al
 - **Disable** via `QUEUE_INSIGHTS_CHAIN_LINEAGE=false` (or `chain_lineage.enabled = false`). Both write and read sides short-circuit at the listener entry, zero Redis writes, zero overhead.
 - **Encrypted parents (`ShouldBeEncrypted`) are silently skipped on both sides**: the serialized command body is opaque base64, so neither the parent's chain context nor the child's tail can be decoded. The child renders without a parent attribution; document this limitation if you mix encrypted chains with the dashboard.
 - **Cross-worker collision tolerance.** Two parents with identical chain shape (same connection/queue/next-class/remaining-tail) running concurrently on different workers can attribute their children to each other in dispatch order rather than dispatch identity. Within a single worker chain dispatch is synchronous, so attribution is exact. Acceptable for an observability tool, see `internal/specs/backward-chain-lineage.md` §3 for the full collision model.
-- **Class label is best-effort.** `qi:class:{uuid}` (TTL = `chain_lineage.lineage_ttl_seconds`, default 7 d) is the index that hydrates a parent UUID to a class name in the markdown export and modal. Past that horizon the UUID still renders, just without `(ClassName)`.
+- **Class label is best-effort.** `qi:class:{uuid}` (TTL = `chain_lineage.lineage_ttl_seconds`, default 7 d, written only for jobs with a chained tail, the only jobs a child can point at) is the index that hydrates a parent UUID to a class name in the markdown export and modal. Past that horizon the UUID still renders, just without `(ClassName)`.
 - **Click-through to the parent's modal is not in v1**: the lineage row is plain text plus a copy-to-clipboard button. Resolving a UUID to its target surface (completed stream id vs failed_jobs id) is a follow-up.
 
 `queue:retry` re-runs a failed job through the normal worker path, so the eventual completed-stream entry of a retried chained job will still carry the correct `chain` field. The retry doesn't lose chain visibility. Backward lineage is keyed by uuid and survives the retry too: the existing `qi:lineage:{uuid}` is never overwritten with null.

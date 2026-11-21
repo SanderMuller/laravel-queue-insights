@@ -100,6 +100,24 @@ it('RowEnricher::completed exposes parent_uuid and resolves parent_class', funct
         ->and($byClass[ChainChildJob::class]['parent_class'])->toBe(ChainParentJob::class);
 });
 
+it('indexes class and completed uuid for 7 days only on the parent, not the last link', function (): void {
+    Bus::chain([new ChainParentJob(), new ChainChildJob()])->dispatch();
+    workSurface(2);
+
+    $uuids = [];
+    foreach (StreamEntries::fromXrange(R::raw('xrange', 'qmtest:completed', '-', '+')) as $fields) {
+        $uuids[$fields['class']] = $fields['uuid'];
+    }
+
+    $parent = $uuids[ChainParentJob::class];
+    $child = $uuids[ChainChildJob::class];
+
+    expect(R::str('get', 'qmtest:class:' . $parent))->toBe(ChainParentJob::class)
+        ->and(R::int('exists', 'qmtest:class:' . $child))->toBe(0)
+        ->and(R::int('ttl', 'qmtest:uuid-completed:' . $parent))->toBeGreaterThan(3600)
+        ->and(R::int('ttl', 'qmtest:uuid-completed:' . $child))->toBeGreaterThan(0)->toBeLessThanOrEqual(3600);
+});
+
 it('RowEnricher::failed reads qi:lineage and qi:class side-channels', function (): void {
     // Seed a fake parent class + child lineage hash, then drive the enricher
     // with a synthetic failed row (no real failed_jobs table needed for this

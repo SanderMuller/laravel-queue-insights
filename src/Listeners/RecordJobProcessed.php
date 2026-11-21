@@ -37,6 +37,9 @@ final readonly class RecordJobProcessed
      */
     private const int MONOTONIC_TTL_SECONDS = 2592000;
 
+    /** One hour: covers an in-flight modal following its job to completed. */
+    private const int SHORT_UUID_INDEX_TTL = 3600;
+
     public function __construct(
         private ResolveJobClass $resolveJobClass,
         private PayloadSanitizer $sanitizer,
@@ -92,10 +95,12 @@ final readonly class RecordJobProcessed
 
             $this->writeLastRun($batch, $class, $connectionName, $isoNow);
 
-            // qi:class:{uuid} — uuid → class index used by the backward-chain
-            // lineage UI to hydrate `parent_uuid` to a class label. Skipped
-            // when chain lineage is disabled (no consumer).
-            if ($uuid !== null && Config::bool('chain_lineage.enabled', true)) {
+            $chainJson = $this->encodedChain($event);
+
+            // qi:class:{uuid} — uuid → class index the backward-chain lineage
+            // UI reads to label a child's `parent_uuid`. Only a job with a
+            // chained tail can become a parent, so the rest skip the key.
+            if ($uuid !== null && $chainJson !== null && Config::bool('chain_lineage.enabled', true)) {
                 $batch->command('setex', [
                     ParentClassResolver::classKey($uuid),
                     Config::int('chain_lineage.lineage_ttl_seconds', 604800),
@@ -109,7 +114,7 @@ final readonly class RecordJobProcessed
             $this->writeClassesRoster($batch, $class, $connectionName, $nowTs);
 
             $callSite = $this->resolveInitiatorCallSite($uuid);
-            $this->writeStreams($batch, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow, $parentUuid, $callSite);
+            $this->writeStreams($batch, $event, $class, $connectionName, $queueKey, $durationMs, $isoNow, $parentUuid, $callSite, $chainJson);
 
             // Belt-and-suspenders pending-tracking cleanup. RecordJobProcessing
             // already cleared on the pending → in-flight transition; this is
@@ -199,6 +204,7 @@ final readonly class RecordJobProcessed
         string $isoNow,
         ?string $parentUuid,
         ?string $callSite,
+        ?string $chainJson,
     ): void {
         $baseFields = [
             'class' => $class,
@@ -216,7 +222,6 @@ final readonly class RecordJobProcessed
         // class + per-link connection/queue, so the modal can offer a click-
         // through detail view without needing payload capture on. Typical
         // size: ~80-300 bytes for a 1-5 link chain.
-        $chainJson = $this->encodedChain($event);
         if ($chainJson !== null) {
             $baseFields['chain'] = $chainJson;
         }
@@ -257,7 +262,7 @@ final readonly class RecordJobProcessed
         $globalKey = KeyPrefix::make('completed');
         $perClassKey = KeyPrefix::make("completed:{$class}");
 
-        $this->xaddGlobal($batch, $event, $globalKey, $globalMax, $baseFields);
+        $this->xaddGlobal($batch, $event, $globalKey, $globalMax, $baseFields, $this->needsLongUuidIndex($event, $chainJson, $origin));
 
         $perClassFields = $baseFields;
         unset($perClassFields['class']);
@@ -274,20 +279,25 @@ final readonly class RecordJobProcessed
 
     /**
      * XADD to the global completed stream and, in the same script, index
-     * uuid → entry id (`uuid-completed:{uuid}`). The batch-detail view and
-     * the chain-lineage `↰ From` click-through follow that index to the
-     * completed modal, which opens by stream id. Written when batches or
-     * chain lineage is on, with the longer of their TTLs.
+     * uuid → entry id (`uuid-completed:{uuid}`). The batch-detail view, the
+     * chain-lineage `↰ From` click-through and the schedule run modal follow
+     * that index to the completed modal, which opens by stream id. Written
+     * when batches or chain lineage is on: with the longer of their TTLs for
+     * a job one of those views can link to, and for one hour otherwise
+     * (enough for an open in-flight modal to follow its job to completed).
      *
      * @param  array<string, string>  $fields
      */
-    private function xaddGlobal(RedisBatch $batch, JobProcessed $event, string $key, int $maxLen, array $fields): void
+    private function xaddGlobal(RedisBatch $batch, JobProcessed $event, string $key, int $maxLen, array $fields, bool $longIndex): void
     {
         $uuid = $event->job->uuid();
         $ttl = max(
             Config::bool('batches.enabled', true) ? Config::int('batches.ttl_seconds', 604800) : 0,
             Config::bool('chain_lineage.enabled', true) ? Config::int('chain_lineage.lineage_ttl_seconds', 604800) : 0,
         );
+        if (! $longIndex) {
+            $ttl = min($ttl, self::SHORT_UUID_INDEX_TTL);
+        }
 
         if (! is_string($uuid) || $uuid === '' || $ttl <= 0) {
             $this->xaddApprox($batch, $key, $maxLen, $fields);
@@ -304,6 +314,31 @@ final readonly class RecordJobProcessed
             (string) $ttl,
             ...$this->flattenFields($fields),
         );
+    }
+
+    /**
+     * Whether a dashboard view can link to this job by uuid after it leaves
+     * the in-flight list: a batch member (batch detail), a job with a chained
+     * tail (a child's `↰ From`), or one dispatched by a scheduled task (the
+     * run modal). Without a captured origin a schedule dispatch can't be
+     * told apart, so the long index is kept.
+     */
+    private function needsLongUuidIndex(JobProcessed $event, ?string $chainJson, ?string $origin): bool
+    {
+        if ($chainJson !== null) {
+            return true;
+        }
+
+        $data = $event->job->payload()['data'] ?? null;
+        if (is_array($data) && is_string($data['batchId'] ?? null) && $data['batchId'] !== '') {
+            return true;
+        }
+
+        if (! Config::bool('initiator.enabled', true) || ! Config::bool('initiator.capture_origin', true)) {
+            return true;
+        }
+
+        return $origin !== null && str_starts_with($origin, 'schedule:');
     }
 
     /**

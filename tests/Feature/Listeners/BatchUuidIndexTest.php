@@ -4,11 +4,14 @@ use Illuminate\Contracts\Queue\Job;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Mockery\MockInterface;
 use SanderMuller\QueueInsights\Listeners\RecordJobFailed;
 use SanderMuller\QueueInsights\Listeners\RecordJobProcessed;
+use SanderMuller\QueueInsights\Tests\Support\ChainChildJob;
+use SanderMuller\QueueInsights\Tests\Support\ChainParentJob;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
@@ -40,13 +43,16 @@ afterEach(function (): void {
     Schema::dropIfExists('failed_jobs');
 });
 
-function makeBatchJobMock(string $uuid): Job&MockInterface
+/**
+ * @param  array<string, mixed>  $data
+ */
+function makeBatchJobMock(string $uuid, array $data = []): Job&MockInterface
 {
     /** @var Job&MockInterface $job */
     $job = Mockery::mock(Job::class);
     $job->shouldReceive('uuid')->andReturn($uuid);
     $job->shouldReceive('getQueue')->andReturn('default');
-    $job->shouldReceive('payload')->andReturn(['displayName' => 'App\\Jobs\\BatchedJob']);
+    $job->shouldReceive('payload')->andReturn(['displayName' => 'App\\Jobs\\BatchedJob', 'data' => $data]);
     $job->shouldReceive('resolveName')->andReturn('App\\Jobs\\BatchedJob');
     $job->shouldReceive('attempts')->andReturn(1);
     $job->shouldReceive('getJobId')->andReturn($uuid);
@@ -91,6 +97,58 @@ it('RecordJobProcessed writes uuid → completed mapping when only chain_lineage
     resolve(RecordJobProcessed::class)->handle($event);
 
     expect(R::int('exists', 'qmtest:uuid-completed:' . $uuid))->toBe(1);
+});
+
+it('keeps the uuid → completed index one hour for a job no view links to, and no class index', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69PLAINJOB';
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'redis', job: makeBatchJobMock($uuid)));
+
+    expect(R::int('ttl', 'qmtest:uuid-completed:' . $uuid))->toBeGreaterThan(0)->toBeLessThanOrEqual(3600)
+        ->and(R::int('exists', 'qmtest:class:' . $uuid))->toBe(0);
+});
+
+it('keeps the uuid → completed index for the full TTL for a batch member', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69BATCHMEMBR';
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'redis', job: makeBatchJobMock($uuid, ['batchId' => 'batch-1'])));
+
+    expect(R::int('ttl', 'qmtest:uuid-completed:' . $uuid))->toBeGreaterThan(3600);
+});
+
+it('keeps the uuid → completed index for the full TTL for a job a scheduled task dispatched', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69SCHEDULED';
+    Context::addHidden('qi_origin', 'schedule:task-a');
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'redis', job: makeBatchJobMock($uuid)));
+
+    expect(R::int('ttl', 'qmtest:uuid-completed:' . $uuid))->toBeGreaterThan(3600);
+});
+
+it('keeps the uuid → completed index for the full TTL when origin capture is off', function (): void {
+    config()->set('queue-insights.initiator.capture_origin', false);
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69NOORIGIN';
+
+    resolve(RecordJobProcessed::class)->handle(new JobProcessed(connectionName: 'redis', job: makeBatchJobMock($uuid)));
+
+    expect(R::int('ttl', 'qmtest:uuid-completed:' . $uuid))->toBeGreaterThan(3600);
+});
+
+it('RecordJobFailed writes no class index for a job without a chained tail', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69FAILPLAIN';
+
+    resolve(RecordJobFailed::class)->handle(new JobFailed(connectionName: 'redis', job: makeBatchJobMock($uuid), exception: new RuntimeException('boom')));
+
+    expect(R::int('exists', 'qmtest:class:' . $uuid))->toBe(0);
+});
+
+it('RecordJobFailed writes the class index for a failed job with a chained tail', function (): void {
+    $uuid = '01ARZ3NDEKTSV4RRFFQ69FAILCHAIN';
+    $command = (new ChainParentJob())->chain([new ChainChildJob()]);
+
+    resolve(RecordJobFailed::class)->handle(new JobFailed(connectionName: 'redis', job: makeBatchJobMock($uuid, ['command' => serialize($command)]), exception: new RuntimeException('boom')));
+
+    expect(R::str('get', 'qmtest:class:' . $uuid))->toBe('App\\Jobs\\BatchedJob');
 });
 
 it('RecordJobFailed writes uuid → failed_jobs-id mapping when the row exists', function (): void {

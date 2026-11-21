@@ -22,6 +22,7 @@ use SanderMuller\QueueInsights\Support\LuaScripts;
 use SanderMuller\QueueInsights\Support\ParentClassResolver;
 use SanderMuller\QueueInsights\Support\RedisBatch;
 use SanderMuller\QueueInsights\Support\ResolveJobClass;
+use SanderMuller\QueueInsights\Support\SerializedCommandReader;
 use Throwable;
 
 final readonly class RecordJobFailed
@@ -150,17 +151,7 @@ final readonly class RecordJobFailed
 
             $this->stampClassRoster($batch, $class, $connectionName, $nowTs, $isoNow);
 
-            // qi:class:{uuid} — uuid → class index for backward-chain lineage
-            // resolution. Same write as in RecordJobProcessed; failed jobs
-            // also need their class addressable by uuid because a downstream
-            // child can reference a failed parent in its lineage.
-            if ($uuid !== null && Config::bool('chain_lineage.enabled', true)) {
-                $batch->command('setex', [
-                    ParentClassResolver::classKey($uuid),
-                    Config::int('chain_lineage.lineage_ttl_seconds', 604800),
-                    $class,
-                ]);
-            }
+            $this->writeParentClassIndex($batch, $event, $uuid, $class);
 
             // Per-job failure alert. Gated internally on alerts.enabled +
             // alerts.rules.job_failed.enabled, so the call is unconditional
@@ -304,6 +295,34 @@ final readonly class RecordJobFailed
             (string) 2592000,
             $isoNow,
         );
+    }
+
+    /**
+     * qi:class:{uuid} — uuid → class index for backward-chain lineage
+     * resolution. Same write as in RecordJobProcessed, and likewise only for
+     * a job with a chained tail: a downstream child can reference a failed
+     * parent in its lineage.
+     */
+    private function writeParentClassIndex(RedisBatch $batch, JobFailed $event, ?string $uuid, string $class): void
+    {
+        if ($uuid === null || ! Config::bool('chain_lineage.enabled', true) || ! $this->hasChainedTail($event)) {
+            return;
+        }
+
+        $batch->command('setex', [
+            ParentClassResolver::classKey($uuid),
+            Config::int('chain_lineage.lineage_ttl_seconds', 604800),
+            $class,
+        ]);
+    }
+
+    private function hasChainedTail(JobFailed $event): bool
+    {
+        $data = $event->job->payload()['data'] ?? null;
+        $command = is_array($data) ? ($data['command'] ?? null) : null;
+
+        return is_string($command) && $command !== ''
+            && SerializedCommandReader::extractChainContext($command) !== null;
     }
 
     /**
