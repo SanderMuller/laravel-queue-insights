@@ -12,6 +12,7 @@ use SanderMuller\QueueInsights\Contracts\PayloadSanitizer;
 use SanderMuller\QueueInsights\Enums\CaptureMode;
 use SanderMuller\QueueInsights\Support\CanonicalQueueKey;
 use SanderMuller\QueueInsights\Support\ChainLineageStore;
+use SanderMuller\QueueInsights\Support\ClassMetricsReader;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConnectionAlias;
 use SanderMuller\QueueInsights\Support\HourBucket;
@@ -86,6 +87,7 @@ final readonly class RecordJobProcessed
 
             if ($durationMs !== null) {
                 $this->writeDurationMetrics($batch, $class, $connectionName, $durationMs);
+                $this->writeDurationHourly($batch, $class, $connectionName, $bucket, $durationMs);
             }
 
             $this->writeLastRun($batch, $class, $connectionName, $isoNow);
@@ -509,6 +511,25 @@ final readonly class RecordJobProcessed
             (string) $durationMs,
             (string) $samplesCap,
             (string) 2592000,
+        );
+    }
+
+    /**
+     * Hourly duration buckets behind the dashboard's 24h avg and max. The
+     * `duration:{class}` hash is cumulative (Prometheus counters read it),
+     * so it cannot answer a 24h question.
+     */
+    private function writeDurationHourly(RedisBatch $batch, string $class, string $connectionName, string $bucket, int $durationMs): void
+    {
+        $keys = [ClassMetricsReader::hourlyDurationKey($class, null, $bucket)];
+        if ($connectionName !== '') {
+            $keys[] = ClassMetricsReader::hourlyDurationKey($class, $connectionName, $bucket);
+        }
+
+        $batch->eval(
+            LuaScripts::durationHourly(),
+            count($keys),
+            ...[...$keys, (string) $durationMs, (string) (HourBucket::startTs($bucket) + ClassMetricsReader::HOURLY_DURATION_TTL)],
         );
     }
 

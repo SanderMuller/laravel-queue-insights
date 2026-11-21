@@ -20,6 +20,10 @@ final class LuaScripts
 
     private static ?string $samplesPair = null;
 
+    private static ?string $durationHourly = null;
+
+    private static ?string $durationWindow = null;
+
     private static ?string $setexPair = null;
 
     private static ?string $classesRoster = null;
@@ -70,6 +74,16 @@ final class LuaScripts
     public static function durationPair(): string
     {
         return self::$durationPair ??= self::load(__DIR__ . '/Lua/DurationPair.lua');
+    }
+
+    public static function durationHourly(): string
+    {
+        return self::$durationHourly ??= self::load(__DIR__ . '/Lua/DurationHourly.lua');
+    }
+
+    public static function durationWindow(): string
+    {
+        return self::$durationWindow ??= self::load(__DIR__ . '/Lua/DurationWindow.lua');
     }
 
     public static function samplesPair(): string

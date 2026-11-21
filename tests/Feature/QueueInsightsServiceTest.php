@@ -162,11 +162,9 @@ it('aggregates class metrics across 24 hourly buckets', function (): void {
     // One failure bucket.
     $r->command('set', [KeyPrefix::make('failed:' . $class . ':' . $base->format('YmdH')), '2']);
 
-    // Duration hash.
-    $durKey = KeyPrefix::make("duration:{$class}");
-    $r->command('hset', [$durKey, 'count', '3']);
-    $r->command('hset', [$durKey, 'sum_ms', '600']);
-    $r->command('hset', [$durKey, 'max_ms', '500']);
+    // Duration buckets: two runs this hour, one 5h ago.
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:{$class}:" . $base->format('YmdH')), ['count' => '2', 'sum_ms' => '250', 'max_ms' => '150']]);
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:{$class}:" . $base->copy()->subHours(5)->format('YmdH')), ['count' => '1', 'sum_ms' => '350', 'max_ms' => '350']]);
 
     // Last run.
     $r->command('set', [KeyPrefix::make("last_run:{$class}"), '2026-04-24T12:00:00+00:00']);
@@ -176,7 +174,7 @@ it('aggregates class metrics across 24 hourly buckets', function (): void {
     expect($metrics->processed24h)->toBe(30)
         ->and($metrics->failed24h)->toBe(2)
         ->and($metrics->avgDurationMs)->toBe(200.0)
-        ->and($metrics->maxDurationMs)->toBe(500)
+        ->and($metrics->maxDurationMs)->toBe(350)
         ->and($metrics->p95DurationMs)->toBeNull(); // no samples yet
     expect($metrics->lastRunAt)->toBeInstanceOf(Carbon::class);
 });
@@ -341,14 +339,14 @@ it('classMetrics($class, $connection) reads per-connection bucket + duration + l
     // Aggregate keys (existing API path).
     $r->command('set', [KeyPrefix::make("processed:{$class}:{$bucket}"), '20']);
     $r->command('set', [KeyPrefix::make("failed:{$class}:{$bucket}"), '4']);
-    $r->command('hmset', [KeyPrefix::make("duration:{$class}"), ['count' => '10', 'sum_ms' => '1000', 'max_ms' => '500']]);
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:{$class}:{$bucket}"), ['count' => '10', 'sum_ms' => '1000', 'max_ms' => '500']]);
     $r->command('set', [KeyPrefix::make("last_run:{$class}"), $now->toIso8601String()]);
 
     // Per-connection keys (new Phase 4 path) — different totals so we can
     // distinguish which keys the read consulted.
     $r->command('set', [KeyPrefix::make("processed:{$class}:redis:{$bucket}"), '7']);
     $r->command('set', [KeyPrefix::make("failed:{$class}:redis:{$bucket}"), '1']);
-    $r->command('hmset', [KeyPrefix::make("duration:{$class}:redis"), ['count' => '7', 'sum_ms' => '350', 'max_ms' => '120']]);
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:{$class}:redis:{$bucket}"), ['count' => '7', 'sum_ms' => '350', 'max_ms' => '120']]);
     $r->command('set', [KeyPrefix::make("last_run:{$class}:redis"), $now->toIso8601String()]);
 
     $aggregate = resolve(QueueInsights::class)->classMetrics($class);
@@ -460,7 +458,7 @@ it('classMetricsMany returns each class its own metrics, in input order', functi
     $bucket = Date::now('UTC')->format('YmdH');
 
     $r->command('set', [KeyPrefix::make("processed:App\\Jobs\\A:{$bucket}"), '5']);
-    $r->command('hmset', [KeyPrefix::make('duration:App\\Jobs\\A'), ['count' => '2', 'sum_ms' => '300', 'max_ms' => '200']]);
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:App\\Jobs\\A:{$bucket}"), ['count' => '2', 'sum_ms' => '300', 'max_ms' => '200']]);
     $r->command('rpush', [KeyPrefix::make('duration:samples:App\\Jobs\\A'), '100', '200']);
 
     $r->command('set', [KeyPrefix::make("failed:App\\Jobs\\B:{$bucket}"), '3']);
@@ -478,4 +476,30 @@ it('classMetricsMany returns each class its own metrics, in input order', functi
 it('classMetricsMany returns an empty list for no classes', function (): void {
     expect(resolve(QueueInsights::class)->classMetricsMany([]))
         ->toBeEmpty();
+});
+
+it('classMetrics avg and max cover only the last 24h, not the lifetime duration hash', function (): void {
+    $r = Redis::connection('default');
+    $class = 'App\\Jobs\\Windowed';
+    $now = Date::now('UTC');
+
+    // A 15-minute run two days ago still sits in the cumulative hash.
+    $r->command('hmset', [KeyPrefix::make("duration:{$class}"), ['count' => '3', 'sum_ms' => '900200', 'max_ms' => '900000']]);
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:{$class}:" . $now->copy()->subHours(48)->format('YmdH')), ['count' => '1', 'sum_ms' => '900000', 'max_ms' => '900000']]);
+    $r->command('hmset', [KeyPrefix::make("duration:hourly:{$class}:" . $now->format('YmdH')), ['count' => '2', 'sum_ms' => '200.5', 'max_ms' => '120.25']]);
+
+    $metrics = resolve(QueueInsights::class)->classMetrics($class);
+
+    expect($metrics->avgDurationMs)->toBe(100.25)
+        ->and($metrics->maxDurationMs)->toBe(120);
+});
+
+it('classMetrics returns null avg and max when no run landed in the last 24h', function (): void {
+    $class = 'App\\Jobs\\Quiet';
+    Redis::connection('default')->command('hmset', [KeyPrefix::make("duration:{$class}"), ['count' => '3', 'sum_ms' => '300', 'max_ms' => '200']]);
+
+    $metrics = resolve(QueueInsights::class)->classMetrics($class);
+
+    expect($metrics->avgDurationMs)->toBeNull()
+        ->and($metrics->maxDurationMs)->toBeNull();
 });

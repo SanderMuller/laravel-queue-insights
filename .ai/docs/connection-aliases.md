@@ -32,7 +32,8 @@ Same drift affects every connection-keyed keyspace: `pending-zset`,
 `snapshot-errors-total`, `classes:{c}`, `completed:connection:{c}`,
 `processed:{class}:{c}:{bucket}`, `failed:{class}:{c}:{bucket}`,
 `processed-total:{class}:{c}`, `failed-total:{class}:{c}`,
-`duration:{class}:{c}`, `duration:samples:{class}:{c}`,
+`duration:{class}:{c}`, `duration:hourly:{class}:{c}:{bucket}`,
+`duration:samples:{class}:{c}`,
 `last_run:{class}:{c}`.
 
 ## Operator config

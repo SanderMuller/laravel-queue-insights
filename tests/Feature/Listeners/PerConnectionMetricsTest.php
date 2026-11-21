@@ -47,6 +47,21 @@ it('RecordJobProcessed dual-writes duration hash + samples list per connection',
         ->and(R::int('llen', "qmtest:duration:samples:{$class}:sync"))->toBe(1);
 });
 
+it('RecordJobProcessed dual-writes the hourly duration bucket per connection with a 25h expiry', function (): void {
+    dispatch(new TestJob());
+
+    $class = TestJob::class;
+    $bucket = now('UTC')->format('YmdH');
+
+    foreach (["qmtest:duration:hourly:{$class}:{$bucket}", "qmtest:duration:hourly:{$class}:sync:{$bucket}"] as $key) {
+        $ttl = R::int('ttl', $key);
+        expect(R::int('hget', $key, 'count'))->toBe(1)
+            ->and(R::raw('hget', $key, 'max_ms'))->not->toBeNull()
+            ->and($ttl)->toBeGreaterThan(86400)
+            ->and($ttl)->toBeLessThanOrEqual(90000);
+    }
+});
+
 it('RecordJobProcessed populates classes:{connection} ZSET alongside the global classes ZSET', function (): void {
     dispatch(new TestJob());
 
