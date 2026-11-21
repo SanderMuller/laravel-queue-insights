@@ -73,3 +73,31 @@ it('jobWaitMs returns null when the sample is missing', function (): void {
 it('jobWaitMs returns null for empty uuid input', function (): void {
     expect(resolve(QueueInsights::class)->jobWaitMs(''))->toBeNull();
 });
+
+it('queueWaitPercentilesMany returns each queue its own percentiles, in input order', function (): void {
+    for ($i = 1; $i <= 100; ++$i) {
+        R::conn()->command('zadd', ['qmtest:wait:redis:fast', microtime(true) + $i, 'fast-' . $i]);
+        R::conn()->command('setex', ['qmtest:wait:fast-' . $i, 60, (string) $i]);
+        R::conn()->command('zadd', ['qmtest:wait:sqs:slow', microtime(true) + $i, 'slow-' . $i]);
+        R::conn()->command('setex', ['qmtest:wait:slow-' . $i, 60, (string) ($i * 10)]);
+    }
+
+    for ($i = 1; $i <= 5; ++$i) {
+        R::conn()->command('zadd', ['qmtest:wait:redis:sparse', microtime(true) + $i, 'sparse-' . $i]);
+        R::conn()->command('setex', ['qmtest:wait:sparse-' . $i, 60, '1']);
+    }
+
+    $percentiles = resolve(QueueInsights::class)->queueWaitPercentilesMany([
+        ['connection' => 'redis', 'queue' => 'fast'],
+        ['connection' => 'redis', 'queue' => 'sparse'],
+        ['connection' => 'redis', 'queue' => 'empty'],
+        ['connection' => 'sqs', 'queue' => 'slow'],
+    ]);
+
+    expect($percentiles)->toBe([
+        ['p50' => 50, 'p95' => 95],
+        ['p50' => null, 'p95' => null],
+        ['p50' => null, 'p95' => null],
+        ['p50' => 500, 'p95' => 950],
+    ]);
+});

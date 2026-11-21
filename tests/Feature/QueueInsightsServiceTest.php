@@ -454,3 +454,28 @@ it('configuredQueues dedups when snapshots and Horizon collide only after alias 
         ['connection' => 'redis-staging', 'queue' => 'shared-queue'],
     ]);
 });
+
+it('classMetricsMany returns each class its own metrics, in input order', function (): void {
+    $r = Redis::connection('default');
+    $bucket = Date::now('UTC')->format('YmdH');
+
+    $r->command('set', [KeyPrefix::make("processed:App\\Jobs\\A:{$bucket}"), '5']);
+    $r->command('hmset', [KeyPrefix::make('duration:App\\Jobs\\A'), ['count' => '2', 'sum_ms' => '300', 'max_ms' => '200']]);
+    $r->command('rpush', [KeyPrefix::make('duration:samples:App\\Jobs\\A'), '100', '200']);
+
+    $r->command('set', [KeyPrefix::make("failed:App\\Jobs\\B:{$bucket}"), '3']);
+    $r->command('set', [KeyPrefix::make('last_run:App\\Jobs\\B'), '2026-04-24T12:00:00+00:00']);
+
+    [$a, $none, $b] = resolve(QueueInsights::class)->classMetricsMany(['App\\Jobs\\A', 'App\\Jobs\\None', 'App\\Jobs\\B']);
+
+    expect([$a->class, $a->processed24h, $a->failed24h, $a->avgDurationMs, $a->maxDurationMs, $a->p95DurationMs, $a->lastRunAt])
+        ->toBe(['App\\Jobs\\A', 5, 0, 150.0, 200, 200, null])
+        ->and([$none->class, $none->processed24h, $none->avgDurationMs, $none->p95DurationMs])->toBe(['App\\Jobs\\None', 0, null, null])
+        ->and([$b->class, $b->processed24h, $b->failed24h, $b->maxDurationMs])->toBe(['App\\Jobs\\B', 0, 3, null])
+        ->and($b->lastRunAt)->toBeInstanceOf(Carbon::class);
+});
+
+it('classMetricsMany returns an empty list for no classes', function (): void {
+    expect(resolve(QueueInsights::class)->classMetricsMany([]))
+        ->toBeEmpty();
+});

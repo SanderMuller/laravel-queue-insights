@@ -54,6 +54,7 @@ final readonly class QueueRowsBuilder
         }
 
         $snapshots = $this->svc->queueRowSnapshots($pairs);
+        $waits = $this->svc->queueWaitPercentilesMany($pairs);
         $now = Date::now();
 
         $rows = [];
@@ -77,7 +78,7 @@ final readonly class QueueRowsBuilder
 
             $driverRaw = config("queue.connections.{$connection}.driver", '—');
 
-            $waitPercentiles = $this->svc->queueWaitPercentiles($connection, $canonicalQueue);
+            $waitPercentiles = $waits[$i] ?? ['p50' => null, 'p95' => null];
 
             $rows[] = $this->attachInspectorFields(
                 [

@@ -49,7 +49,7 @@ it('build returns one row per configured queue with live metrics + snapshot stat
     $svc->shouldReceive('queueRowSnapshots')->once()->andReturn([
         snapshot(['depth' => 50, 'inflight' => 3, 'delayed' => 2, 'last_at' => Date::now()->subSeconds(30), 'pending_tracked_count' => 52]),
     ]);
-    $svc->shouldReceive('queueWaitPercentiles')->with('redis', 'default')->andReturn(['p50' => 120, 'p95' => 540]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->with([['connection' => 'redis', 'queue' => 'default']])->andReturn([['p50' => 120, 'p95' => 540]]);
 
     $rows = queueRowsBuilder($svc)->build('');
 
@@ -81,7 +81,7 @@ it('build flags rows older than 120s as stale', function (): void {
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['last_at' => Date::now()->subSeconds(180)])]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
 
     expect(queueRowsBuilder($svc)->build('')[0]['stale'])->toBeTrue();
 
@@ -94,7 +94,7 @@ it('build flags rows with a null lastSnapshotAt as stale', function (): void {
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['last_at' => null])]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
 
     expect(queueRowsBuilder($svc)->build('')[0]['stale'])->toBeTrue();
 });
@@ -106,7 +106,7 @@ it('build skips configured entries whose queue name fails canonicalisation', fun
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot()]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
 
     $rows = queueRowsBuilder($svc)->build('');
 
@@ -120,7 +120,7 @@ it('build expands the inspector for the matching key and loads the per-queue job
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['depth' => 10, 'pending_tracked_count' => 10])]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
     $pendingList = [['uuid' => 'p1'], ['uuid' => 'p2']];
     $delayedList = [['uuid' => 'd1']];
     $svc->shouldReceive('pendingJobs')->with('redis', 'default')->once()->andReturn($pendingList);
@@ -141,7 +141,7 @@ it('build short-circuits inspector fields when pending tracking is disabled', fu
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['depth' => 10, 'pending_tracked_count' => null])]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
     $svc->shouldNotReceive('pendingJobs');
     $svc->shouldNotReceive('delayedJobs');
 
@@ -159,7 +159,7 @@ it('build computes pending_gap from |tracked - (depth + delayed)|', function ():
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(['depth' => 50, 'delayed' => 10, 'pending_tracked_count' => 45])]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
 
     expect(queueRowsBuilder($svc)->build('')[0]['pending_gap'])->toBe(15);
 });
@@ -175,7 +175,7 @@ it('build restricts iteration to a scoped connection when one is provided', func
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->once()->andReturn([snapshot()]);
-    $svc->shouldReceive('queueWaitPercentiles')->with('sqs', 'work')->once()->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->with([['connection' => 'sqs', 'queue' => 'work']])->once()->andReturn([['p50' => null, 'p95' => null]]);
 
     $rows = queueRowsBuilder($svc)->build('', 'sqs');
 
@@ -193,7 +193,7 @@ it('build returns every row when scope is null (back-compat)', function (): void
         ['connection' => 'sqs', 'queue' => 'work'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot(), snapshot()]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
 
     $rows = queueRowsBuilder($svc)->build('');
 
@@ -208,7 +208,7 @@ it('build falls back to em-dash for a non-string driver config', function (): vo
         ['connection' => 'redis', 'queue' => 'default'],
     ]);
     $svc->shouldReceive('queueRowSnapshots')->andReturn([snapshot()]);
-    $svc->shouldReceive('queueWaitPercentiles')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->andReturn([]);
 
     expect(queueRowsBuilder($svc)->build('')[0]['driver'])->toBe('—');
 });
@@ -229,7 +229,7 @@ it('keys a suffixed queue row on its logical name while showing the configured s
         ->once()
         ->with([['connection' => 'cloud', 'queue' => 'stats']])
         ->andReturn([snapshot(['depth' => 7])]);
-    $svc->shouldReceive('queueWaitPercentiles')->with('cloud', 'stats')->andReturn(['p50' => null, 'p95' => null]);
+    $svc->shouldReceive('queueWaitPercentilesMany')->with([['connection' => 'cloud', 'queue' => 'stats']])->andReturn([['p50' => null, 'p95' => null]]);
 
     $rows = queueRowsBuilder($svc)->build('');
 

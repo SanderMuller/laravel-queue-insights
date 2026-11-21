@@ -43,7 +43,80 @@ final class WaitTimeMetrics
      */
     public static function percentiles(string $connection, string $queue): array
     {
-        $samples = self::samples($connection, $queue);
+        return self::percentilesMany([['connection' => $connection, 'queue' => $queue]])[0];
+    }
+
+    /**
+     * Two pipelined round trips for any number of queues: every ZSET, then
+     * every MGET of the sample keys.
+     *
+     * @param  list<array{connection: string, queue: string}>  $pairs
+     * @return list<array{p50: ?int, p95: ?int}>
+     */
+    public static function percentilesMany(array $pairs): array
+    {
+        if ($pairs === []) {
+            return [];
+        }
+
+        $batch = new RedisBatch(self::redis());
+        foreach ($pairs as $pair) {
+            $batch->command('zrange', [KeyPrefix::make("wait:{$pair['connection']}:{$pair['queue']}"), 0, -1]);
+        }
+
+        $sampleKeys = array_map(self::sampleKeys(...), $batch->execute());
+
+        $slots = [];
+        foreach ($sampleKeys as $i => $keys) {
+            if ($keys !== []) {
+                $slots[$i] = $batch->command('mget', [$keys]);
+            }
+        }
+
+        $values = $batch->execute();
+
+        $out = [];
+        foreach (array_keys($pairs) as $i) {
+            $out[] = self::fromSamples(isset($slots[$i]) ? $values[$slots[$i]] ?? null : null);
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function sampleKeys(mixed $uuids): array
+    {
+        if (! is_array($uuids) || count($uuids) < 10) {
+            return [];
+        }
+
+        $keys = [];
+        foreach ($uuids as $uuid) {
+            if (is_string($uuid) && $uuid !== '') {
+                $keys[] = KeyPrefix::make("wait:{$uuid}");
+            }
+        }
+
+        return $keys;
+    }
+
+    /**
+     * @return array{p50: ?int, p95: ?int}
+     */
+    private static function fromSamples(mixed $values): array
+    {
+        $samples = [];
+        if (is_array($values)) {
+            foreach ($values as $value) {
+                // A `wait:{uuid}` key can expire between the ZSET read and
+                // the MGET; only live samples count.
+                if (is_numeric($value)) {
+                    $samples[] = (int) $value;
+                }
+            }
+        }
 
         if (count($samples) < 10) {
             return ['p50' => null, 'p95' => null];
@@ -55,49 +128,6 @@ final class WaitTimeMetrics
             'p50' => self::pick($samples, 0.50),
             'p95' => self::pick($samples, 0.95),
         ];
-    }
-
-    /**
-     * @return list<int>
-     */
-    private static function samples(string $connection, string $queue): array
-    {
-        $key = KeyPrefix::make("wait:{$connection}:{$queue}");
-
-        $uuids = self::redis()->command('zrange', [$key, 0, -1]);
-
-        if (! is_array($uuids) || count($uuids) < 10) {
-            return [];
-        }
-
-        $sampleKeys = [];
-        foreach ($uuids as $uuid) {
-            if (is_string($uuid) && $uuid !== '') {
-                $sampleKeys[] = KeyPrefix::make("wait:{$uuid}");
-            }
-        }
-
-        if ($sampleKeys === []) {
-            return [];
-        }
-
-        $values = self::redis()->command('mget', [$sampleKeys]);
-
-        if (! is_array($values)) {
-            return [];
-        }
-
-        $samples = [];
-        foreach ($values as $value) {
-            // `wait:{uuid}` keys can have expired between the ZSET read
-            // and this MGET — skip nulls so the percentile reflects only
-            // live samples.
-            if (is_numeric($value)) {
-                $samples[] = (int) $value;
-            }
-        }
-
-        return $samples;
     }
 
     /**

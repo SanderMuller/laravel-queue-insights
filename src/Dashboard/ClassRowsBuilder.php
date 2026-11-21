@@ -24,8 +24,12 @@ final readonly class ClassRowsBuilder
         $rows = [];
         $silenced = resolve(SilencedJobs::class);
 
-        foreach ($this->svc->jobClasses($scopeConnection) as $class) {
-            $m = $this->svc->classMetrics($class, $scopeConnection);
+        $classes = $this->svc->jobClasses($scopeConnection);
+        if ($classes === []) {
+            return [];
+        }
+
+        foreach ($this->svc->classMetricsMany($classes, $scopeConnection) as $m) {
             $rows[] = [
                 'class' => $m->class,
                 'processed_24h' => $m->processed24h,

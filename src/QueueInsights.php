@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\DTO\JobClassMetrics;
 use SanderMuller\QueueInsights\Support\BatchReader;
+use SanderMuller\QueueInsights\Support\ClassMetricsReader;
 use SanderMuller\QueueInsights\Support\Config;
 use SanderMuller\QueueInsights\Support\ConfiguredConnections;
 use SanderMuller\QueueInsights\Support\ConfiguredQueueList;
@@ -152,38 +153,19 @@ final class QueueInsights
 
     public function classMetrics(string $class, ?string $connection = null): JobClassMetrics
     {
-        $redis = $this->redis();
+        return $this->classMetricsMany([$class], $connection)[0];
+    }
 
-        $bucketSuffix = $connection === null ? "{$class}" : "{$class}:{$connection}";
-        $processed = $this->sumCounters($redis, $this->hourlyBucketKeys("processed:{$bucketSuffix}", 24));
-        $failed = $this->sumCounters($redis, $this->hourlyBucketKeys("failed:{$bucketSuffix}", 24));
-
-        // Single HMGET — three HGETs on the same key were a hot-path waste.
-        // phpredis returns an associative array keyed by field; Predis
-        // returns a positional list. `array_values` normalises both into
-        // the input-field order so the positional access below works for
-        // both client drivers.
-        $fields = $redis->command('hmget', [
-            KeyPrefix::classKey('duration', $class, $connection),
-            ['count', 'sum_ms', 'max_ms'],
-        ]);
-        $values = is_array($fields) ? array_values($fields) : [];
-        $count = is_numeric($values[0] ?? null) ? (int) $values[0] : 0;
-        $sumMs = is_numeric($values[1] ?? null) ? (float) $values[1] : 0.0;
-        $maxMs = is_numeric($values[2] ?? null) ? (int) $values[2] : null;
-
-        $lastRunRaw = $redis->command('get', [KeyPrefix::classKey('last_run', $class, $connection)]);
-        $lastRunAt = is_string($lastRunRaw) && $lastRunRaw !== '' ? Date::parse($lastRunRaw) : null;
-
-        return new JobClassMetrics(
-            class: $class,
-            processed24h: $processed,
-            failed24h: $failed,
-            avgDurationMs: $count > 0 ? $sumMs / $count : null,
-            maxDurationMs: $maxMs,
-            p95DurationMs: $this->p95DurationMs($class, $connection),
-            lastRunAt: $lastRunAt,
-        );
+    /**
+     * `classMetrics` for many classes in one pipelined Redis round trip, in
+     * input order. The dashboard's class table reads every class per poll.
+     *
+     * @param  list<string>  $classes
+     * @return list<JobClassMetrics>
+     */
+    public function classMetricsMany(array $classes, ?string $connection = null): array
+    {
+        return ClassMetricsReader::read($this->redis(), $classes, $connection);
     }
 
     /**
@@ -202,6 +184,18 @@ final class QueueInsights
     public function queueWaitPercentiles(string $connection, string $queue): array
     {
         return WaitTimeMetrics::percentiles($connection, $queue);
+    }
+
+    /**
+     * `queueWaitPercentiles` for many queues in two pipelined round trips,
+     * in input order.
+     *
+     * @param  list<array{connection: string, queue: string}>  $pairs  canonicalised (connection, queue) tuples
+     * @return list<array{p50: ?int, p95: ?int}>
+     */
+    public function queueWaitPercentilesMany(array $pairs): array
+    {
+        return WaitTimeMetrics::percentilesMany($pairs);
     }
 
     /**
@@ -384,31 +378,11 @@ final class QueueInsights
 
     public function p95DurationMs(string $class, ?string $connection = null): ?int
     {
-        $key = KeyPrefix::classKey('duration:samples', $class, $connection);
-
-        $samples = $this->redis()->command('lrange', [$key, 0, -1]);
-
-        if (! is_array($samples) || $samples === []) {
-            return null;
-        }
-
-        $nums = [];
-        foreach ($samples as $s) {
-            if (is_numeric($s)) {
-                $nums[] = (int) $s;
-            }
-        }
-
-        if ($nums === []) {
-            return null;
-        }
-
-        sort($nums);
-
-        $idx = (int) ceil(0.95 * count($nums)) - 1;
-        $idx = max(0, min(count($nums) - 1, $idx));
-
-        return $nums[$idx];
+        return ClassMetricsReader::p95($this->redis()->command('lrange', [
+            KeyPrefix::classKey('duration:samples', $class, $connection),
+            0,
+            -1,
+        ]));
     }
 
     /**
@@ -662,49 +636,6 @@ final class QueueInsights
         }
 
         return $out;
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function hourlyBucketKeys(string $suffix, int $hours): array
-    {
-        $now = Date::now('UTC');
-        $keys = [];
-
-        for ($i = 0; $i < $hours; ++$i) {
-            $bucket = $now->copy()->subHours($i)->format('YmdH');
-            $keys[] = KeyPrefix::make("{$suffix}:{$bucket}");
-        }
-
-        return $keys;
-    }
-
-    /**
-     * @param  list<string>  $keys
-     */
-    private function sumCounters(RedisConnection $redis, array $keys): int
-    {
-        if ($keys === []) {
-            return 0;
-        }
-
-        // phpredis mGet() takes a single array arg; Predis auto-unwraps a single-array arg
-        // via Command::normalizeArguments. Pass `[$keys]` to satisfy both.
-        $values = $redis->command('mget', [$keys]);
-
-        if (! is_array($values)) {
-            return 0;
-        }
-
-        $total = 0;
-        foreach ($values as $v) {
-            if (is_numeric($v)) {
-                $total += (int) $v;
-            }
-        }
-
-        return $total;
     }
 
     private function redis(): RedisConnection
