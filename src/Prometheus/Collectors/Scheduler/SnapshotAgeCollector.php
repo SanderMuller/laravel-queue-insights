@@ -12,9 +12,10 @@ use SanderMuller\QueueInsights\Support\KeyPrefix;
 
 /**
  * `queue_insights_scheduled_snapshot_age_seconds` — gauge, no labels. Seconds
- * since `ScheduleSnapshotter` last rewrote the schedule snapshot
- * (`sched:snapshot:at`, plain string ms unix ts). A snapshot stuck
- * for hours means workers haven't restarted — alert paired with
+ * since `ScheduleSnapshotter` last refreshed the schedule snapshot
+ * (`sched:snapshot:at`, plain string ms unix ts; stamped on every rebuild,
+ * unchanged schedule included). A snapshot stuck for hours means
+ * `schedule:run` stopped firing — alert paired with
  * `queue_insights_scheduled_sweeper_age_seconds` for full data-plane liveness.
  *
  * The metric is **omitted** when the key is absent so a never-booted

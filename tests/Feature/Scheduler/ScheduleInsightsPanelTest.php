@@ -4,8 +4,11 @@ use Illuminate\Console\Events\ScheduledTaskFinished;
 use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Redis;
 use Livewire\Livewire;
 use SanderMuller\QueueInsights\Dashboard\DashboardData;
 use SanderMuller\QueueInsights\Http\Livewire\ScheduleInsightsPanel;
@@ -13,6 +16,8 @@ use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
+use SanderMuller\QueueInsights\Scheduler\ScheduleReader;
+use SanderMuller\QueueInsights\Scheduler\ScheduleSnapshotter;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
 
 beforeEach(function (): void {
@@ -160,4 +165,23 @@ it('clamps an out-of-range page deep-link back to the last available page', func
 
     // 15 rows / 10 per-page = 2 pages; deep-link to 999 should clamp to 2.
     expect($component->viewData('runsPaginator')->currentPage())->toBe(2);
+});
+
+it('shortens large headline counts, says why a task needs attention, and gives bars a height', function (): void {
+    $schedule = resolve(Schedule::class);
+    $schedule->command('demo:run')->everyMinute();
+    (new ScheduleSnapshotter($schedule))->rebuild();
+    $taskKey = (new ScheduleReader())->tasks()[0]['task_key'];
+
+    $r = Redis::connection('default');
+    $r->command('hmset', ['qmtest:sched:agg:' . $taskKey . ':' . Date::now()->format('YmdH'), ['success_count' => '11885']]);
+    $r->command('hmset', ['qmtest:sched:counters:' . $taskKey, ['total_missed' => '2']]);
+
+    Livewire::withoutLazyLoading();
+
+    Livewire::test(ScheduleInsightsPanel::class)
+        ->assertSeeHtml('title="11,885" >11.9k<')
+        ->assertSeeHtml('⏰ 2 missed')
+        ->assertSeeHtml('style="height: 100%"')
+        ->assertDontSeeHtml('h-(--bar');
 });

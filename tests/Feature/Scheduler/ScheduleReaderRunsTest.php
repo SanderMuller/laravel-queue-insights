@@ -6,11 +6,13 @@ use Illuminate\Console\Events\ScheduledTaskStarting;
 use Illuminate\Console\Scheduling\CacheEventMutex;
 use Illuminate\Console\Scheduling\Event as ScheduleEvent;
 use Illuminate\Console\Scheduling\Schedule;
+use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Facades\Redis;
 use SanderMuller\QueueInsights\Alerts\IssueDispatcher;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFailed;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskFinished;
 use SanderMuller\QueueInsights\Listeners\RecordScheduledTaskStarting;
+use SanderMuller\QueueInsights\Scheduler\AggregatesQuery;
 use SanderMuller\QueueInsights\Scheduler\OutputCapturer;
 use SanderMuller\QueueInsights\Scheduler\RunStore;
 use SanderMuller\QueueInsights\Scheduler\ScheduleReader;
@@ -140,6 +142,23 @@ it('produces a 24-bar throughput sparkline shape', function (): void {
     $bars = (new ScheduleReader())->throughputSparkline();
     expect($bars)->toHaveCount(24)
         ->and($bars[0])->toHaveKeys(['hour', 'success', 'failed']);
+});
+
+it('builds the sparkline from the same read as the stats, so their totals agree', function (): void {
+    $taskKey = 'task-a';
+    $now = Date::now();
+    Redis::connection('default')->command('hmset', ['qmtest:sched:agg:task-a:' . $now->format('YmdH'), ['success_count' => '5', 'failed_count' => '1']]);
+    Redis::connection('default')->command('hmset', ['qmtest:sched:agg:task-a:' . $now->copy()->subHours(23)->format('YmdH'), ['success_count' => '2']]);
+
+    $computed = (new AggregatesQuery())->computeStatsAndSparkline([['task_key' => $taskKey]]);
+
+    $bars = $computed['sparkline'];
+    expect($bars)->toHaveCount(24)
+        ->and($bars[23])->toBe(['hour' => $now->format('H:00'), 'success' => 5, 'failed' => 1])
+        ->and($bars[0])->toBe(['hour' => $now->copy()->subHours(23)->format('H:00'), 'success' => 2, 'failed' => 0])
+        ->and(array_sum(array_column($bars, 'success')) + array_sum(array_column($bars, 'failed')))
+        ->toBe($computed['stats'][0]['stats']['runs'])
+        ->and($computed['stats'][0]['stats']['runs'])->toBe(8);
 });
 
 it('returns distinct hosts seen in recent runs', function (): void {

@@ -171,6 +171,22 @@ final class AggregatesQuery
      */
     public function computeStatsForTasks(array $tasks): array
     {
+        return $this->computeStatsAndSparkline($tasks)['stats'];
+    }
+
+    /**
+     * Per-task stats and the 24h hourly sparkline from one read of the
+     * same hourly aggregates, so the panel's headline count and its
+     * throughput card always agree.
+     *
+     * @param  list<array{task_key: string}>|list<array<string, mixed>>  $tasks
+     * @return array{
+     *   stats: list<array{task_key: string, stats: array{runs: int, failed: int, skipped: int, hung: int, missed: int, consecutive_failures: int, last_run_at_ms: ?int, last_success_at_ms: ?int, last_failed_at_ms: ?int, p95_ms: ?int}}>,
+     *   sparkline: list<array{hour: string, success: int, failed: int}>,
+     * }
+     */
+    public function computeStatsAndSparkline(array $tasks): array
+    {
         $keys = [];
         foreach ($tasks as $task) {
             $key = is_string($task['task_key'] ?? null) ? $task['task_key'] : null;
@@ -180,27 +196,47 @@ final class AggregatesQuery
         }
 
         if ($keys === []) {
-            return [];
+            return ['stats' => [], 'sparkline' => []];
         }
 
+        // Newest first.
         $now = Date::now()->getTimestamp();
         $buckets = [];
+        $hourLabels = [];
         for ($i = 0; $i < 24; ++$i) {
-            $buckets[] = Date::createFromTimestamp($now - ($i * 3600))->format('YmdH');
+            $at = Date::createFromTimestamp($now - ($i * 3600));
+            $buckets[] = $at->format('YmdH');
+            $hourLabels[] = $at->format('H:00');
         }
 
         $results = $this->pipelineStatsFanOut($keys, $buckets);
         $bucketsPerTask = count($buckets);
         $stride = ($bucketsPerTask * 2) + 1;
-        $out = [];
+        $stats = [];
+        $success = array_fill(0, $bucketsPerTask, 0);
+        $failed = array_fill(0, $bucketsPerTask, 0);
         foreach ($keys as $idx => $taskKey) {
-            $out[] = [
+            $base = $idx * $stride;
+            $stats[] = [
                 'task_key' => $taskKey,
-                'stats' => $this->projectTaskStats($results, $idx * $stride, $bucketsPerTask),
+                'stats' => $this->projectTaskStats($results, $base, $bucketsPerTask),
             ];
+
+            for ($b = 0; $b < $bucketsPerTask; ++$b) {
+                $hash = $results[$base + ($b * 2)] ?? null;
+                if (is_array($hash) && $hash !== []) {
+                    $success[$b] += HashFields::int($hash, 'success_count');
+                    $failed[$b] += HashFields::int($hash, 'failed_count');
+                }
+            }
         }
 
-        return $out;
+        $sparkline = [];
+        for ($b = $bucketsPerTask - 1; $b >= 0; --$b) {
+            $sparkline[] = ['hour' => $hourLabels[$b], 'success' => $success[$b], 'failed' => $failed[$b]];
+        }
+
+        return ['stats' => $stats, 'sparkline' => $sparkline];
     }
 
     /**
@@ -305,56 +341,7 @@ final class AggregatesQuery
      */
     public function throughputSparkline(array $tasks): array
     {
-        if ($tasks === []) {
-            return [];
-        }
-
-        $keys = [];
-        foreach ($tasks as $task) {
-            $key = is_string($task['task_key'] ?? null) ? $task['task_key'] : null;
-            if ($key !== null) {
-                $keys[] = $key;
-            }
-        }
-
-        if ($keys === []) {
-            return [];
-        }
-
-        $now = Date::now()->getTimestamp();
-        // Oldest→newest so the view renders 23h-ago → now left-to-right.
-        $buckets = [];
-        $hourLabels = [];
-        for ($i = 23; $i >= 0; --$i) {
-            $ts = $now - ($i * 3600);
-            $buckets[] = Date::createFromTimestamp($ts)->format('YmdH');
-            $hourLabels[] = Date::createFromTimestamp($ts)->format('H:00');
-        }
-
-        $results = $this->pipelineSparklineFanOut($keys, $buckets);
-
-        $bars = [];
-        $tasksPerHour = count($keys);
-        foreach (array_keys($buckets) as $hourIdx) {
-            $success = 0;
-            $failed = 0;
-            $base = $hourIdx * $tasksPerHour;
-            for ($t = 0; $t < $tasksPerHour; ++$t) {
-                $hash = $results[$base + $t] ?? null;
-                if (is_array($hash) && $hash !== []) {
-                    $success += HashFields::int($hash, 'success_count');
-                    $failed += HashFields::int($hash, 'failed_count');
-                }
-            }
-
-            $bars[] = [
-                'hour' => $hourLabels[$hourIdx],
-                'success' => $success,
-                'failed' => $failed,
-            ];
-        }
-
-        return $bars;
+        return $this->computeStatsAndSparkline($tasks)['sparkline'];
     }
 
     /**
@@ -375,25 +362,6 @@ final class AggregatesQuery
                 }
 
                 $pipe->hgetall(KeyPrefix::make("sched:counters:{$taskKey}"));
-            }
-        });
-    }
-
-    /**
-     * One round-trip for the sparkline fan-out — 24 hours × N tasks of
-     * HGETALL against the per-task hourly aggregate hashes.
-     *
-     * @param  list<string>  $keys
-     * @param  list<string>  $buckets
-     * @return list<mixed>
-     */
-    private function pipelineSparklineFanOut(array $keys, array $buckets): array
-    {
-        return RedisPipeline::run($this->redis(), static function (mixed $pipe) use ($buckets, $keys): void {
-            foreach ($buckets as $bucket) {
-                foreach ($keys as $taskKey) {
-                    $pipe->hgetall(KeyPrefix::make("sched:agg:{$taskKey}:{$bucket}"));
-                }
             }
         });
     }

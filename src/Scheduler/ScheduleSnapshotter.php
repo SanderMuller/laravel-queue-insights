@@ -22,7 +22,7 @@ use Throwable;
  * Capturing in `app->booted` guarantees the full set.
  *
  * Idempotent — if the snapshot hash matches the previous boot's value
- * the rebuild is a no-op.
+ * only the snapshot timestamp is refreshed.
  */
 final readonly class ScheduleSnapshotter
 {
@@ -49,8 +49,14 @@ final readonly class ScheduleSnapshotter
 
             $redis = Redis::connection(Config::string('redis_connection', 'default'));
 
+            $now = (string) Date::now()->getTimestampMs();
+
+            // `at` is the freshness the panel and the snapshot-age gauge
+            // report, so an unchanged schedule still stamps it.
             $existing = $redis->command('get', [$hashKey]);
             if (is_string($existing) && $existing === $hash) {
+                $redis->command('set', [$atKey, $now]);
+
                 return;
             }
 
@@ -63,7 +69,7 @@ final readonly class ScheduleSnapshotter
             // Removed tasks drop off the hash + order list; their
             // per-task counters and historical run keys age out via
             // TTL.
-            $argv = [$hash, (string) Date::now()->getTimestampMs()];
+            $argv = [$hash, $now];
             foreach ($summaries as $key => $summary) {
                 $argv[] = $key;
                 $argv[] = (string) json_encode($summary);

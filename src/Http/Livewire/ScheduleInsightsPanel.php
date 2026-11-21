@@ -203,8 +203,9 @@ final class ScheduleInsightsPanel extends Component
 
         $tasks = $reader->tasks();
         $snapshotAtMs = $reader->snapshotAtMs();
+        $computed = $aggregates->computeStatsAndSparkline($tasks);
         $statsByKey = [];
-        foreach ($aggregates->computeStatsForTasks($tasks) as $row) {
+        foreach ($computed['stats'] as $row) {
             $statsByKey[$row['task_key']] = $row['stats'];
         }
 
@@ -248,7 +249,7 @@ final class ScheduleInsightsPanel extends Component
             'snapshotAtMs' => $snapshotAtMs,
             'snapshotStale' => $this->isSnapshotStale($snapshotAtMs),
             'headlineStats' => $aggregates->headlineStatsFromComputed($tasksWithStats),
-            'sparkline' => $aggregates->throughputSparkline($tasks),
+            'sparkline' => $computed['sparkline'],
             'needsAttention' => $needsAttention,
             'healthy' => $healthy,
             'tasksAll' => $tasksWithStats,

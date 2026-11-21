@@ -50,6 +50,17 @@
             : \SanderMuller\QueueInsights\Scheduler\CommandLabel::short($row['command']);
     }
 
+    // Full count up to 9,999, then 12.3k / 1.2M so the tile never truncates.
+    $compactCount = static function (int $n): string {
+        if ($n < 10000) {
+            return number_format($n);
+        }
+        if ($n < 1000000) {
+            return rtrim(rtrim(number_format($n / 1000, 1), '0'), '.') . 'k';
+        }
+        return rtrim(rtrim(number_format($n / 1000000, 1), '0'), '.') . 'M';
+    };
+
     $sparklineSuccess = array_sum(array_column($sparkline, 'success'));
     $sparklineFailed = array_sum(array_column($sparkline, 'failed'));
 @endphp
@@ -107,11 +118,11 @@
                     <span class="text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-300/80">live · past 24h</span>
                 </div>
             @endunless
-            @include('queue-insights::partials.stat-tile', ['label' => 'Runs', 'value' => number_format($headlineStats['runs_24h']), 'sub' => 'past 24h', 'tone' => 'neutral'])
-            @include('queue-insights::partials.stat-tile', ['label' => 'Failed', 'value' => number_format($headlineStats['failed_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['failed_24h'] > 0 ? 'danger' : 'neutral'])
-            @include('queue-insights::partials.stat-tile', ['label' => 'Skipped', 'value' => number_format($headlineStats['skipped_24h']), 'sub' => 'past 24h', 'tone' => 'neutral'])
-            @include('queue-insights::partials.stat-tile', ['label' => 'Hung', 'value' => number_format($headlineStats['hung_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['hung_24h'] > 0 ? 'warn' : 'neutral'])
-            @include('queue-insights::partials.stat-tile', ['label' => 'Missed', 'value' => number_format($headlineStats['missed_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['missed_24h'] > 0 ? 'warn' : 'neutral'])
+            @include('queue-insights::partials.stat-tile', ['label' => 'Runs', 'value' => $compactCount($headlineStats['runs_24h']), 'title' => number_format($headlineStats['runs_24h']), 'sub' => 'past 24h', 'tone' => 'neutral'])
+            @include('queue-insights::partials.stat-tile', ['label' => 'Failed', 'value' => $compactCount($headlineStats['failed_24h']), 'title' => number_format($headlineStats['failed_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['failed_24h'] > 0 ? 'danger' : 'neutral'])
+            @include('queue-insights::partials.stat-tile', ['label' => 'Skipped', 'value' => $compactCount($headlineStats['skipped_24h']), 'title' => number_format($headlineStats['skipped_24h']), 'sub' => 'past 24h', 'tone' => 'neutral'])
+            @include('queue-insights::partials.stat-tile', ['label' => 'Hung', 'value' => $compactCount($headlineStats['hung_24h']), 'title' => number_format($headlineStats['hung_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['hung_24h'] > 0 ? 'warn' : 'neutral'])
+            @include('queue-insights::partials.stat-tile', ['label' => 'Missed', 'value' => $compactCount($headlineStats['missed_24h']), 'title' => number_format($headlineStats['missed_24h']), 'sub' => 'past 24h', 'tone' => $headlineStats['missed_24h'] > 0 ? 'warn' : 'neutral'])
             @include('queue-insights::partials.stat-tile', ['label' => 'Runtime p95', 'value' => $formatDuration($headlineStats['p95_runtime_ms']), 'sub' => 'rolling', 'tone' => 'neutral'])
         </div>
 
@@ -132,7 +143,7 @@
                         <span class="ml-1.5 text-gray-400 dark:text-gray-400">over last 24h</span>
                     </p>
                 </header>
-                <ol role="list" class="mt-4 grid grid-cols-12 sm:grid-cols-24 gap-1 text-[10px] tabular-nums">
+                <ol role="list" class="mt-4 grid grid-cols-12 sm:grid-cols-[repeat(24,minmax(0,1fr))] gap-1 text-[10px] tabular-nums">
                     @php $maxBar = max(1, max(array_map(fn (array $b) => $b['success'] + $b['failed'], $sparkline))); @endphp
                     @foreach($sparkline as $i => $bar)
                         @php
@@ -144,11 +155,10 @@
                                     ? 'bg-gradient-to-t from-emerald-600 to-emerald-300 dark:from-emerald-500 dark:to-emerald-300'
                                     : 'bg-gray-200 dark:bg-gray-700');
                             $showLabel = ($i % 4 === 0);
-                            $barHeight = max(4, (int) round($pct / 2));
                         @endphp
                         <li class="flex flex-col items-center gap-1" title="{{ $bar['hour'] }} | {{ $bar['success'] }} ✓ {{ $bar['failed'] }} ✗">
-                            <span class="block w-full rounded-sm bg-gray-100 dark:bg-gray-800 [--bar:--spacing(12)] h-(--bar)">
-                                <span class="block w-full rounded-sm {{ $tone }} h-(--bar-h)" style="--bar-h: {{ $barHeight }}px;"></span>
+                            <span class="flex h-12 w-full items-end rounded-sm bg-gray-100 dark:bg-gray-800">
+                                <span class="block w-full rounded-sm {{ $tone }}" style="height: {{ max(8, $pct) }}%"></span>
                             </span>
                             <span class="text-gray-400 dark:text-gray-500 {{ $showLabel ? '' : 'sm:invisible' }}">{{ $bar['hour'] }}</span>
                         </li>
@@ -186,15 +196,17 @@
                     <h4 class="mt-4 text-xs font-semibold tracking-wide text-red-700 dark:text-red-300">Needs attention <span class="tabular-nums text-red-700/70 dark:text-red-300/70">({{ count($needsAttention) }})</span></h4>
                     <ul role="list" class="mt-2 divide-y divide-gray-950/5 dark:divide-white/10">
                         @foreach($needsAttention as $row)
-                            @php $runsTotal = max(1, (int) ($row['stats']['runs'] ?? 0)); @endphp
+                            @php $reasons = \SanderMuller\QueueInsights\Scheduler\AggregatesQuery::attentionReasons($row['stats']); @endphp
                             <li>
                                 <button type="button"
                                         wire:click="openTaskModal('{{ $row['task_key'] }}')"
                                         class="grid w-full grid-cols-12 items-center gap-3 py-2 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-white/5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                                    <span class="col-span-12 sm:col-span-6 truncate font-medium text-gray-900 dark:text-gray-100">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</span>
-                                    <span class="col-span-6 sm:col-span-2 truncate font-mono text-xs text-gray-500 dark:text-gray-300" title="{{ $row['expression'] }}">{{ $row['expression'] }}</span>
-                                    <span class="col-span-3 sm:col-span-2 text-xs tabular-nums text-red-700 dark:text-red-300">
-                                        ✗{{ $row['stats']['failed'] }}<span class="text-gray-400 dark:text-gray-400"> / {{ $runsTotal }}</span>
+                                    <span class="col-span-12 sm:col-span-5 truncate font-medium text-gray-900 dark:text-gray-100">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</span>
+                                    <span class="col-span-4 sm:col-span-2 truncate font-mono text-xs text-gray-500 dark:text-gray-300" title="{{ $row['expression'] }}">{{ $row['expression'] }}</span>
+                                    <span class="col-span-5 sm:col-span-3 flex flex-wrap gap-x-2 text-xs tabular-nums" data-attention-reasons>
+                                        @foreach($reasons as $reason)
+                                            <span class="{{ $reason['kind'] === 'failed' ? 'text-red-700 dark:text-red-300' : 'text-amber-700 dark:text-amber-300' }}">{{ match ($reason['kind']) { 'failed' => '✗', 'hung' => '⏳', default => '⏰' } }} {{ number_format($reason['count']) }} {{ $reason['kind'] }}</span>
+                                        @endforeach
                                     </span>
                                     <span class="col-span-3 sm:col-span-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-300">last {{ $formatTime($row['stats']['last_run_at_ms']) }}</span>
                                 </button>
@@ -211,9 +223,9 @@
                                 <button type="button"
                                         wire:click="openTaskModal('{{ $row['task_key'] }}')"
                                         class="grid w-full grid-cols-12 items-center gap-3 py-2 text-left text-sm transition hover:bg-gray-50 dark:hover:bg-white/5 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-500">
-                                    <span class="col-span-12 sm:col-span-6 truncate text-gray-900 dark:text-gray-100">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</span>
-                                    <span class="col-span-6 sm:col-span-2 truncate font-mono text-xs text-gray-500 dark:text-gray-300" title="{{ $row['expression'] }}">{{ $row['expression'] }}</span>
-                                    <span class="col-span-3 sm:col-span-2 text-xs tabular-nums text-emerald-700 dark:text-emerald-300">✓{{ $row['stats']['runs'] }}</span>
+                                    <span class="col-span-12 sm:col-span-5 truncate text-gray-900 dark:text-gray-100">{{ $taskLabels[$row['task_key']] ?? $row['command'] }}</span>
+                                    <span class="col-span-4 sm:col-span-2 truncate font-mono text-xs text-gray-500 dark:text-gray-300" title="{{ $row['expression'] }}">{{ $row['expression'] }}</span>
+                                    <span class="col-span-5 sm:col-span-3 text-xs tabular-nums text-emerald-700 dark:text-emerald-300">✓{{ $row['stats']['runs'] }}</span>
                                     <span class="col-span-3 sm:col-span-2 text-right text-xs tabular-nums text-gray-500 dark:text-gray-300">p95 {{ $formatDuration($row['stats']['p95_ms']) }}</span>
                                 </button>
                             </li>
@@ -274,7 +286,7 @@
             @if($recentRuns === [])
                 <p class="px-5 pb-5 text-sm text-gray-500 dark:text-gray-300">No runs in the selected window.</p>
             @else
-                <div class="-my-2 overflow-x-auto whitespace-nowrap">
+                <div class="-my-2 overflow-x-auto">
                     <div class="inline-block min-w-full px-5 py-2 align-middle">
                         <table class="min-w-full text-left text-sm">
                             <thead class="text-xs text-gray-500 dark:text-gray-300">

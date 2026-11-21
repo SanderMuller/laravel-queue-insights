@@ -1,7 +1,7 @@
 <?php declare(strict_types=1);
 
 use Illuminate\Console\Scheduling\Schedule;
-use Illuminate\Support\Sleep;
+use Illuminate\Support\Facades\Date;
 use SanderMuller\QueueInsights\Scheduler\ScheduleSnapshotter;
 use SanderMuller\QueueInsights\Tests\Support\R;
 use SanderMuller\QueueInsights\Tests\Support\RedisAvailability;
@@ -43,18 +43,23 @@ it('writes the per-task hash, order list, snapshot hash + at on first rebuild', 
         ->toBeString()->not->toBeEmpty();
 });
 
-it('is idempotent when the snapshot hash matches', function (): void {
+it('leaves the tasks alone but refreshes the snapshot time when the schedule is unchanged', function (): void {
     $schedule = $this->app->make(Schedule::class);
     $schedule->command('queue-insights:snapshot')->everyMinute();
 
+    Date::setTestNow('2026-10-01 12:00:00');
     (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
-    $firstAt = R::str('get', 'qmtest:sched:snapshot:at');
+    $hash = R::str('get', 'qmtest:sched:snapshot:hash');
+    // Marker the full rewrite would delete.
+    R::conn()->command('hset', ['qmtest:sched:tasks', 'marker', 'kept']);
 
-    Sleep::usleep(2000);
+    // A month on, same schedule: the panel must not call it stale.
+    Date::setTestNow('2026-11-01 12:00:00');
     (new ScheduleSnapshotter(resolve(Schedule::class)))->rebuild();
-    $secondAt = R::str('get', 'qmtest:sched:snapshot:at');
 
-    expect($secondAt)->toBe($firstAt);
+    expect(R::str('get', 'qmtest:sched:snapshot:at'))->toBe((string) Date::now()->getTimestampMs())
+        ->and(R::str('get', 'qmtest:sched:snapshot:hash'))->toBe($hash)
+        ->and(R::str('hget', 'qmtest:sched:tasks', 'marker'))->toBe('kept');
 });
 
 it('rewrites the tasks hash when the schedule changes', function (): void {

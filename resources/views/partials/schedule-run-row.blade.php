@@ -46,22 +46,23 @@
 <tr class="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-white/5"
     wire:click="openRunModal('{{ $run['task_key'] }}', '{{ $run['run_id'] }}')">
     @if($showTask)
-        <td class="px-3 py-2 align-top">
+        <td class="min-w-48 max-w-md px-3 py-2 align-top [overflow-wrap:anywhere]">
             @if($taskLabel !== null)
-                <p class="truncate text-gray-900 dark:text-gray-100" title="{{ $taskLabel }}">{{ $taskLabel }}</p>
+                {{-- <wbr> after \ and / so a class name or path breaks at a separator, not mid-word. --}}
+                <p class="text-gray-900 dark:text-gray-100">{!! preg_replace('~([\\\\/])~', '$1<wbr>', e($taskLabel)) !!}</p>
                 <p class="font-mono text-[11px] text-gray-400 dark:text-gray-500">{{ substr($run['task_key'], 0, 8) }}</p>
             @else
                 <p class="font-mono text-xs text-gray-700 dark:text-gray-300">{{ substr($run['task_key'], 0, 8) }}</p>
             @endif
         </td>
     @endif
-    <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['host_id'] }}</td>
-    <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">
+    <td class="whitespace-nowrap px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['host_id'] }}</td>
+    <td class="whitespace-nowrap px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">
         <x-queue-insights::qi-time :at="$run['started_at_ms']"/>
     </td>
-    <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $formatDuration($run['runtime_ms']) }}</td>
-    <td class="px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['exit_code'] ?? '—' }}</td>
-    <td class="px-3 py-2 align-top">
+    <td class="whitespace-nowrap px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $formatDuration($run['runtime_ms']) }}</td>
+    <td class="whitespace-nowrap px-3 py-2 align-top tabular-nums text-gray-700 dark:text-gray-300">{{ $run['exit_code'] ?? '—' }}</td>
+    <td class="whitespace-nowrap px-3 py-2 align-top">
         @if($run['status'] === 'starting')
             {{-- Aurora radar pulse — replaces the `…` glyph so the row reads
                  as live across the dashboard. Same micro-pulse used in the
